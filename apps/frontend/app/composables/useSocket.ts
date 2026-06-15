@@ -4,43 +4,58 @@ import type { CommandTarget, ServerMessage } from '~/types';
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let backoff = 500;
+let msgSeq = 0;
 const outputListeners = new Map<string, Set<(data: string) => void>>();
+const snapshotListeners = new Map<string, Set<(data: string) => void>>();
 const attached = new Set<string>();
 
 /**
- * Single multiplexed WebSocket to the backend. Routes status/exit into the
- * terminals store and output into per-terminal listeners; auto-reconnects and
- * re-attaches on reconnect.
+ * Single multiplexed WebSocket to the backend. Routes status/exit/snapshot into
+ * the stores and per-terminal listeners; auto-reconnects and re-attaches.
  */
 export function useSocket() {
   const config = useRuntimeConfig();
   const conn = useConnectionStore();
   const terminals = useTerminalsStore();
+  const notices = useNoticesStore();
   const wsBase = config.public.wsBase as string;
 
   function connect(): void {
     if (!import.meta.client) return;
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
     conn.setStatus('connecting');
-    socket = new WebSocket(`${wsBase}/ws`);
-    socket.onopen = () => {
+
+    const ws = new WebSocket(`${wsBase}/ws`);
+    socket = ws;
+
+    ws.onopen = () => {
+      if (socket !== ws) return; // superseded
       conn.setStatus('connected');
       backoff = 500;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       for (const id of attached) raw({ type: 'term.attach', termId: id });
     };
-    socket.onclose = () => {
+    ws.onclose = () => {
+      if (socket !== ws) return; // a newer socket already replaced us
+      socket = null;
       conn.setStatus('disconnected');
       scheduleReconnect();
     };
-    socket.onerror = () => {
+    ws.onerror = () => {
       /* a close event follows */
     };
-    socket.onmessage = (ev) => {
+    ws.onmessage = (ev) => {
+      if (socket !== ws) return;
+      let msg: ServerMessage;
       try {
-        handle(JSON.parse(ev.data) as ServerMessage);
+        msg = JSON.parse(ev.data) as ServerMessage;
       } catch {
-        /* ignore malformed frame */
+        return;
       }
+      handle(msg);
     };
   }
 
@@ -53,23 +68,58 @@ export function useSocket() {
     }, backoff);
   }
 
-  function raw(msg: Record<string, unknown>): void {
-    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
+  /** Returns true if the frame was sent, false if the socket isn't open. */
+  function raw(msg: Record<string, unknown>): boolean {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
+  }
+
+  function emitTo(map: Map<string, Set<(d: string) => void>>, id: string, data: string): void {
+    const set = map.get(id);
+    if (!set) return;
+    for (const cb of Array.from(set)) {
+      try {
+        cb(data);
+      } catch (err) {
+        console.error('[useSocket] listener error', err);
+      }
+    }
   }
 
   function handle(msg: ServerMessage): void {
     switch (msg.type) {
+      case 'term.snapshot':
+        if (msg.termId && typeof msg.data === 'string') emitTo(snapshotListeners, msg.termId, msg.data);
+        if (msg.termId && msg.state) terminals.applyStatus(msg.termId, msg.state);
+        break;
       case 'term.output':
-        if (msg.termId && typeof msg.data === 'string') {
-          const set = outputListeners.get(msg.termId);
-          if (set) for (const cb of set) cb(msg.data);
-        }
+        if (msg.termId && typeof msg.data === 'string') emitTo(outputListeners, msg.termId, msg.data);
+        break;
+      case 'term.attached':
+        if (msg.termId && msg.state) terminals.applyStatus(msg.termId, msg.state);
         break;
       case 'term.status':
         if (msg.termId && msg.state) terminals.applyStatus(msg.termId, msg.state, msg.pid);
         break;
       case 'term.exit':
         if (msg.termId) terminals.applyExit(msg.termId, msg.exitCode ?? null, msg.signal ?? null);
+        break;
+      case 'term.broadcastResult': {
+        const failed = msg.failed?.length ?? 0;
+        const written = msg.written ?? 0;
+        const matched = msg.matched ?? 0;
+        notices.push(
+          failed > 0 ? `Sent to ${written}/${matched} — ${failed} not running` : `Sent to ${written} terminal(s)`,
+          failed > 0 ? 'error' : 'info',
+        );
+        break;
+      }
+      case 'term.error':
+        if (msg.message) notices.push(msg.message, 'error');
+        if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll();
         break;
     }
   }
@@ -82,29 +132,48 @@ export function useSocket() {
     attached.delete(id);
     raw({ type: 'term.detach', termId: id });
   }
-  function input(id: string, data: string): void {
-    raw({ type: 'term.input', termId: id, data });
+  function input(id: string, data: string): boolean {
+    return raw({ type: 'term.input', termId: id, data });
   }
   function resize(id: string, cols: number, rows: number): void {
     raw({ type: 'term.resize', termId: id, cols, rows });
   }
-  function broadcast(target: CommandTarget, data: string, appendNewline?: boolean): void {
-    raw({ type: 'term.broadcastInput', target, data, appendNewline });
+  /** Returns true if the command was sent. */
+  function broadcast(target: CommandTarget, data: string, appendNewline?: boolean): boolean {
+    return raw({ type: 'term.broadcastInput', id: `c${++msgSeq}`, target, data, appendNewline });
   }
 
-  /** Subscribe to a terminal's output. Returns an unsubscribe function. */
-  function onOutput(id: string, cb: (data: string) => void): () => void {
-    let set = outputListeners.get(id);
+  function subscribe(map: Map<string, Set<(d: string) => void>>, id: string, cb: (d: string) => void): () => void {
+    let set = map.get(id);
     if (!set) {
       set = new Set();
-      outputListeners.set(id, set);
+      map.set(id, set);
     }
     set.add(cb);
     return () => {
       set!.delete(cb);
-      if (set!.size === 0) outputListeners.delete(id);
+      if (set!.size === 0) map.delete(id);
     };
   }
+  const onOutput = (id: string, cb: (d: string) => void) => subscribe(outputListeners, id, cb);
+  const onSnapshot = (id: string, cb: (d: string) => void) => subscribe(snapshotListeners, id, cb);
 
-  return { connect, attach, detach, input, resize, broadcast, onOutput };
+  return { connect, attach, detach, input, resize, broadcast, onOutput, onSnapshot };
+}
+
+// HMR safety: tear down the live socket/timer when this module is replaced.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    try {
+      socket?.close();
+    } catch {
+      /* ignore */
+    }
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    socket = null;
+    reconnectTimer = null;
+    outputListeners.clear();
+    snapshotListeners.clear();
+    attached.clear();
+  });
 }

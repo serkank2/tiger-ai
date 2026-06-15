@@ -29,6 +29,10 @@ function onDelete() {
     resetTimer = setTimeout(() => (confirming.value = false), 2500);
   }
 }
+
+onBeforeUnmount(() => {
+  if (resetTimer) clearTimeout(resetTimer);
+});
 </script>
 
 <template>

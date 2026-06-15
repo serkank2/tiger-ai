@@ -8,6 +8,7 @@ const socket = useSocket();
 
 const showEditor = ref(false);
 const editing = ref<TerminalDto | null>(null);
+const showGroups = ref(false);
 
 function openCreate() {
   editing.value = null;
@@ -18,15 +19,18 @@ function openEdit(t: TerminalDto) {
   showEditor.value = true;
 }
 
-let poll: ReturnType<typeof setInterval> | null = null;
-
-onMounted(async () => {
-  socket.connect();
+async function loadAll() {
   try {
     await Promise.all([terminals.fetchAll(), groups.load(), settings.load()]);
   } catch (err) {
     console.error('[kaplan] initial load failed (is the backend running?)', err);
   }
+}
+
+let poll: ReturnType<typeof setInterval> | null = null;
+onMounted(async () => {
+  socket.connect();
+  await loadAll();
   // Refresh last-output previews periodically (live status arrives via WebSocket).
   poll = setInterval(() => void terminals.refreshPreviews().catch(() => {}), 4000);
 });
@@ -37,17 +41,29 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <CommandBar @create="openCreate" />
+    <CommandBar @create="openCreate" @manage-groups="showGroups = true" />
     <div class="body">
       <TerminalSidebar @create="openCreate" @edit="openEdit" />
       <TerminalPane />
     </div>
+
+    <div v-if="terminals.loadError && !terminals.loaded" class="backend-down">
+      <div class="card">
+        <p class="big">⚠ Backend'e ulaşılamıyor</p>
+        <p class="dim">http://127.0.0.1:4517 — {{ terminals.loadError }}</p>
+        <p class="dim">Terminalde <code>npm run dev</code> çalışıyor mu?</p>
+        <button class="retry" @click="loadAll">Tekrar dene</button>
+      </div>
+    </div>
+
     <TerminalEditModal
       v-if="showEditor"
       :terminal="editing"
       @close="showEditor = false"
       @saved="terminals.fetchAll()"
     />
+    <GroupsModal v-if="showGroups" @close="showGroups = false" />
+    <NoticeToast />
   </div>
 </template>
 
@@ -62,5 +78,45 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   position: relative;
+}
+.backend-down {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 40;
+}
+.card {
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  box-shadow: var(--shadow);
+}
+.big {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+.dim {
+  color: var(--text-dim);
+  margin: 4px 0;
+  font-size: 13px;
+}
+.dim code {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+.retry {
+  margin-top: 14px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 8px 18px;
+  font-weight: 600;
+}
+.retry:hover {
+  background: var(--accent-soft);
 }
 </style>

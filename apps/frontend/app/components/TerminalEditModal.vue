@@ -58,6 +58,10 @@ async function save() {
     error.value = 'Name is required.';
     return;
   }
+  if (form.shellKind === 'custom' && !form.shellPath.trim()) {
+    error.value = 'A custom shell needs a path.';
+    return;
+  }
   saving.value = true;
   const shell =
     form.shellKind === 'custom'

@@ -10,7 +10,8 @@ const META: Record<TerminalRunState, { cls: string; text: string }> = {
   failed: { cls: 'red', text: 'Failed' },
   stopped: { cls: 'slate', text: 'Stopped' },
 };
-const meta = computed(() => META[props.state]);
+const FALLBACK = { cls: 'slate', text: 'Unknown' };
+const meta = computed(() => META[props.state] ?? FALLBACK);
 </script>
 
 <template>

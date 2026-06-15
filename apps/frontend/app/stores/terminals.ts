@@ -15,13 +15,28 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const selectedIds = ref<string[]>([]);
   const commandMode = ref<CommandTargetMode>('all');
   const commandGroupId = ref<string | null>(null);
+  const loaded = ref(false);
+  const loadError = ref<string | null>(null);
 
   const byId = computed<Record<string, TerminalDto>>(() => Object.fromEntries(items.value.map((t) => [t.id, t])));
   const active = computed(() => (activeId.value ? byId.value[activeId.value] ?? null : null));
 
   async function fetchAll() {
-    items.value = await api.listTerminals();
-    if (!activeId.value && items.value.length) activeId.value = items.value[0]!.id;
+    try {
+      const list = await api.listTerminals();
+      items.value = list;
+      // reconcile selection/active against the fresh list
+      const ids = new Set(list.map((t) => t.id));
+      selectedIds.value = selectedIds.value.filter((id) => ids.has(id));
+      if (activeId.value && !ids.has(activeId.value)) activeId.value = null;
+      if (!activeId.value && list.length) activeId.value = list[0]!.id;
+      loaded.value = true;
+      loadError.value = null;
+    } catch (e) {
+      const err = e as { data?: { error?: { message?: string } }; message?: string };
+      loadError.value = err?.data?.error?.message ?? err?.message ?? 'Cannot reach backend';
+      throw e;
+    }
   }
 
   /** Refresh only the lastOutput previews (status stays live via WebSocket). */
@@ -67,9 +82,14 @@ export const useTerminalsStore = defineStore('terminals', () => {
   // WS-driven updates:
   function applyStatus(id: string, state: TerminalRunState, pid?: number) {
     const t = byId.value[id];
-    if (t) {
-      t.status.state = state;
-      if (pid !== undefined) t.status.pid = pid;
+    if (!t) return;
+    t.status.state = state;
+    if (pid !== undefined) t.status.pid = pid;
+    // a fresh run clears the previous exit/error info
+    if (state === 'starting' || state === 'running') {
+      t.status.exitCode = null;
+      t.status.signal = null;
+      t.status.error = undefined;
     }
   }
   function applyExit(id: string, exitCode: number | null, signal: number | null) {
@@ -109,6 +129,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     selectedIds,
     commandMode,
     commandGroupId,
+    loaded,
+    loadError,
     byId,
     active,
     fetchAll,

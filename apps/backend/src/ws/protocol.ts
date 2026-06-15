@@ -65,6 +65,16 @@ export interface OutputMsg {
   termId: string;
   data: string;
 }
+/** Full scrollback sent once on (re)attach. The client RESETS its terminal then writes
+ *  this, so a reconnect re-attach replaces the view instead of duplicating it. */
+export interface SnapshotMsg {
+  type: 'term.snapshot';
+  termId: string;
+  data: string;
+  state: TerminalRunState;
+  cols: number;
+  rows: number;
+}
 export interface StatusMsg {
   type: 'term.status';
   termId: string;
@@ -99,6 +109,7 @@ export interface PongMsg {
 export type ServerMsg =
   | AttachedMsg
   | OutputMsg
+  | SnapshotMsg
   | StatusMsg
   | ExitMsg
   | ErrorMsg

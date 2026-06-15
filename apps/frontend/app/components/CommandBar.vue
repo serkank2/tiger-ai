@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const emit = defineEmits<{ create: [] }>();
+const emit = defineEmits<{ create: []; manageGroups: [] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
@@ -18,14 +18,15 @@ const targetCount = computed(() => {
 });
 
 const canSend = computed(() => {
+  if (conn.status !== 'connected') return false;
   if (terminals.commandMode === 'group' && !terminals.commandGroupId) return false;
   return targetCount.value > 0;
 });
 
 function send() {
   if (!canSend.value) return;
-  socket.broadcast(terminals.buildTarget(), cmd.value);
-  cmd.value = '';
+  // broadcast() returns false if the socket isn't open — keep the input then.
+  if (socket.broadcast(terminals.buildTarget(), cmd.value)) cmd.value = '';
 }
 </script>
 
@@ -49,6 +50,7 @@ function send() {
         <option :value="null" disabled>Choose group…</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
+      <button class="manage" title="Manage groups" @click="emit('manageGroups')">⚙</button>
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -106,6 +108,16 @@ function send() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.manage {
+  border: 1px solid var(--border-strong);
+  width: 32px;
+  height: 32px;
+  color: var(--text-dim);
+}
+.manage:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .seg {
   display: flex;

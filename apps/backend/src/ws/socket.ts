@@ -100,16 +100,20 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
           if (peer.attached.size >= MAX_ATTACH) break;
           peer.attached.add(msg.termId);
           const status = manager.getStatus(msg.termId);
+          const state = status?.state ?? 'stopped';
+          const cols = status?.cols ?? 80;
+          const rows = status?.rows ?? 30;
+          send(peer.ws, { type: 'term.attached', termId: msg.termId, id: msg.id, state, cols, rows });
+          // Always send a snapshot (even empty) so the client resets before rendering —
+          // this makes a reconnect re-attach replace the view instead of duplicating it.
           send(peer.ws, {
-            type: 'term.attached',
+            type: 'term.snapshot',
             termId: msg.termId,
-            id: msg.id,
-            state: status?.state ?? 'stopped',
-            cols: status?.cols ?? 80,
-            rows: status?.rows ?? 30,
+            data: manager.getBuffer(msg.termId),
+            state,
+            cols,
+            rows,
           });
-          const buf = manager.getBuffer(msg.termId);
-          if (buf) send(peer.ws, { type: 'term.output', termId: msg.termId, data: buf });
           break;
         }
         case 'term.detach':
