@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.output/
+.nuxt/
+.data/
+*.log
+.scratch/
+
+# local app state (normally stored in OS app-data dir; ignore stray local copies)
+state.json
+state.json.bak
+state.json.tmp
+state.corrupt.*.json
+
+.DS_Store
+Thumbs.db

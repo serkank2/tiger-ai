@@ -1,0 +1,23 @@
+{
+  "name": "kaplan",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kaplan — local terminal management panel (personal use).",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "npm run dev -w @kaplan/backend",
+    "dev:frontend": "npm run dev -w @kaplan/frontend",
+    "start:backend": "npm run start -w @kaplan/backend",
+    "build:frontend": "npm run build -w @kaplan/frontend",
+    "typecheck": "npm run typecheck -w @kaplan/backend"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
