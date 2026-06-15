@@ -28,9 +28,14 @@ export function isStringRecord(v: unknown): v is Record<string, string> {
   return Object.values(v as Record<string, unknown>).every((x) => typeof x === 'string');
 }
 
-export function toFiniteNumber(v: unknown): number | undefined {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+/** A valid terminal dimension: a positive integer in a sane range, else undefined. */
+export function toDimension(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2000 ? v : undefined;
+}
+
+/** Strict boolean: only an actual boolean counts (avoids "false" -> true coercion). */
+export function asBool(v: unknown, fallback = false): boolean {
+  return typeof v === 'boolean' ? v : fallback;
 }
 
 export function nonEmptyString(v: unknown): string | null {

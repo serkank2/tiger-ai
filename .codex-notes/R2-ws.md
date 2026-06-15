@@ -1,0 +1,17 @@
+**Findings**
+
+- **CRITICAL** - [apps/backend/src/ws/socket.ts:17](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:17): WebSocket upgrades accept any browser `Origin`; Express CORS does not protect WS. A malicious page can connect to the local server and send `term.broadcastInput` or `term.input`, potentially executing commands. Fix: reject upgrades unless `Origin` matches the trusted UI origins, and preferably require a per-session token on the WS URL/header before accepting.
+
+- **MEDIUM** - [apps/backend/src/ws/socket.ts:22](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:22): `ws.send()` is used without backpressure or `bufferedAmount` limits. A slow client will not directly block other clients on TCP flush, but it can accumulate an unbounded send queue and eventually affect the whole process. Fix: wrap `send` with a high-water mark, terminate or drop lagging peers, and handle send callback errors.
+
+- **MEDIUM** - [apps/backend/src/ws/protocol.ts:119](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/protocol.ts:119): `parseClientMessage` validates only `type` and then casts the whole object. Bad payloads can reach dispatch with invalid `termId`, `data`, `target`, `cols`, `rows`, or `id`. Fix: validate each message variant at the boundary, including string fields, finite resize bounds, valid command target shape, and boolean `appendNewline`.
+
+- **MEDIUM** - [apps/backend/src/ws/socket.ts:17](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:17): no explicit WS `maxPayload`, and [protocol.ts:112](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/protocol.ts:112) parses JSON synchronously. Malformed JSON is caught, but oversized messages can consume memory/CPU. Fix: set a small `maxPayload`, reject binary frames, cap `term.input`/`broadcastInput` length, and close with `1009` for oversized payloads.
+
+- **LOW** - [apps/backend/src/ws/socket.ts:57](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:57): `term.attach` adds any `termId` to `peer.attached`, including unknown or very many unique IDs. It is cleaned up on close, but can grow unbounded while connected. Fix: validate `termId` exists before adding, send `term.error` for unknown IDs, and optionally cap attachments per peer.
+
+- **LOW** - [apps/backend/src/ws/socket.ts:48](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:48): `error` deletes the peer but does not terminate/close the socket. If an error does not lead to `close`, the socket is no longer heartbeat-tracked. Fix: use a shared cleanup function and call `ws.terminate()` on error.
+
+- **LOW** - [apps/backend/src/ws/socket.ts:104](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:104): heartbeat interval cleanup only runs on `wss.close`, but manager event listeners registered at [socket.ts:30](C:/Users/serkan/Desktop/Kaplan/apps/backend/src/ws/socket.ts:30) are never removed. This is mostly a test/recreate leak. Fix: use named manager handlers, remove them on `wss.close`, and consider `heartbeat.unref()`.
+
+Status/exit fan-out to all peers and output fan-out only to attached peers are implemented as described. Peer cleanup on normal `close` is also basically correct.

@@ -25,9 +25,14 @@ export interface RouteOptions {
  *
  * Events: 'output' (ManagerOutputEvent), 'status' (TerminalRuntimeStatus), 'exit' (TerminalRuntimeStatus).
  */
+function stoppedStatus(id: TerminalId): TerminalRuntimeStatus {
+  return { id, state: 'stopped', cols: 80, rows: 30, exitCode: null };
+}
+
 export class TerminalManager extends EventEmitter {
   private sessions = new Map<TerminalId, TerminalSession>();
   private defs = new Map<TerminalId, TerminalDefinition>();
+  private stopping = false;
 
   // --- definitions ---
 
@@ -61,14 +66,19 @@ export class TerminalManager extends EventEmitter {
   async start(id: TerminalId, cols?: number, rows?: number): Promise<TerminalRuntimeStatus> {
     const def = this.defs.get(id);
     if (!def) throw new Error(`unknown terminal: ${id}`);
+    if (this.stopping) return stoppedStatus(id); // don't spawn during shutdown
     const s = this.ensureSession(def);
     s.updateDefinition(def);
     return s.start(cols, rows);
   }
 
+  // Idempotent: stopping a known-but-never-started terminal is a no-op, not an error.
   async stop(id: TerminalId): Promise<TerminalRuntimeStatus> {
     const s = this.sessions.get(id);
-    if (!s) throw new Error(`no session: ${id}`);
+    if (!s) {
+      if (this.defs.has(id)) return stoppedStatus(id);
+      throw new Error(`unknown terminal: ${id}`);
+    }
     return s.stop();
   }
 
@@ -113,6 +123,7 @@ export class TerminalManager extends EventEmitter {
 
   async autostartAll(): Promise<void> {
     for (const def of this.defs.values()) {
+      if (this.stopping) break; // shutdown began — stop launching
       if (def.autostart) {
         try {
           await this.start(def.id);
@@ -123,7 +134,13 @@ export class TerminalManager extends EventEmitter {
     }
   }
 
+  /** Signal shutdown so autostart stops launching and no new sessions spawn. */
+  beginShutdown(): void {
+    this.stopping = true;
+  }
+
   async killAll(): Promise<void> {
+    this.stopping = true;
     await Promise.allSettled([...this.sessions.values()].map((s) => s.dispose()));
     this.sessions.clear();
   }

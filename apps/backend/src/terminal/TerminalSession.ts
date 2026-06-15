@@ -39,9 +39,10 @@ export function resolveShell(spec: ShellSpec): { file: string; args: string[] } 
 }
 
 /**
- * Owns a single pty process: spawn, stream (coalesced) output, maintain a
- * bounded scrollback ring buffer, write input, resize, and stop/restart/kill
- * with a Windows-safe process-tree kill.
+ * Owns a single pty process. All lifecycle operations (start/stop/restart/dispose)
+ * are serialized through one queue so they can't interleave, and every pty is
+ * tagged with a monotonic `generation` so stale onData/onExit callbacks from a
+ * previous process can never mutate the state of a newer one.
  *
  * Events: 'output' (string), 'status' (TerminalRuntimeStatus), 'exit' (TerminalRuntimeStatus).
  */
@@ -49,6 +50,7 @@ export class TerminalSession extends EventEmitter {
   readonly id: string;
   private def: TerminalDefinition;
   private proc: IPty | null = null;
+  private generation = 0;
 
   private state: TerminalRunState = 'stopped';
   private pid?: number;
@@ -59,6 +61,11 @@ export class TerminalSession extends EventEmitter {
   private endedAt?: string;
   private cols = 80;
   private rows = 30;
+
+  // lifecycle serialization + user-stop tracking
+  private lock: Promise<unknown> = Promise.resolve();
+  private stopRequested = false;
+  private initialTimer: ReturnType<typeof setTimeout> | null = null;
 
   // output coalescing + scrollback
   private pending = '';
@@ -90,7 +97,6 @@ export class TerminalSession extends EventEmitter {
     };
   }
 
-  /** Bounded scrollback, replayed to a client when it attaches. */
   getBuffer(): string {
     return this.ring;
   }
@@ -99,56 +105,39 @@ export class TerminalSession extends EventEmitter {
     return this.proc !== null && (this.state === 'running' || this.state === 'starting');
   }
 
-  async start(cols = this.cols, rows = this.rows): Promise<TerminalRuntimeStatus> {
-    if (this.isAlive()) return this.getStatus();
+  // --- public lifecycle (serialized) ---
 
-    await this.validateCwd(this.def.cwd);
-    const { file, args } = resolveShell(this.def.shell);
-    // Merge over process.env so Windows essentials (SystemRoot, ComSpec, Path, ...) survive.
-    const env = { ...process.env, ...(this.def.env ?? {}) } as Record<string, string>;
-
-    this.cols = cols;
-    this.rows = rows;
-    this.exitCode = null;
-    this.signal = null;
-    this.errorInfo = undefined;
-    this.endedAt = undefined;
-    this.ring = '';
-    this.pending = '';
-    this.setState('starting');
-
-    try {
-      const proc = pty.spawn(file, args, {
-        name: 'xterm-256color',
-        cols,
-        rows,
-        cwd: this.def.cwd,
-        env,
-      });
-      this.proc = proc;
-      this.pid = proc.pid;
-      this.startedAt = new Date().toISOString();
-      this.setState('running');
-
-      proc.onData((data) => this.handleData(data));
-      proc.onExit(({ exitCode, signal }) => this.handleExit(exitCode, signal ?? null));
-
-      // Run the initial command once the shell prompt is ready (avoid shell-string spawning).
-      const initial = this.def.initialCommand?.trim();
-      if (initial) {
-        setTimeout(() => {
-          if (this.isAlive()) this.write(initial + '\r');
-        }, 350);
-      }
-    } catch (err) {
-      this.errorInfo = { message: errMessage(err), code: errCode(err) };
-      this.proc = null;
-      this.setState('failed');
-      throw err;
-    }
-
-    return this.getStatus();
+  start(cols = this.cols, rows = this.rows): Promise<TerminalRuntimeStatus> {
+    return this.serialize(() => this.startImpl(cols, rows));
   }
+  stop(opts: { force?: boolean; timeoutMs?: number } = {}): Promise<TerminalRuntimeStatus> {
+    return this.serialize(() => this.stopImpl(opts));
+  }
+  restart(cols = this.cols, rows = this.rows): Promise<TerminalRuntimeStatus> {
+    return this.serialize(async () => {
+      await this.stopImpl({ force: false });
+      return this.startImpl(cols, rows);
+    });
+  }
+  dispose(): Promise<void> {
+    return this.serialize(async () => {
+      await this.stopImpl({ force: true });
+      this.clearInitialTimer();
+      this.removeAllListeners();
+    });
+  }
+
+  /** Run lifecycle ops one at a time, regardless of prior success/failure. */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.lock.then(fn, fn);
+    this.lock = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  // --- non-lifecycle (safe to call any time) ---
 
   write(data: string): void {
     if (this.proc && this.isAlive()) this.proc.write(data);
@@ -167,8 +156,67 @@ export class TerminalSession extends EventEmitter {
     }
   }
 
-  /** Graceful stop (Ctrl+C, then force-kill after a timeout) or immediate force kill. */
-  async stop(opts: { force?: boolean; timeoutMs?: number } = {}): Promise<TerminalRuntimeStatus> {
+  // --- impl ---
+
+  private async startImpl(cols: number, rows: number): Promise<TerminalRuntimeStatus> {
+    if (this.isAlive()) return this.getStatus();
+
+    this.stopRequested = false;
+    this.cols = cols;
+    this.rows = rows;
+    this.exitCode = null;
+    this.signal = null;
+    this.errorInfo = undefined;
+    this.endedAt = undefined;
+    this.pid = undefined;
+    this.ring = '';
+    this.pending = '';
+    this.clearInitialTimer();
+    this.setState('starting');
+
+    let proc: IPty;
+    try {
+      await this.validateCwd(this.def.cwd);
+      const { file, args } = resolveShell(this.def.shell);
+      // Merge over process.env so Windows essentials (SystemRoot, ComSpec, Path, ...) survive.
+      const env = { ...process.env, ...(this.def.env ?? {}) } as Record<string, string>;
+      proc = pty.spawn(file, args, { name: 'xterm-256color', cols, rows, cwd: this.def.cwd, env });
+    } catch (err) {
+      this.errorInfo = { message: errMessage(err), code: errCode(err) };
+      this.proc = null;
+      this.pid = undefined;
+      this.setState('failed');
+      throw err;
+    }
+
+    const gen = ++this.generation;
+    this.proc = proc;
+    this.pid = proc.pid;
+    this.startedAt = new Date().toISOString();
+    this.setState('running');
+
+    proc.onData((data) => {
+      if (gen === this.generation) this.handleData(data);
+    });
+    proc.onExit(({ exitCode, signal }) => this.handleExit(gen, exitCode, signal ?? null));
+
+    // Run the initial command once the shell prompt is ready. Tied to this generation
+    // so a quick restart never writes the old command into the new shell.
+    const initial = this.def.initialCommand?.trim();
+    if (initial) {
+      this.initialTimer = setTimeout(() => {
+        this.initialTimer = null;
+        if (gen === this.generation && this.isAlive()) this.write(initial + '\r');
+      }, 350);
+    }
+
+    return this.getStatus();
+  }
+
+  private async stopImpl(opts: { force?: boolean; timeoutMs?: number }): Promise<TerminalRuntimeStatus> {
+    this.stopRequested = true;
+    this.clearInitialTimer();
+
     const proc = this.proc;
     if (!proc || !this.isAlive()) {
       this.setState('stopped');
@@ -177,74 +225,95 @@ export class TerminalSession extends EventEmitter {
     const pid = this.pid;
 
     if (opts.force) {
-      this.forceKill(pid);
+      await this.forceKill(pid);
+      await this.waitForExit(1500);
     } else {
       try {
         proc.write('\x03'); // Ctrl+C
       } catch {
         /* ignore */
       }
-      const timeout = opts.timeoutMs ?? config.stopTimeoutMs;
-      await new Promise<void>((resolve) => {
-        let done = false;
-        const onExit = () => {
-          if (done) return;
-          done = true;
-          resolve();
-        };
-        this.once('exit', onExit);
-        setTimeout(() => {
-          if (done) return;
-          done = true;
-          this.removeListener('exit', onExit);
-          this.forceKill(pid);
-          resolve();
-        }, timeout);
-      });
+      const exited = await this.waitForExit(opts.timeoutMs ?? config.stopTimeoutMs);
+      if (!exited) {
+        await this.forceKill(pid);
+        await this.waitForExit(1500);
+      }
     }
 
-    this.setState('stopped');
+    // handleExit (if it fired) already set 'stopped' because stopRequested is true.
+    if (this.state !== 'stopped') this.setState('stopped');
     return this.getStatus();
   }
 
-  async restart(cols = this.cols, rows = this.rows): Promise<TerminalRuntimeStatus> {
-    await this.stop({ force: false });
-    return this.start(cols, rows);
+  /** Resolve true if the pty exits within the timeout, false otherwise. */
+  private waitForExit(timeoutMs: number): Promise<boolean> {
+    if (!this.proc) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false;
+      const onExit = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.once('exit', onExit);
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        this.removeListener('exit', onExit);
+        resolve(false);
+      }, timeoutMs);
+    });
   }
 
-  async dispose(): Promise<void> {
-    await this.stop({ force: true });
-    this.removeAllListeners();
-  }
-
-  // --- internals ---
-
-  private forceKill(pid?: number): void {
-    // On Windows, taskkill gives a reliable process-tree kill AND avoids node-pty's
-    // ConPTY console-list helper, which spawns a subprocess that logs
-    // "AttachConsole failed" while the console is being torn down during kill().
-    // node-pty frees the ConPTY when it observes the process exit (onExit).
-    if (process.platform === 'win32' && pid) {
-      try {
-        spawnChild('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+  /** Windows: taskkill the tree (avoids node-pty's console-list helper). Awaited. */
+  private forceKill(pid?: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (process.platform === 'win32' && pid) {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        try {
+          const tk = spawnChild('taskkill', ['/PID', String(pid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+          tk.on('close', done);
+          tk.on('error', () => {
+            try {
+              this.proc?.kill();
+            } catch {
+              /* already dead */
+            }
+            done();
+          });
+          setTimeout(done, 1500).unref();
+        } catch {
+          try {
+            this.proc?.kill();
+          } catch {
+            /* already dead */
+          }
+          done();
+        }
         return;
-      } catch {
-        /* fall through to pty.kill() as a last resort */
       }
-    }
-    try {
-      this.proc?.kill();
-    } catch {
-      /* already dead */
-    }
+      try {
+        this.proc?.kill();
+      } catch {
+        /* already dead */
+      }
+      resolve();
+    });
   }
 
   private async validateCwd(cwd: string): Promise<void> {
     try {
       const st = await fsp.stat(cwd);
-      if (!st.isDirectory()) {
-        throw makeError(`cwd is not a directory: ${cwd}`, 'EINVAL_CWD');
-      }
+      if (!st.isDirectory()) throw makeError(`cwd is not a directory: ${cwd}`, 'EINVAL_CWD');
     } catch (err) {
       if ((err as { code?: string })?.code === 'EINVAL_CWD') throw err;
       const code = (err as NodeJS.ErrnoException)?.code;
@@ -277,15 +346,25 @@ export class TerminalSession extends EventEmitter {
     this.emit('output', chunk);
   }
 
-  private handleExit(exitCode: number, signal: number | null): void {
+  private handleExit(gen: number, exitCode: number, signal: number | null): void {
+    if (gen !== this.generation) return; // stale pty from a previous run
+    this.clearInitialTimer();
     this.flush();
     this.exitCode = exitCode;
     this.signal = signal;
     this.endedAt = new Date().toISOString();
+    this.pid = undefined;
     this.proc = null;
-    // Natural end of the process. (A user-initiated stop overrides this to 'stopped'.)
-    this.setState('exited');
+    // 'stopped' for a user-initiated stop; 'exited' for a natural end.
+    this.setState(this.stopRequested ? 'stopped' : 'exited');
     this.emit('exit', this.getStatus());
+  }
+
+  private clearInitialTimer(): void {
+    if (this.initialTimer) {
+      clearTimeout(this.initialTimer);
+      this.initialTimer = null;
+    }
   }
 
   private setState(s: TerminalRunState): void {

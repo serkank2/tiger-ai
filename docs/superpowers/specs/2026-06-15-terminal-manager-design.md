@@ -96,8 +96,10 @@ interface AppSettings {
   defaultCwd: string;
   defaultShell: TerminalDefinition['shell'];
   confirmBeforeKill: boolean;
-  startTerminalOnSend: boolean;     // default false
-  appendNewlineByDefault: boolean;  // default true
+  commandRouting: {
+    appendNewlineByDefault: boolean;  // default true
+    startTerminalOnSend: boolean;     // default false
+  };
 }
 ```
 

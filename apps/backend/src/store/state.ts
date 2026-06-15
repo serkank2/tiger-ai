@@ -60,33 +60,72 @@ function normalize(parsed: unknown): PersistedState {
   };
 }
 
+function parseAndNormalize(raw: string): PersistedState {
+  const parsed = JSON.parse(raw); // throws SyntaxError on corruption
+  const ver = (parsed as { schemaVersion?: unknown })?.schemaVersion;
+  if (typeof ver === 'number' && ver > SCHEMA_VERSION) {
+    // Newer schema than this build understands — refuse to silently downgrade it.
+    const e = new Error(`state schemaVersion ${ver} is newer than supported ${SCHEMA_VERSION}`);
+    (e as NodeJS.ErrnoException).code = 'ESCHEMA_NEWER';
+    throw e;
+  }
+  return normalize(parsed);
+}
+
+async function tryLoadBackup(): Promise<PersistedState | null> {
+  try {
+    const raw = await fs.readFile(config.stateFile + '.bak', 'utf8');
+    return parseAndNormalize(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function preserveBadFile(file: string): Promise<void> {
+  try {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    await fs.rename(file, path.join(config.dataDir, `state.corrupt.${ts}.json`));
+  } catch {
+    /* best effort */
+  }
+}
+
 export async function loadState(): Promise<PersistedState> {
   await ensureDir();
   const file = config.stateFile;
+
+  let raw: string;
   try {
-    const raw = await fs.readFile(file, 'utf8');
-    return normalize(JSON.parse(raw));
+    raw = await fs.readFile(file, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      const fresh = defaultState();
-      await saveState(fresh);
-      return fresh;
-    }
-    // Corrupt or unreadable: try the backup, then preserve the bad file and reset.
-    try {
-      const rawBak = await fs.readFile(file + '.bak', 'utf8');
-      return normalize(JSON.parse(rawBak));
-    } catch {
-      try {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        await fs.rename(file, path.join(config.dataDir, `state.corrupt.${ts}.json`));
-      } catch {
-        /* nothing to preserve */
+      // Primary missing — recover from backup before resetting.
+      const fromBak = await tryLoadBackup();
+      if (fromBak) {
+        await saveState(fromBak);
+        return fromBak;
       }
       const fresh = defaultState();
       await saveState(fresh);
       return fresh;
     }
+    // Operational FS error (EACCES, EIO, ...): surface it, never destroy state.
+    throw err;
+  }
+
+  try {
+    return parseAndNormalize(raw);
+  } catch {
+    // Corrupt (or newer-schema) primary. Preserve it, then recover from backup.
+    await preserveBadFile(file);
+    const fromBak = await tryLoadBackup();
+    if (fromBak) {
+      await saveState(fromBak);
+      return fromBak;
+    }
+    const fresh = defaultState();
+    await saveState(fresh);
+    return fresh;
   }
 }
 
@@ -94,7 +133,9 @@ export async function loadState(): Promise<PersistedState> {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 export function saveState(state: PersistedState): Promise<void> {
-  const next = writeChain.then(() => atomicWrite(state));
+  // Snapshot at enqueue time so a later in-place mutation can't be written by this save.
+  const snapshot = structuredClone(state);
+  const next = writeChain.then(() => atomicWrite(snapshot));
   writeChain = next.catch(() => {}); // keep the chain alive even if one write fails
   return next;
 }
@@ -115,6 +156,8 @@ async function atomicWrite(state: PersistedState): Promise<void> {
   }
 
   // Keep a backup of the previous good file before replacing it.
+  // (Directory-level fsync for power-loss durability is intentionally omitted —
+  // low ROI for a single-user local tool; tmp+rename already prevents torn writes.)
   try {
     await fs.copyFile(file, bak);
   } catch {

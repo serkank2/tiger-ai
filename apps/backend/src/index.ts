@@ -36,22 +36,27 @@ app.use('/api/fs', createFsRouter(ctx));
 
 // Central error handler (Express 5 forwards rejected async handlers here).
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  const code = (err as { code?: string })?.code;
+  const e = err as { code?: string; status?: number; statusCode?: number };
+  const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
+  // Honor Express/body-parser statuses (400 malformed JSON, 413 too large, ...).
+  const httpStatus =
+    explicit && explicit >= 400 && explicit < 600 ? explicit : e.code === 'EINVAL_CWD' ? 400 : 500;
   const message = err instanceof Error ? err.message : String(err);
-  const httpStatus = code === 'EINVAL_CWD' ? 400 : 500;
-  if (httpStatus === 500) console.error('[api] unhandled error:', err);
-  res.status(httpStatus).json({ error: { message, code } });
+  if (httpStatus >= 500) console.error('[api] unhandled error:', err);
+  res.status(httpStatus).json({ error: { message, code: e.code } });
 });
 
 const server = http.createServer(app);
 createWsServer(server, ctx);
+
+let autostartDone: Promise<void> = Promise.resolve();
 
 server.listen(config.port, config.host, () => {
   console.log(`\n  🐅 Kaplan backend`);
   console.log(`     REST   http://${config.host}:${config.port}/api`);
   console.log(`     WS     ws://${config.host}:${config.port}/ws`);
   console.log(`     state  ${config.stateFile}\n`);
-  void manager.autostartAll();
+  autostartDone = manager.autostartAll();
 });
 
 let shuttingDown = false;
@@ -59,6 +64,8 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[${signal}] shutting down — killing terminals...`);
+  manager.beginShutdown();
+  await autostartDone.catch(() => {});
   await manager.killAll();
   server.close(() => process.exit(0));
   // Safety net if server.close hangs on lingering sockets.
