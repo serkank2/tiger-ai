@@ -9,9 +9,12 @@ import { createTerminalsRouter } from './http/terminals.routes.js';
 import { createGroupsRouter } from './http/groups.routes.js';
 import { createSettingsRouter } from './http/settings.routes.js';
 import { createFsRouter } from './http/fs.routes.js';
+import { createPromptsRouter } from './http/prompts.routes.js';
+import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
 
 const state = await loadState();
+await ensurePromptsDir(); // create <repo>/prompts (or KAPLAN_PROMPTS_DIR) if missing
 const manager = new TerminalManager();
 manager.setDefinitions(state.terminals);
 
@@ -34,6 +37,11 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Prompt bodies are larger than the rest of the API; give this router its own bigger
+// JSON parser, mounted BEFORE the global 64kb cap so prompt writes aren't pre-limited.
+app.use('/api/prompts', express.json({ limit: '160kb' }), createPromptsRouter(ctx));
+
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
 app.get('/api/health', (_req, res) => {
@@ -52,9 +60,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   // Honor Express/body-parser statuses (400 malformed JSON, 413 too large, ...).
   const httpStatus =
     explicit && explicit >= 400 && explicit < 600 ? explicit : e.code === 'EINVAL_CWD' ? 400 : 500;
-  const message = err instanceof Error ? err.message : String(err);
+  const rawMessage = err instanceof Error ? err.message : String(err);
   if (httpStatus >= 500) console.error('[api] unhandled error:', err);
-  res.status(httpStatus).json({ error: { message, code: e.code } });
+  // Don't leak internal messages (e.g. absolute fs paths) on 5xx; client only needs 4xx detail.
+  res.status(httpStatus).json({ error: { message: httpStatus >= 500 ? 'internal server error' : rawMessage, code: e.code } });
 });
 
 const server = http.createServer(app);

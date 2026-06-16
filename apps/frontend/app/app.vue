@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
+import PromptComposerModal from '~/components/PromptComposerModal.vue';
 
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
@@ -11,6 +12,7 @@ const showEditor = ref(false);
 const editing = ref<TerminalDto | null>(null);
 const showGroups = ref(false);
 const showSettings = ref(false);
+const showComposer = ref(false);
 
 function openCreate() {
   editing.value = null;
@@ -58,7 +60,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <CommandBar @create="openCreate" @manage-groups="showGroups = true" @open-settings="showSettings = true" />
+    <CommandBar
+      @create="openCreate"
+      @manage-groups="showGroups = true"
+      @open-settings="showSettings = true"
+      @open-composer="showComposer = true"
+    />
     <div class="body">
       <TerminalSidebar @create="openCreate" @edit="openEdit" />
       <TerminalPane v-if="terminals.layoutMode === 'focus'" />
@@ -78,9 +85,10 @@ onBeforeUnmount(() => {
       v-if="showEditor"
       :terminal="editing"
       @close="showEditor = false"
-      @saved="terminals.fetchAll()"
+      @saved="() => terminals.fetchAll().catch(() => {})"
     />
     <GroupsModal v-if="showGroups" @close="showGroups = false" />
+    <PromptComposerModal v-if="showComposer" @close="showComposer = false" />
     <SettingsModal v-if="showSettings && settings.settings" @close="showSettings = false" />
     <NoticeToast />
   </div>

@@ -87,6 +87,7 @@ export class TerminalManager extends EventEmitter {
   async restart(id: TerminalId, cols?: number, rows?: number): Promise<TerminalRuntimeStatus> {
     const def = this.defs.get(id);
     if (!def) throw new Error(`unknown terminal: ${id}`);
+    if (this.stopping) return stoppedStatus(id); // don't respawn during shutdown
     const s = this.ensureSession(def);
     s.updateDefinition(def);
     const size = this.sizes.get(id);
@@ -160,7 +161,9 @@ export class TerminalManager extends EventEmitter {
   private resolveTargets(target: CommandTarget): TerminalId[] {
     switch (target.mode) {
       case 'selected':
-        return [...new Set(target.termIds)].filter((id) => this.defs.has(id));
+        // keep unknown ids (don't filter) so routeInput reports UNKNOWN → client resync,
+        // instead of silently reporting "Sent to 0".
+        return [...new Set(target.termIds)];
       case 'group':
         return [...this.defs.values()].filter((d) => d.groupId === target.groupId).map((d) => d.id);
       case 'all':

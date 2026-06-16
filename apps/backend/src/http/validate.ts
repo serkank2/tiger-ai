@@ -23,8 +23,12 @@ export function normalizeShell(input: unknown): ShellSpec | null {
   if (out.kind === 'custom') {
     if (!out.path) return null;
     if (out.path.startsWith('\\\\') || out.path.startsWith('//')) return null; // no UNC/device shell
+    // The RAW path must already be absolute — path.resolve() would otherwise turn a
+    // relative "foo.exe" into a cwd-relative absolute path and pass the check.
+    if (!path.isAbsolute(out.path)) return null;
+    if (process.platform === 'win32' && !/^[a-zA-Z]:[\\/]/.test(out.path)) return null; // require a drive letter
     const resolved = path.resolve(out.path);
-    if (!path.isAbsolute(resolved) || resolved.startsWith('\\\\')) return null; // require an absolute local path
+    if (resolved.startsWith('\\\\')) return null;
     out.path = resolved;
   }
   return out;

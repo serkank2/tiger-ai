@@ -1,5 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Repo root, resolved from this module's location (apps/backend/src/config.ts → up 3).
+// Used for the default prompts dir so it lands at <repo>/prompts regardless of cwd.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /**
  * Resolve the directory where Kaplan persists its state.
@@ -37,6 +42,13 @@ function resolveHost(): string {
   return '127.0.0.1';
 }
 
+/** Where prompt .md files live. Default: <repo>/prompts. Override: KAPLAN_PROMPTS_DIR. */
+function resolvePromptsDir(): string {
+  const override = process.env.KAPLAN_PROMPTS_DIR;
+  if (override && override.trim()) return path.resolve(override.trim());
+  return path.join(repoRoot, 'prompts');
+}
+
 function parseOrigins(): string[] {
   const raw = process.env.KAPLAN_CORS_ORIGINS;
   if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -48,6 +60,7 @@ export const config = {
   port: Number(process.env.KAPLAN_PORT || 4517),
   dataDir,
   stateFile: path.join(dataDir, 'state.json'),
+  promptsDir: resolvePromptsDir(),
   corsOrigins: parseOrigins(),
 
   // pty output coalescing + scrollback

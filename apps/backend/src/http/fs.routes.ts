@@ -29,7 +29,7 @@ export function createFsRouter(_ctx: AppCtx): Router {
         return;
       }
       res.status(code === 'EACCES' || code === 'EPERM' ? 403 : 400).json({
-        error: { message: err instanceof Error ? err.message : 'cannot access path', code },
+        error: { message: 'cannot access path', code }, // don't leak raw OS message (contains absolute paths)
       });
     }
   });
@@ -50,7 +50,7 @@ export function createFsRouter(_ctx: AppCtx): Router {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
       const status = code === 'ENOENT' ? 404 : code === 'EACCES' || code === 'EPERM' ? 403 : 400;
-      res.status(status).json({ error: { message: err instanceof Error ? err.message : 'cannot read directory', code } });
+      res.status(status).json({ error: { message: 'cannot read directory', code } }); // static msg; no path leak
     }
   });
 

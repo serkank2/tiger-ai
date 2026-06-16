@@ -6,6 +6,27 @@ import type { AppSettings, PersistedState, ShellSpec } from './types.js';
 
 const SCHEMA_VERSION = 1 as const;
 
+let stateTmpSeq = 0; // unique temp-filename counter for atomic writes
+
+// Defensive shape checks so a corrupt-but-valid-JSON state.json can't crash startup
+// (e.g. present()/manager dereferencing a malformed definition).
+function isValidTerminal(t: unknown): boolean {
+  if (!t || typeof t !== 'object') return false;
+  const d = t as Record<string, unknown>;
+  return (
+    typeof d.id === 'string' &&
+    typeof d.name === 'string' &&
+    typeof d.cwd === 'string' &&
+    !!d.shell &&
+    typeof d.shell === 'object'
+  );
+}
+function isValidGroup(g: unknown): boolean {
+  if (!g || typeof g !== 'object') return false;
+  const x = g as Record<string, unknown>;
+  return typeof x.id === 'string' && typeof x.name === 'string';
+}
+
 export function defaultShell(): ShellSpec {
   return { kind: 'system-default' };
 }
@@ -44,8 +65,8 @@ function normalize(parsed: unknown): PersistedState {
   const settings: Partial<AppSettings> = p.settings ?? {};
   return {
     schemaVersion: SCHEMA_VERSION,
-    terminals: Array.isArray(p.terminals) ? p.terminals : [],
-    groups: Array.isArray(p.groups) ? p.groups : [],
+    terminals: Array.isArray(p.terminals) ? p.terminals.filter(isValidTerminal) : [],
+    groups: Array.isArray(p.groups) ? p.groups.filter(isValidGroup) : [],
     settings: {
       ...base.settings,
       ...settings,
@@ -145,11 +166,13 @@ export function saveState(state: PersistedState): Promise<void> {
 async function atomicWrite(state: PersistedState): Promise<void> {
   await ensureDir();
   const file = config.stateFile;
-  const tmp = file + '.tmp';
+  // Unique name + exclusive create ('wx'): never follow/clobber a stale or symlinked
+  // `state.json.tmp`, and don't collide if two instances share a data dir.
+  const tmp = `${file}.${process.pid}.${stateTmpSeq++}.tmp`;
   const bak = file + '.bak';
   const data = JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2);
 
-  const fh = await fs.open(tmp, 'w');
+  const fh = await fs.open(tmp, 'wx');
   try {
     await fh.writeFile(data, 'utf8');
     await fh.sync();
@@ -165,5 +188,10 @@ async function atomicWrite(state: PersistedState): Promise<void> {
   } catch {
     /* no prior file yet */
   }
-  await fs.rename(tmp, file);
+  try {
+    await fs.rename(tmp, file);
+  } catch (e) {
+    await fs.unlink(tmp).catch(() => {});
+    throw e;
+  }
 }

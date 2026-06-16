@@ -127,6 +127,10 @@ export class TerminalSession extends EventEmitter {
       this.disposed = true; // reject any start queued behind this in the lock
       await this.stopImpl({ force: true });
       this.clearInitialTimer();
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
       this.removeAllListeners();
     });
   }
@@ -176,6 +180,15 @@ export class TerminalSession extends EventEmitter {
     if (this.disposed) return this.getStatus(); // removed while this start was queued
     if (this.isAlive()) return this.getStatus();
 
+    // A previous force-kill may have failed, leaving a live process still referenced by
+    // this.proc (state 'failed'). Spawning now would overwrite the reference and orphan
+    // that process — retry the kill, and refuse to start if it's still alive.
+    if (this.proc) {
+      await this.forceKill(this.pid);
+      await this.waitForExit(1500);
+      if (this.proc) throw makeError('previous process is still alive; cannot start', 'EKILL');
+    }
+
     this.stopRequested = false;
     this.cols = cols;
     this.rows = rows;
@@ -199,7 +212,12 @@ export class TerminalSession extends EventEmitter {
       cwd = await this.validateCwd(this.def.cwd);
       const { file, args } = resolveShell(this.def.shell);
       // Merge over process.env so Windows essentials (SystemRoot, ComSpec, Path, ...) survive.
-      const env = { ...process.env, ...(this.def.env ?? {}) } as Record<string, string>;
+      // Drop undefined values so node-pty never receives them (process.env values are string|undefined).
+      const env = Object.fromEntries(
+        Object.entries({ ...process.env, ...(this.def.env ?? {}) }).filter(
+          (e): e is [string, string] => e[1] !== undefined,
+        ),
+      );
       proc = pty.spawn(file, args, { name: 'xterm-256color', cols, rows, cwd, env });
     } catch (err) {
       this.errorInfo = { message: errMessage(err), code: errCode(err) };
@@ -309,7 +327,17 @@ export class TerminalSession extends EventEmitter {
             windowsHide: true,
             stdio: 'ignore',
           });
-          tk.on('close', done);
+          tk.on('close', (code) => {
+            // taskkill returned non-zero (tree not fully killed) → fall back to node-pty's kill
+            if (code !== 0) {
+              try {
+                proc?.kill();
+              } catch {
+                /* already dead */
+              }
+            }
+            done();
+          });
           tk.on('error', () => {
             try {
               proc?.kill();
@@ -348,7 +376,11 @@ export class TerminalSession extends EventEmitter {
   private handleData(data: string): void {
     this.ring += data;
     if (this.ring.length > config.scrollbackBytes) {
-      this.ring = this.ring.slice(this.ring.length - config.scrollbackBytes);
+      let start = this.ring.length - config.scrollbackBytes;
+      // never cut inside a surrogate pair — a lone surrogate breaks the JSON snapshot on re-attach
+      const code = this.ring.charCodeAt(start);
+      if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+      this.ring = this.ring.slice(start);
     }
     this.pending += data;
     if (this.pending.length >= config.outputFlushBytes) {

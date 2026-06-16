@@ -6,6 +6,7 @@ import type {
   TerminalRunState,
   TerminalStatus,
 } from '~/types';
+import { errText } from '~/lib/apiError';
 
 interface StatusInfo {
   pid?: number;
@@ -18,10 +19,6 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const api = useApi();
   const notices = useNoticesStore();
 
-  function errText(e: unknown): string {
-    const err = e as { data?: { error?: { message?: string } }; message?: string };
-    return err?.data?.error?.message ?? err?.message ?? 'Request failed';
-  }
   // Wrap a lifecycle call: surface failures as a toast, and resync on a 404 (stale id).
   async function guarded(label: string, fn: () => Promise<void>) {
     try {

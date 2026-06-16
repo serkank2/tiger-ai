@@ -171,11 +171,14 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
           break;
       }
     } catch (err) {
+      // Catch-all for unexpected handler errors (known cases send specific term.error above).
+      // Log full detail server-side; send a generic message so internal paths don't leak.
+      console.error('[ws] handler error:', err);
       send(peer.ws, {
         type: 'term.error',
         termId: 'termId' in msg ? msg.termId : undefined,
         id: 'id' in msg ? msg.id : undefined,
-        message: err instanceof Error ? err.message : String(err),
+        message: 'internal error',
         code: (err as { code?: string })?.code,
       });
     }

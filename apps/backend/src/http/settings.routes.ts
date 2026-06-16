@@ -36,7 +36,12 @@ export function createSettingsRouter(ctx: AppCtx): Router {
     }
 
     if (typeof body.theme === 'string' && body.theme.trim()) {
-      s.theme = body.theme.trim();
+      const theme = body.theme.trim();
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(theme)) {
+        res.status(400).json({ error: { message: 'invalid theme' } });
+        return;
+      }
+      s.theme = theme;
     }
     if (defaultCwd) s.defaultCwd = defaultCwd;
     if (defaultShell) s.defaultShell = defaultShell;

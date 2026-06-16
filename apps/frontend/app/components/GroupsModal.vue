@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { errText } from '~/lib/apiError';
+
 const emit = defineEmits<{ close: [] }>();
 const groups = useGroupsStore();
 const terminals = useTerminalsStore();
@@ -63,11 +65,6 @@ async function remove(id: string) {
   } catch (e) {
     notices.push(errText(e), 'error');
   }
-}
-
-function errText(e: unknown): string {
-  const err = e as { data?: { error?: { message?: string } }; message?: string };
-  return err?.data?.error?.message ?? err?.message ?? 'Operation failed';
 }
 </script>
 

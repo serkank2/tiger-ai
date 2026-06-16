@@ -1,4 +1,4 @@
-import type { AppSettings, Group, TerminalDto, TerminalInput, TerminalStatus } from '~/types';
+import type { AppSettings, Group, PromptFile, PromptSummary, TerminalDto, TerminalInput, TerminalStatus } from '~/types';
 
 interface Size {
   cols?: number;
@@ -42,5 +42,15 @@ export function useApi() {
     validatePath: (p: string) => req<ValidateResult>(`/api/fs/validate?path=${encodeURIComponent(p)}`),
     listDir: (p?: string) => req<ListResult>(`/api/fs/list${p ? `?path=${encodeURIComponent(p)}` : ''}`),
     getHome: () => req<{ home: string; sep: string }>('/api/fs/home'),
+
+    listPrompts: () => req<{ items: PromptSummary[] }>('/api/prompts'),
+    readPrompt: (path: string) => req<PromptFile>(`/api/prompts/file?path=${encodeURIComponent(path)}`),
+    createPrompt: (path: string, content: string, overwrite = false) =>
+      req<PromptFile>('/api/prompts', { method: 'POST', body: { path, content, overwrite } }),
+    updatePrompt: (path: string, content: string, expectedVersion?: string) =>
+      req<PromptFile>('/api/prompts/file', { method: 'PUT', body: { path, content, expectedVersion } }),
+    deletePrompt: (path: string) => req<void>(`/api/prompts/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+    renamePrompt: (fromPath: string, toPath: string, overwrite = false) =>
+      req<PromptFile>('/api/prompts/rename', { method: 'POST', body: { fromPath, toPath, overwrite } }),
   };
 }

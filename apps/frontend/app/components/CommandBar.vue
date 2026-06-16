@@ -1,5 +1,7 @@
 <script setup lang="ts">
-const emit = defineEmits<{ create: []; manageGroups: []; openSettings: [] }>();
+import { strictestLimit } from '~/lib/shellLimits';
+
+const emit = defineEmits<{ create: []; manageGroups: []; openSettings: []; openComposer: [] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
@@ -23,15 +25,8 @@ const canSend = computed(() => {
   return targetCount.value > 0;
 });
 
-// Long-input guard: a shell truncates a single command line. cmd.exe caps at ~8191
-// chars, Windows PowerShell at ~16K; bash/zsh/custom are effectively unbounded here.
-// Warn (never block) when the command exceeds the strictest limit among the targets.
-const SHELL_LIMITS: Record<string, number> = {
-  cmd: 8190,
-  'system-default': 8190, // may resolve to cmd.exe on Windows — stay conservative
-  powershell: 16380,
-  pwsh: 16380,
-};
+// Long-input guard: a shell truncates a single command line (cmd ~8191, PowerShell ~16K;
+// bash/zsh/custom effectively unbounded). Warn (never block) past the strictest target limit.
 const targetTerminals = computed(() => {
   if (terminals.commandMode === 'selected')
     return terminals.items.filter((t) => terminals.selectedIds.includes(t.id));
@@ -41,10 +36,7 @@ const targetTerminals = computed(() => {
       : [];
   return terminals.items;
 });
-const inputLimit = computed(() => {
-  const limits = targetTerminals.value.map((t) => SHELL_LIMITS[t.shell?.kind ?? 'system-default'] ?? Infinity);
-  return limits.length ? Math.min(...limits) : Infinity;
-});
+const inputLimit = computed(() => strictestLimit(targetTerminals.value.map((t) => t.shell?.kind)));
 const lengthWarning = computed(() => {
   const len = cmd.value.length;
   if (Number.isFinite(inputLimit.value) && len > inputLimit.value) {
@@ -101,6 +93,8 @@ function sendKey(ch: string) {
       <button type="submit" class="send" :disabled="!canSend">Send ⏎</button>
       <p v-if="lengthWarning" class="lenwarn">⚠ {{ lengthWarning }}</p>
     </form>
+
+    <button class="iconbtn" title="Open prompt composer" aria-label="Open prompt composer" @click="emit('openComposer')">⤢</button>
 
     <div class="keys">
       <button

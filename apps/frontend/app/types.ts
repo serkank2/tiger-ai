@@ -86,6 +86,26 @@ export type CommandTarget =
   | { mode: 'group'; groupId: string }
   | { mode: 'all' };
 
+// --- Prompt library (mirror of backend apps/backend/src/prompts/types.ts) ---
+
+export interface PromptMeta {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  target?: string; // 'all' | 'selected' | `group:<name>`
+  run?: boolean;
+}
+export interface PromptSummary extends PromptMeta {
+  path: string;
+  size: number;
+  mtimeMs: number;
+  version: string;
+}
+export interface PromptFile extends PromptSummary {
+  content: string;
+  body: string;
+}
+
 /** Loose shape of any server->client WS message (client reads a subset). */
 export interface ServerMessage {
   type: string;

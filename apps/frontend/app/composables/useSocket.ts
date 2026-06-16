@@ -15,7 +15,23 @@ export interface BroadcastOutcome {
   written: number;
   failed: { termId: string; code: string }[];
 }
-const broadcastWaiters = new Map<string, (r: BroadcastOutcome) => void>();
+interface BroadcastWaiter {
+  resolve: (r: BroadcastOutcome | null) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const broadcastWaiters = new Map<string, BroadcastWaiter>();
+/** Resolve + clear the timer for one pending broadcast (result, error, timeout, or disconnect). */
+function settleWaiter(id: string, value: BroadcastOutcome | null): void {
+  const w = broadcastWaiters.get(id);
+  if (!w) return;
+  clearTimeout(w.timer);
+  broadcastWaiters.delete(id);
+  w.resolve(value);
+}
+/** Settle every pending waiter (used on disconnect / HMR dispose so callers never hang). */
+function settleAllWaiters(value: BroadcastOutcome | null): void {
+  for (const id of [...broadcastWaiters.keys()]) settleWaiter(id, value);
+}
 
 /**
  * Single multiplexed WebSocket to the backend. Routes status/exit/snapshot into
@@ -52,6 +68,7 @@ export function useSocket() {
       if (socket !== ws) return; // a newer socket already replaced us
       socket = null;
       conn.setStatus('disconnected');
+      settleAllWaiters(null); // don't leave broadcast() callers hanging across a disconnect
       scheduleReconnect();
     };
     ws.onerror = () => {
@@ -127,13 +144,7 @@ export function useSocket() {
         const failed = msg.failed ?? [];
         const written = msg.written ?? 0;
         const matched = msg.matched ?? 0;
-        if (msg.id) {
-          const waiter = broadcastWaiters.get(msg.id);
-          if (waiter) {
-            broadcastWaiters.delete(msg.id);
-            waiter({ matched, written, failed });
-          }
-        }
+        if (msg.id) settleWaiter(msg.id, { matched, written, failed });
         if (failed.length === 0) {
           notices.push(`Sent to ${written} terminal(s)`, 'info');
         } else {
@@ -151,6 +162,7 @@ export function useSocket() {
         break;
       }
       case 'term.error':
+        if (msg.id) settleWaiter(msg.id, null); // server-side broadcast error: settle so the caller doesn't wait 5s
         if (msg.message) notices.push(msg.message, 'error');
         if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll().catch(() => {});
         break;
@@ -187,10 +199,8 @@ export function useSocket() {
     const sent = raw({ type: 'term.broadcastInput', id, target, data, appendNewline });
     if (!sent) return Promise.resolve(null);
     return new Promise((resolve) => {
-      broadcastWaiters.set(id, resolve);
-      setTimeout(() => {
-        if (broadcastWaiters.delete(id)) resolve(null);
-      }, 5000);
+      const timer = setTimeout(() => settleWaiter(id, null), 5000);
+      broadcastWaiters.set(id, { resolve, timer });
     });
   }
 
@@ -226,6 +236,6 @@ if (import.meta.hot) {
     outputListeners.clear();
     snapshotListeners.clear();
     attached.clear();
-    broadcastWaiters.clear();
+    settleAllWaiters(null); // resolve pending broadcasts so awaiting callers don't hang on HMR
   });
 }

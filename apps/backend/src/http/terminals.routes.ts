@@ -88,6 +88,10 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: 'env must be a map of string values' } });
       return;
     }
+    if (typeof body.initialCommand === 'string' && body.initialCommand.length > 8192) {
+      res.status(400).json({ error: { message: 'initialCommand too long (max 8192 chars)' } });
+      return;
+    }
     const now = new Date().toISOString();
     const def: TerminalDefinition = {
       id: nanoid(),
@@ -137,6 +141,10 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       patch.cwd = cwdCheck.path;
     }
     if ('initialCommand' in body) {
+      if (typeof body.initialCommand === 'string' && body.initialCommand.length > 8192) {
+        res.status(400).json({ error: { message: 'initialCommand too long (max 8192 chars)' } });
+        return;
+      }
       patch.initialCommand = typeof body.initialCommand === 'string' ? body.initialCommand : undefined;
     }
     if (body.shell !== undefined) {
@@ -156,11 +164,19 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     }
     if ('autostart' in body) patch.autostart = asBool(body.autostart);
 
-    Object.assign(def, patch);
-    def.updatedAt = new Date().toISOString();
-    ctx.manager.upsertDefinition(def);
+    // Re-resolve after the await(s): a concurrent DELETE could have removed this terminal
+    // while we were validating, and mutating the stale object would re-insert a ghost
+    // definition into the manager (manager/state divergence).
+    const current = ctx.state.terminals.find((t) => t.id === req.params.id);
+    if (!current) {
+      res.status(404).json({ error: { message: 'terminal not found' } });
+      return;
+    }
+    Object.assign(current, patch);
+    current.updatedAt = new Date().toISOString();
+    ctx.manager.upsertDefinition(current);
     await ctx.save();
-    res.json(present(ctx, def));
+    res.json(present(ctx, current));
   });
 
   router.delete('/:id', async (req, res) => {

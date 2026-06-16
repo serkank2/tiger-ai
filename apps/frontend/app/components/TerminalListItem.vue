@@ -37,8 +37,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="item" :class="{ active }" @click="emit('select')">
-    <input class="chk" type="checkbox" :checked="selected" @click.stop @change="emit('toggle')" />
+  <div
+    class="item"
+    :class="{ active }"
+    tabindex="0"
+    @click="emit('select')"
+    @keydown.enter.self="emit('select')"
+    @keydown.space.self.prevent="emit('select')"
+  >
+    <input
+      class="chk"
+      type="checkbox"
+      :checked="selected"
+      :aria-label="`Select ${terminal.name}`"
+      @click.stop
+      @change="emit('toggle')"
+    />
     <StatusDot :state="terminal.status.state" />
     <div class="meta">
       <div class="name">{{ terminal.name }}</div>

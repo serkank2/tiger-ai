@@ -32,6 +32,7 @@ export function useTerminalView(
   let mousedown: (() => void) | null = null;
   let mountedHost: HTMLElement | null = null;
   let mountedId: string | null = null;
+  let attachedId: string | null = null; // set only AFTER socket.attach — detach only this (correct ref-count)
   let mountToken = 0;
   let rafId: number | null = null;
   let lastCols = 0;
@@ -42,7 +43,7 @@ export function useTerminalView(
       cancelAnimationFrame(rafId);
       rafId = null;
     }
-    if (mountedId) socket.detach(mountedId);
+    if (attachedId) socket.detach(attachedId); // only detach what we actually attached
     if (mousedown && mountedHost) mountedHost.removeEventListener('mousedown', mousedown);
     offOutput?.();
     offSnapshot?.();
@@ -52,6 +53,7 @@ export function useTerminalView(
     term?.dispose();
     offOutput = offSnapshot = onData = onResize = ro = term = fit = mousedown = mountedHost = null;
     mountedId = null;
+    attachedId = null;
   }
 
   function safeFit() {
@@ -128,6 +130,7 @@ export function useTerminalView(
     // Attach AFTER the pty has been told the real size, so the replayed snapshot
     // is rendered at the correct dimensions (no corruption in grid under paint latency).
     socket.attach(id);
+    attachedId = id; // attach succeeded — teardown may now detach it
     if (opts.focusOnMount && !isTypingElsewhere()) t.focus();
 
     ro = new ResizeObserver(() => {
