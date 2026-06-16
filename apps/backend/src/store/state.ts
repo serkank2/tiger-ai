@@ -12,6 +12,7 @@ export function defaultShell(): ShellSpec {
 
 export function defaultSettings(): AppSettings {
   return {
+    theme: 'kaplan-dark',
     defaultCwd: os.homedir(),
     defaultShell: defaultShell(),
     commandRouting: {

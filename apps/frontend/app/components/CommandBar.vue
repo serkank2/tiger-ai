@@ -50,14 +50,19 @@ function send() {
         <option :value="null" disabled>Choose group…</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <button class="iconbtn" title="Manage groups" @click="emit('manageGroups')">🗂</button>
-      <button class="iconbtn" title="Settings" @click="emit('openSettings')">⚙</button>
+      <button class="iconbtn" title="Manage groups" aria-label="Manage groups" @click="emit('manageGroups')">🗂</button>
+      <button class="iconbtn" title="Settings" aria-label="Settings" @click="emit('openSettings')">⚙</button>
     </div>
 
     <form class="cmd" @submit.prevent="send">
       <input v-model="cmd" :placeholder="`Send command to ${targetCount} terminal(s)…`" spellcheck="false" />
       <button type="submit" class="send" :disabled="!canSend">Send ⏎</button>
     </form>
+
+    <div class="seg layout">
+      <button :class="{ on: terminals.layoutMode === 'focus' }" title="Single focused terminal" aria-label="Focus view" @click="terminals.layoutMode = 'focus'">▭</button>
+      <button :class="{ on: terminals.layoutMode === 'grid' }" title="Tiled grid view" aria-label="Grid view" @click="terminals.layoutMode = 'grid'">▦</button>
+    </div>
 
     <button class="new" @click="emit('create')">+ New Terminal</button>
   </header>

@@ -7,7 +7,8 @@ let backoff = 500;
 let msgSeq = 0;
 const outputListeners = new Map<string, Set<(data: string) => void>>();
 const snapshotListeners = new Map<string, Set<(data: string) => void>>();
-const attached = new Set<string>();
+// ref-counted: a terminal may be bound by >1 view briefly (focus<->grid swap)
+const attached = new Map<string, number>();
 
 /**
  * Single multiplexed WebSocket to the backend. Routes status/exit/snapshot into
@@ -36,7 +37,7 @@ export function useSocket() {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      for (const id of attached) raw({ type: 'term.attach', termId: id });
+      for (const id of attached.keys()) raw({ type: 'term.attach', termId: id });
       // Reconcile every terminal's status — some may have changed while disconnected.
       void terminals.fetchAll().catch(() => {});
     };
@@ -133,12 +134,18 @@ export function useSocket() {
   }
 
   function attach(id: string): void {
-    attached.add(id);
-    raw({ type: 'term.attach', termId: id });
+    const n = (attached.get(id) ?? 0) + 1;
+    attached.set(id, n);
+    if (n === 1) raw({ type: 'term.attach', termId: id }); // only on first binder
   }
   function detach(id: string): void {
-    attached.delete(id);
-    raw({ type: 'term.detach', termId: id });
+    const n = (attached.get(id) ?? 0) - 1;
+    if (n <= 0) {
+      attached.delete(id);
+      raw({ type: 'term.detach', termId: id }); // only when the last binder leaves
+    } else {
+      attached.set(id, n);
+    }
   }
   function input(id: string, data: string): boolean {
     return raw({ type: 'term.input', termId: id, data });

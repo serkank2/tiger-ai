@@ -3,6 +3,7 @@ import type { AppSettings, ShellKind } from '~/types';
 
 const emit = defineEmits<{ close: [] }>();
 const settings = useSettingsStore();
+const theme = useThemeStore();
 const notices = useNoticesStore();
 const api = useApi();
 
@@ -82,6 +83,28 @@ async function save() {
   <div class="backdrop" @click.self="emit('close')">
     <div class="modal" role="dialog" aria-modal="true">
       <h2>Settings</h2>
+
+      <div class="field">
+        <span>Theme <i>(applies instantly)</i></span>
+        <div class="themes">
+          <button
+            v-for="t in theme.themes"
+            :key="t.id"
+            type="button"
+            class="swatch"
+            :class="{ on: theme.id === t.id }"
+            :style="{
+              background: t.vars['--bg'],
+              color: t.vars['--text'],
+              borderColor: theme.id === t.id ? t.vars['--accent'] : t.vars['--border-strong'],
+            }"
+            @click="theme.set(t.id)"
+          >
+            <span class="sdot" :style="{ background: t.vars['--accent'] }" />
+            {{ t.label }}
+          </button>
+        </div>
+      </div>
 
       <label class="field">
         <span>Default working directory <i>(for new terminals)</i></span>
@@ -165,6 +188,32 @@ h2 {
 .field input,
 .field select {
   width: 100%;
+}
+.themes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+.swatch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.swatch.on {
+  border-width: 2px;
+}
+.sdot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
 }
 .cwd-row {
   display: flex;

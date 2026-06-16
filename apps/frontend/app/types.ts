@@ -73,6 +73,7 @@ export interface CommandRoutingSettings {
 }
 
 export interface AppSettings {
+  theme: string;
   defaultCwd: string;
   defaultShell: ShellSpec;
   commandRouting: CommandRoutingSettings;

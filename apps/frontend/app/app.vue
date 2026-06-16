@@ -4,6 +4,7 @@ import type { TerminalDto } from '~/types';
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const settings = useSettingsStore();
+const theme = useThemeStore();
 const socket = useSocket();
 
 const showEditor = ref(false);
@@ -25,6 +26,8 @@ async function loadAll() {
     await Promise.all([terminals.fetchAll(), groups.load(), settings.load()]);
   } catch (err) {
     console.error('[kaplan] initial load failed (is the backend running?)', err);
+  } finally {
+    theme.init(settings.settings?.theme); // apply persisted theme (default if unavailable)
   }
 }
 
@@ -58,7 +61,8 @@ onBeforeUnmount(() => {
     <CommandBar @create="openCreate" @manage-groups="showGroups = true" @open-settings="showSettings = true" />
     <div class="body">
       <TerminalSidebar @create="openCreate" @edit="openEdit" />
-      <TerminalPane />
+      <TerminalPane v-if="terminals.layoutMode === 'focus'" />
+      <TerminalGrid v-else @create="openCreate" />
     </div>
 
     <div v-if="terminals.loadError && !terminals.loaded" class="backend-down">

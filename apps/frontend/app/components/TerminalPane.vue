@@ -1,143 +1,14 @@
 <script setup lang="ts">
-import { Terminal, type IDisposable, type ITheme } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-
 const terminals = useTerminalsStore();
-const socket = useSocket();
 
 const host = ref<HTMLElement | null>(null);
 const active = computed(() => terminals.active);
+const activeId = computed(() => terminals.activeId);
 const running = computed(
   () => active.value?.status.state === 'running' || active.value?.status.state === 'starting',
 );
 
-const THEME: ITheme = {
-  background: '#0f0d0a',
-  foreground: '#ece6db',
-  cursor: '#fb923c',
-  cursorAccent: '#0f0d0a',
-  selectionBackground: 'rgba(245,158,66,0.30)',
-  black: '#15130f',
-  red: '#e5564b',
-  green: '#6cc56c',
-  yellow: '#e0b03a',
-  blue: '#5aa9e6',
-  magenta: '#c08cd6',
-  cyan: '#5bc2b8',
-  white: '#cfc7b8',
-  brightBlack: '#6f6557',
-  brightRed: '#ff6f63',
-  brightGreen: '#84d784',
-  brightYellow: '#f0c34e',
-  brightBlue: '#74bdf5',
-  brightMagenta: '#d6a6e8',
-  brightCyan: '#74d8cd',
-  brightWhite: '#ece6db',
-};
-
-let term: Terminal | null = null;
-let fit: FitAddon | null = null;
-let offOutput: (() => void) | null = null;
-let offSnapshot: (() => void) | null = null;
-let onData: IDisposable | null = null;
-let onResize: IDisposable | null = null;
-let ro: ResizeObserver | null = null;
-let mountedId: string | null = null;
-let mountToken = 0; // guards against overlapping async mounts on rapid switches
-
-function teardown() {
-  if (mountedId) socket.detach(mountedId);
-  offOutput?.();
-  offSnapshot?.();
-  onData?.dispose();
-  onResize?.dispose();
-  ro?.disconnect();
-  term?.dispose();
-  offOutput = offSnapshot = onData = onResize = ro = term = fit = null;
-  mountedId = null;
-}
-
-function safeFit() {
-  try {
-    fit?.fit();
-  } catch {
-    /* element not measurable yet */
-  }
-}
-
-function isTypingElsewhere(): boolean {
-  const el = document.activeElement as HTMLElement | null;
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-}
-
-async function mount(id: string) {
-  const token = ++mountToken;
-  teardown();
-  await nextTick();
-  if (token !== mountToken || !host.value) return; // superseded or unmounted
-
-  const t = new Terminal({
-    cursorBlink: true,
-    fontFamily: "'Cascadia Code', 'JetBrains Mono', ui-monospace, Consolas, monospace",
-    fontSize: 13,
-    lineHeight: 1.15,
-    scrollback: 8000,
-    theme: THEME,
-    allowProposedApi: true,
-  });
-  const f = new FitAddon();
-  t.loadAddon(f);
-  t.loadAddon(new WebLinksAddon());
-  t.open(host.value);
-
-  // commit to instance state — this mount is the current one
-  term = t;
-  fit = f;
-  mountedId = id;
-
-  safeFit();
-  // register listeners BEFORE attach so the snapshot/replay isn't missed.
-  // snapshot = full buffer on (re)attach: reset first so reconnects don't duplicate.
-  offSnapshot = socket.onSnapshot(id, (data) => {
-    t.reset();
-    t.write(data);
-  });
-  offOutput = socket.onOutput(id, (data) => t.write(data));
-  onData = t.onData((data) => socket.input(id, data));
-  onResize = t.onResize(({ cols, rows }) => socket.resize(id, cols, rows));
-  socket.resize(id, t.cols, t.rows); // size the pty before the server replays
-  socket.attach(id);
-
-  await nextTick();
-  if (token !== mountToken) return; // a newer mount took over during the await
-  safeFit();
-  socket.resize(id, t.cols, t.rows);
-  if (!isTypingElsewhere()) t.focus();
-
-  ro = new ResizeObserver(() => {
-    if (token === mountToken) safeFit();
-  });
-  ro.observe(host.value);
-}
-
-watch(
-  () => terminals.activeId,
-  (id) => {
-    if (id) void mount(id);
-    else {
-      mountToken++; // cancel any in-flight mount
-      teardown();
-    }
-  },
-);
-onMounted(() => {
-  if (terminals.activeId) void mount(terminals.activeId);
-});
-onBeforeUnmount(() => {
-  mountToken++; // cancel any in-flight mount
-  teardown();
-});
+useTerminalView(host, activeId, { focusOnMount: true });
 </script>
 
 <template>

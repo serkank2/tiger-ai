@@ -38,6 +38,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const selectedIds = ref<string[]>([]);
   const commandMode = ref<CommandTargetMode>('all');
   const commandGroupId = ref<string | null>(null);
+  const layoutMode = ref<'focus' | 'grid'>('focus');
   const loaded = ref(false);
   const loadError = ref<string | null>(null);
 
@@ -159,6 +160,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     selectedIds,
     commandMode,
     commandGroupId,
+    layoutMode,
     loaded,
     loadError,
     byId,

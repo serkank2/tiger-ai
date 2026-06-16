@@ -13,6 +13,9 @@ export function createSettingsRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const s = ctx.state.settings;
 
+    if (typeof body.theme === 'string' && body.theme.trim()) {
+      s.theme = body.theme.trim();
+    }
     if (typeof body.defaultCwd === 'string' && body.defaultCwd.trim()) {
       s.defaultCwd = body.defaultCwd;
     }
