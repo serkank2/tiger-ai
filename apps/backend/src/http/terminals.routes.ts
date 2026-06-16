@@ -102,6 +102,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       shell,
       env: isStringRecord(body.env) ? body.env : undefined,
       autostart: asBool(body.autostart),
+      protected: asBool(body.protected),
       createdAt: now,
       updatedAt: now,
     };
@@ -163,6 +164,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       patch.env = isStringRecord(body.env) ? body.env : undefined;
     }
     if ('autostart' in body) patch.autostart = asBool(body.autostart);
+    if ('protected' in body) patch.protected = asBool(body.protected);
 
     // Re-resolve after the await(s): a concurrent DELETE could have removed this terminal
     // while we were validating, and mutating the stale object would re-insert a ghost

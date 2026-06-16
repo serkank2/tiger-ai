@@ -31,6 +31,8 @@ export interface TerminalDefinition {
   shell: ShellSpec;
   env?: Record<string, string>;
   autostart?: boolean;
+  /** Excluded from fan-out/bulk commands by default; act on it directly or unprotect first. */
+  protected?: boolean;
   createdAt: string;
   updatedAt: string;
 }

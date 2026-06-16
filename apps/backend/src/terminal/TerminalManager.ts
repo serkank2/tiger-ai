@@ -178,8 +178,14 @@ export class TerminalManager extends EventEmitter {
     let written = 0;
 
     for (const id of ids) {
-      if (!this.defs.has(id)) {
+      const def = this.defs.get(id);
+      if (!def) {
         failed.push({ termId: id, code: 'UNKNOWN' });
+        continue;
+      }
+      if (def.protected) {
+        // protected terminals never receive a fan-out/broadcast command
+        failed.push({ termId: id, code: 'PROTECTED' });
         continue;
       }
       if (!this.hasSession(id)) {

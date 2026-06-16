@@ -60,7 +60,7 @@ async function remove(id: string) {
     await terminals.fetchAll();
     if (terminals.commandGroupId === id) {
       terminals.commandGroupId = null;
-      if (terminals.commandMode === 'group') terminals.commandMode = 'all';
+      if (terminals.commandMode === 'group') terminals.commandMode = 'selected';
     }
   } catch (e) {
     notices.push(errText(e), 'error');

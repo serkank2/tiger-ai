@@ -37,10 +37,16 @@ function commit(ids: string[]) {
 }
 function addTerm(id: string) {
   if (selected.value.has(id)) return;
+  if (terminals.byId[id]?.protected) {
+    status.value = `${terminals.byId[id]?.name ?? 'Terminal'} is protected — excluded`;
+    return;
+  }
   commit([...props.modelValue, id]);
 }
 function termIdsOfGroup(gid: string | null): string[] {
-  return terminals.items.filter((t) => (t.groupId && groups.byId[t.groupId] ? t.groupId : null) === gid).map((t) => t.id);
+  return terminals.items
+    .filter((t) => (t.groupId && groups.byId[t.groupId] ? t.groupId : null) === gid && !t.protected)
+    .map((t) => t.id);
 }
 function addGroup(gid: string | null) {
   commit([...props.modelValue, ...termIdsOfGroup(gid)]);
@@ -87,13 +93,14 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
             v-for="t in list"
             :key="t.id"
             class="trow"
-            :class="{ added: selected.has(t.id) }"
-            draggable="true"
+            :class="{ added: selected.has(t.id), prot: t.protected }"
+            :draggable="!t.protected"
             @dragstart="onDragStart($event, `term:${t.id}`)"
           >
             <span class="dot" :class="isRunning(t) ? 'on' : 'off'" />
-            <span class="tname" :title="t.cwd">{{ t.name }}</span>
-            <button v-if="!selected.has(t.id)" class="add" title="Add" @click="addTerm(t.id)">+</button>
+            <span class="tname" :title="t.cwd"><span v-if="t.protected" class="lk">🔒</span>{{ t.name }}</span>
+            <span v-if="t.protected" class="addedtag" title="Protected — excluded from sends">protected</span>
+            <button v-else-if="!selected.has(t.id)" class="add" title="Add" @click="addTerm(t.id)">+</button>
             <span v-else class="addedtag">added</span>
           </div>
         </template>
@@ -136,6 +143,8 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
 .trow { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; cursor: grab; border-top: 1px solid var(--border); font-size: 13px; }
 .trow:hover { background: var(--bg-elev-2); }
 .trow.added { opacity: 0.5; }
+.trow.prot { opacity: 0.55; cursor: not-allowed; }
+.lk { margin-right: 4px; font-size: 10px; }
 .tname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.on { background: var(--green); }

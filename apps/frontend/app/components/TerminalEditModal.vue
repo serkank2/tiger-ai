@@ -46,6 +46,7 @@ const form = reactive({
   shellArgs: (props.terminal?.shell.args ?? []).join(' '),
   env: envToText(props.terminal?.env),
   autostart: props.terminal?.autostart ?? false,
+  protected: props.terminal?.protected ?? false,
   // AI CLI quick-start presets — build the initial command (still editable below)
   aiTool: '' as '' | 'claude' | 'codex',
   aiModel: '',
@@ -152,6 +153,7 @@ async function save() {
     shell,
     env: parseEnv(form.env),
     autostart: form.autostart,
+    protected: form.protected,
   };
 
   try {
@@ -263,6 +265,10 @@ async function save() {
       <label class="check">
         <input v-model="form.autostart" type="checkbox" />
         <span>Auto-start when Kaplan launches</span>
+      </label>
+      <label class="check">
+        <input v-model="form.protected" type="checkbox" />
+        <span>🔒 Protected — exclude from bulk &amp; fan-out (all/group) commands</span>
       </label>
 
       <template v-if="!isEdit">

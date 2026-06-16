@@ -66,11 +66,11 @@ function resetDraft() {
 // Pre-fill the target picker from a prompt's saved `target` hint.
 function applyTargetHint(target?: string) {
   if (!target) return;
-  if (target === 'all') selectedTermIds.value = terminals.items.map((t) => t.id);
+  if (target === 'all') selectedTermIds.value = terminals.items.filter((t) => !t.protected).map((t) => t.id);
   else if (target.startsWith('group:')) {
     const name = target.slice(6);
     const g = groups.groups.find((x) => x.name === name);
-    if (g) selectedTermIds.value = terminals.items.filter((t) => t.groupId === g.id).map((t) => t.id);
+    if (g) selectedTermIds.value = terminals.items.filter((t) => t.groupId === g.id && !t.protected).map((t) => t.id);
   }
   // 'selected' → leave whatever the user already had
 }
@@ -186,7 +186,7 @@ async function doSend() {
   if (!canSend.value) return;
   sending.value = true;
   try {
-    const ids = [...selectedTermIds.value];
+    const ids = terminals.unprotectedIds([...selectedTermIds.value]); // protected never receive a send
     const date = today();
     let delivered = false;
     if (perTerminal.value) {

@@ -49,13 +49,15 @@ onBeforeUnmount(() => {
       class="chk"
       type="checkbox"
       :checked="selected"
-      :aria-label="`Select ${terminal.name}`"
+      :disabled="terminal.protected"
+      :title="terminal.protected ? 'Protected — excluded from bulk select/send' : ''"
+      :aria-label="terminal.protected ? `${terminal.name} (protected, not bulk-selectable)` : `Select ${terminal.name}`"
       @click.stop
       @change="emit('toggle')"
     />
     <StatusDot :state="terminal.status.state" />
     <div class="meta">
-      <div class="name">{{ terminal.name }}</div>
+      <div class="name"><span v-if="terminal.protected" class="lock" title="Protected — excluded from bulk/fan-out commands">🔒</span>{{ terminal.name }}</div>
       <div class="cwd" :title="terminal.cwd">{{ terminal.cwd }}</div>
       <div v-if="terminal.lastOutput" class="out">{{ terminal.lastOutput }}</div>
     </div>
@@ -97,6 +99,11 @@ onBeforeUnmount(() => {
 .meta {
   min-width: 0;
   flex: 1;
+}
+.lock {
+  font-size: 10px;
+  margin-right: 4px;
+  opacity: 0.85;
 }
 .name {
   font-weight: 600;

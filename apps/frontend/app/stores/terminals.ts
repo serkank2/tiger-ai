@@ -33,7 +33,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const items = ref<TerminalDto[]>([]);
   const activeId = ref<string | null>(null);
   const selectedIds = ref<string[]>([]);
-  const commandMode = ref<CommandTargetMode>('all');
+  const commandMode = ref<CommandTargetMode>('selected'); // safe default (not 'all' — avoids accidental fan-out)
   const commandGroupId = ref<string | null>(null);
   const layoutMode = ref<'focus' | 'grid'>('focus');
   const loaded = ref(false);
@@ -42,7 +42,17 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const byId = computed<Record<string, TerminalDto>>(() => Object.fromEntries(items.value.map((t) => [t.id, t])));
   const active = computed(() => (activeId.value ? byId.value[activeId.value] ?? null : null));
   const someSelected = computed(() => selectedIds.value.length > 0);
-  const allSelected = computed(() => items.value.length > 0 && selectedIds.value.length === items.value.length);
+  // "all" means all SELECTABLE (unprotected) terminals — protected ones are excluded from bulk.
+  const allSelected = computed(() => {
+    const sel = items.value.filter((t) => !t.protected);
+    return sel.length > 0 && sel.every((t) => selectedIds.value.includes(t.id));
+  });
+  const isProtected = (id: string) => byId.value[id]?.protected === true;
+  const unprotectedIds = (ids: string[]) => ids.filter((id) => !isProtected(id));
+  function notifyProtectedSkipped(total: number, usable: number) {
+    const n = total - usable;
+    if (n > 0) notices.push(`Skipped ${n} protected terminal(s)`, 'info');
+  }
 
   async function fetchAll() {
     try {
@@ -101,10 +111,14 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   // bulk actions over the current multi-selection
   async function startMany(ids: string[]) {
-    for (const id of [...ids]) await start(id);
+    const usable = unprotectedIds(ids);
+    for (const id of usable) await start(id);
+    notifyProtectedSkipped(ids.length, usable.length);
   }
   async function stopMany(ids: string[]) {
-    for (const id of [...ids]) await stop(id);
+    const usable = unprotectedIds(ids);
+    for (const id of usable) await stop(id);
+    notifyProtectedSkipped(ids.length, usable.length);
   }
   async function startSelected() {
     await startMany(selectedIds.value);
@@ -113,7 +127,9 @@ export const useTerminalsStore = defineStore('terminals', () => {
     await stopMany(selectedIds.value);
   }
   async function removeSelected() {
-    for (const id of [...selectedIds.value]) await remove(id);
+    const usable = unprotectedIds([...selectedIds.value]);
+    for (const id of usable) await remove(id);
+    notifyProtectedSkipped(selectedIds.value.length, usable.length);
   }
 
   /** Clone an existing terminal's config as a new "<name> copy". */
@@ -178,7 +194,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     selectedIds.value = [];
   }
   function selectAll() {
-    selectedIds.value = items.value.map((t) => t.id);
+    selectedIds.value = items.value.filter((t) => !t.protected).map((t) => t.id);
   }
   /** Select every terminal, or clear if all are already selected. */
   function toggleSelectAll() {
@@ -187,21 +203,24 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
   /** Select all ids in the list (a group), or deselect them if they're already all selected. */
   function toggleGroup(ids: string[]) {
-    const allSel = ids.length > 0 && ids.every((id) => selectedIds.value.includes(id));
+    const usable = unprotectedIds(ids); // protected terminals aren't bulk-selectable
+    const allSel = usable.length > 0 && usable.every((id) => selectedIds.value.includes(id));
     if (allSel) {
-      const set = new Set(ids);
+      const set = new Set(usable);
       selectedIds.value = selectedIds.value.filter((id) => !set.has(id));
     } else {
-      selectedIds.value = [...new Set([...selectedIds.value, ...ids])];
+      selectedIds.value = [...new Set([...selectedIds.value, ...usable])];
     }
   }
 
   /** Build the WS command target from the current UI selection. */
   function buildTarget(): CommandTarget {
     if (commandMode.value === 'selected') return { mode: 'selected', termIds: [...selectedIds.value] };
-    // group mode requires a real group; otherwise fall back to 'all' (never emit groupId:'')
-    if (commandMode.value === 'group' && commandGroupId.value) {
-      return { mode: 'group', groupId: commandGroupId.value };
+    if (commandMode.value === 'group') {
+      // a real group, or empty (never 'all') when no group is chosen — send is disabled anyway
+      return commandGroupId.value
+        ? { mode: 'group', groupId: commandGroupId.value }
+        : { mode: 'selected', termIds: [] };
     }
     return { mode: 'all' };
   }
@@ -242,6 +261,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     toggleGroup,
     someSelected,
     allSelected,
+    isProtected,
+    unprotectedIds,
     buildTarget,
   };
 });

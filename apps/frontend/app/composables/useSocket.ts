@@ -154,9 +154,12 @@ export function useSocket() {
             NOT_RUNNING: 'not running',
             START_FAILED: 'failed to start',
             UNKNOWN: 'unknown',
+            PROTECTED: 'protected',
           };
           const parts = Object.entries(counts).map(([c, n]) => `${n} ${labels[c] ?? c.toLowerCase()}`);
-          notices.push(`Sent to ${written}/${matched} — ${parts.join(', ')}`, written > 0 ? 'info' : 'error');
+          // protected-only skips are intentional → info, not error
+          const realFailure = failed.some((f) => f.code !== 'PROTECTED');
+          notices.push(`Sent to ${written}/${matched} — ${parts.join(', ')}`, written > 0 || !realFailure ? 'info' : 'error');
           if (counts.UNKNOWN) void terminals.fetchAll().catch(() => {});
         }
         break;

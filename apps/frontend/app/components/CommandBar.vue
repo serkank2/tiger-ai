@@ -10,13 +10,14 @@ const socket = useSocket();
 const cmd = ref('');
 
 const targetCount = computed(() => {
-  if (terminals.commandMode === 'selected') return terminals.selectedIds.length;
+  // count only deliverable (unprotected) targets — protected terminals are skipped server-side
+  if (terminals.commandMode === 'selected') return terminals.unprotectedIds(terminals.selectedIds).length;
   if (terminals.commandMode === 'group') {
     return terminals.commandGroupId
-      ? terminals.items.filter((t) => t.groupId === terminals.commandGroupId).length
+      ? terminals.items.filter((t) => t.groupId === terminals.commandGroupId && !t.protected).length
       : 0;
   }
-  return terminals.items.length;
+  return terminals.items.filter((t) => !t.protected).length;
 });
 
 const canSend = computed(() => {
@@ -28,13 +29,14 @@ const canSend = computed(() => {
 // Long-input guard: a shell truncates a single command line (cmd ~8191, PowerShell ~16K;
 // bash/zsh/custom effectively unbounded). Warn (never block) past the strictest target limit.
 const targetTerminals = computed(() => {
+  // protected terminals never receive the command, so they don't affect the length warning
   if (terminals.commandMode === 'selected')
-    return terminals.items.filter((t) => terminals.selectedIds.includes(t.id));
+    return terminals.items.filter((t) => terminals.selectedIds.includes(t.id) && !t.protected);
   if (terminals.commandMode === 'group')
     return terminals.commandGroupId
-      ? terminals.items.filter((t) => t.groupId === terminals.commandGroupId)
+      ? terminals.items.filter((t) => t.groupId === terminals.commandGroupId && !t.protected)
       : [];
-  return terminals.items;
+  return terminals.items.filter((t) => !t.protected);
 });
 const inputLimit = computed(() => strictestLimit(targetTerminals.value.map((t) => t.shell?.kind)));
 const lengthWarning = computed(() => {

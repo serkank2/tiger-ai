@@ -40,6 +40,7 @@ export interface TerminalDef {
   shell: ShellSpec;
   env?: Record<string, string>;
   autostart?: boolean;
+  protected?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +60,7 @@ export interface TerminalInput {
   shell: ShellSpec;
   env?: Record<string, string>;
   autostart?: boolean;
+  protected?: boolean;
 }
 
 export interface Group {
