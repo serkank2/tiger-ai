@@ -30,6 +30,12 @@ const form = reactive({
 const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
 const error = ref('');
+const showPicker = ref(false);
+function onPickFolder(p: string) {
+  form.defaultCwd = p;
+  showPicker.value = false;
+  void checkCwd();
+}
 
 async function checkCwd() {
   const p = form.defaultCwd.trim();
@@ -110,6 +116,7 @@ async function save() {
         <span>Default working directory <i>(for new terminals)</i></span>
         <span class="cwd-row">
           <input v-model="form.defaultCwd" spellcheck="false" placeholder="C:\path" @blur="checkCwd" />
+          <button type="button" class="browse" title="Browse folders" @click="showPicker = true">📁</button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -147,6 +154,8 @@ async function save() {
       </div>
     </div>
   </div>
+
+  <FolderPicker v-if="showPicker" :initial="form.defaultCwd" @select="onPickFolder" @close="showPicker = false" />
 </template>
 
 <style scoped>
@@ -223,6 +232,15 @@ h2 {
 .cwd-row input {
   flex: 1;
   font-family: var(--font-mono);
+}
+.browse {
+  flex: none;
+  width: 38px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+}
+.browse:hover {
+  border-color: var(--accent);
 }
 .flag {
   width: 20px;

@@ -100,6 +100,32 @@ export const useTerminalsStore = defineStore('terminals', () => {
     await guarded('Restart', async () => applyStatusObj(id, await api.restartTerminal(id, size)));
   }
 
+  // bulk actions over the current multi-selection
+  async function startSelected() {
+    for (const id of [...selectedIds.value]) await start(id);
+  }
+  async function stopSelected() {
+    for (const id of [...selectedIds.value]) await stop(id);
+  }
+  async function removeSelected() {
+    for (const id of [...selectedIds.value]) await remove(id);
+  }
+
+  /** Clone an existing terminal's config as a new "<name> copy". */
+  async function duplicate(id: string) {
+    const t = byId.value[id];
+    if (!t) return;
+    await create({
+      name: `${t.name} copy`,
+      groupId: t.groupId,
+      cwd: t.cwd,
+      initialCommand: t.initialCommand,
+      shell: t.shell,
+      env: t.env,
+      autostart: t.autostart,
+    });
+  }
+
   function replace(dto: TerminalDto) {
     const i = items.value.findIndex((t) => t.id === dto.id);
     if (i >= 0) items.value[i] = dto;
@@ -176,6 +202,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     start,
     stop,
     restart,
+    startSelected,
+    stopSelected,
+    removeSelected,
+    duplicate,
     replace,
     applyStatus,
     applyExit,

@@ -29,6 +29,17 @@ async function send() {
   // keep the input for retry if nothing actually ran (all targets failed, or not sent)
   if (result && result.written > 0) cmd.value = '';
 }
+
+// one-click control keys sent to the current target (raw byte, no trailing newline)
+const QUICK_KEYS = [
+  { label: '^C', char: '\x03', title: 'Ctrl+C (interrupt)' },
+  { label: '^D', char: '\x04', title: 'Ctrl+D (EOF)' },
+  { label: 'Esc', char: '\x1b', title: 'Escape' },
+];
+function sendKey(ch: string) {
+  if (!canSend.value) return;
+  void socket.broadcast(terminals.buildTarget(), ch, false);
+}
 </script>
 
 <template>
@@ -59,6 +70,20 @@ async function send() {
       <input v-model="cmd" :placeholder="`Send command to ${targetCount} terminal(s)…`" spellcheck="false" />
       <button type="submit" class="send" :disabled="!canSend">Send ⏎</button>
     </form>
+
+    <div class="keys">
+      <button
+        v-for="k in QUICK_KEYS"
+        :key="k.label"
+        type="button"
+        class="key"
+        :disabled="!canSend"
+        :title="`Send ${k.title} to ${terminals.commandMode}`"
+        @click="sendKey(k.char)"
+      >
+        {{ k.label }}
+      </button>
+    </div>
 
     <div class="seg layout">
       <button :class="{ on: terminals.layoutMode === 'focus' }" title="Single focused terminal" aria-label="Focus view" @click="terminals.layoutMode = 'focus'">▭</button>
@@ -171,6 +196,25 @@ async function send() {
   background: var(--accent-strong);
 }
 .send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.keys {
+  display: flex;
+  gap: 4px;
+}
+.key {
+  border: 1px solid var(--border-strong);
+  padding: 7px 9px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.key:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.key:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

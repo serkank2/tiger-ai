@@ -5,6 +5,23 @@ const emit = defineEmits<{ create: []; edit: [terminal: TerminalDto] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 
+// two-step confirm for bulk delete
+const confirmBulk = ref(false);
+let bulkTimer: ReturnType<typeof setTimeout> | null = null;
+function onBulkDelete() {
+  if (bulkTimer) clearTimeout(bulkTimer);
+  if (confirmBulk.value) {
+    confirmBulk.value = false;
+    void terminals.removeSelected();
+  } else {
+    confirmBulk.value = true;
+    bulkTimer = setTimeout(() => (confirmBulk.value = false), 2500);
+  }
+}
+onBeforeUnmount(() => {
+  if (bulkTimer) clearTimeout(bulkTimer);
+});
+
 // group terminals by groupId, ungrouped last
 const sections = computed(() => {
   const map = new Map<string | null, TerminalDto[]>();
@@ -34,7 +51,19 @@ function groupColor(id: string | null) {
 
     <div v-if="terminals.selectedIds.length" class="selbar">
       <span>{{ terminals.selectedIds.length }} selected</span>
-      <button class="link" @click="terminals.clearSelection()">clear</button>
+      <span class="acts">
+        <button class="act" title="Start selected" @click="terminals.startSelected()">▶</button>
+        <button class="act" title="Stop selected" @click="terminals.stopSelected()">■</button>
+        <button
+          class="act danger"
+          :class="{ confirm: confirmBulk }"
+          :title="confirmBulk ? 'Click again to delete all selected' : 'Delete selected'"
+          @click="onBulkDelete"
+        >
+          {{ confirmBulk ? '✓?' : '🗑' }}
+        </button>
+        <button class="link" @click="terminals.clearSelection()">clear</button>
+      </span>
     </div>
 
     <div class="list">
@@ -55,6 +84,7 @@ function groupColor(id: string | null) {
           @start="terminals.start(t.id)"
           @stop="terminals.stop(t.id)"
           @restart="terminals.restart(t.id)"
+          @duplicate="terminals.duplicate(t.id)"
           @edit="emit('edit', t)"
           @remove="terminals.remove(t.id)"
         />
@@ -118,10 +148,31 @@ function groupColor(id: string | null) {
   color: var(--accent);
   background: var(--accent-soft);
 }
+.acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.act {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+.act:hover {
+  background: var(--bg);
+}
+.act.danger:hover,
+.act.confirm {
+  color: var(--red);
+}
 .link {
   color: var(--text-dim);
   text-decoration: underline;
   font-size: 12px;
+  margin-left: 4px;
 }
 .list {
   flex: 1;

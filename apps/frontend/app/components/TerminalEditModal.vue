@@ -52,6 +52,16 @@ const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
 const error = ref('');
 
+// create-only: make N copies at once, optionally starting them immediately
+const count = ref(1);
+const startNow = ref(false);
+const showPicker = ref(false);
+function onPickFolder(p: string) {
+  form.cwd = p;
+  showPicker.value = false;
+  void checkCwd();
+}
+
 async function checkCwd() {
   const p = form.cwd.trim();
   if (!p) {
@@ -102,8 +112,15 @@ async function save() {
   };
 
   try {
-    if (props.terminal) await terminals.update(props.terminal.id, body);
-    else await terminals.create(body);
+    if (props.terminal) {
+      await terminals.update(props.terminal.id, body);
+    } else {
+      const n = Math.min(Math.max(1, Math.floor(count.value) || 1), 20);
+      for (let i = 0; i < n; i++) {
+        const dto = await terminals.create({ ...body, name: n > 1 ? `${body.name} ${i + 1}` : body.name });
+        if (startNow.value) await terminals.start(dto.id);
+      }
+    }
     emit('saved');
     emit('close');
   } catch (e) {
@@ -137,6 +154,7 @@ async function save() {
         <span>Working directory</span>
         <span class="cwd-row">
           <input v-model="form.cwd" placeholder="C:\path\to\project" spellcheck="false" @blur="checkCwd" />
+          <button type="button" class="browse" title="Browse folders" @click="showPicker = true">📁</button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -176,16 +194,29 @@ async function save() {
         <span>Auto-start when Kaplan launches</span>
       </label>
 
+      <template v-if="!isEdit">
+        <label class="field">
+          <span>How many <i>(create this many at once)</i></span>
+          <input v-model.number="count" type="number" min="1" max="20" />
+        </label>
+        <label class="check">
+          <input v-model="startNow" type="checkbox" />
+          <span>Start them immediately after creating</span>
+        </label>
+      </template>
+
       <p v-if="error" class="err">{{ error }}</p>
 
       <div class="foot">
         <button class="ghost" @click="emit('close')">Cancel</button>
         <button class="primary" :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create' }}
+          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : count > 1 ? `Create ${count}` : 'Create' }}
         </button>
       </div>
     </div>
   </div>
+
+  <FolderPicker v-if="showPicker" :initial="form.cwd" @select="onPickFolder" @close="showPicker = false" />
 </template>
 
 <style scoped>
@@ -244,6 +275,15 @@ h2 {
 .cwd-row input {
   flex: 1;
   font-family: var(--font-mono);
+}
+.browse {
+  flex: none;
+  width: 38px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+}
+.browse:hover {
+  border-color: var(--accent);
 }
 .flag {
   width: 20px;

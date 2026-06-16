@@ -9,6 +9,7 @@ const emit = defineEmits<{
   stop: [];
   restart: [];
   edit: [];
+  duplicate: [];
   remove: [];
 }>();
 
@@ -48,6 +49,7 @@ onBeforeUnmount(() => {
       <button v-if="!running" class="ic" title="Start" @click="emit('start')">▶</button>
       <button v-else class="ic" title="Stop" @click="emit('stop')">■</button>
       <button class="ic" title="Restart" @click="emit('restart')">⟳</button>
+      <button class="ic" title="Duplicate" @click="emit('duplicate')">⧉</button>
       <button class="ic" title="Edit" @click="emit('edit')">✎</button>
       <button class="ic danger" :class="{ confirm: confirming }" :title="confirming ? 'Click again to delete' : 'Delete'" @click="onDelete">
         {{ confirming ? '✓?' : '🗑' }}
