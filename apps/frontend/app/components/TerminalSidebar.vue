@@ -49,9 +49,17 @@ function groupColor(id: string | null) {
       <button class="new" @click="emit('create')">+ New</button>
     </div>
 
-    <div v-if="terminals.selectedIds.length" class="selbar">
-      <span>{{ terminals.selectedIds.length }} selected</span>
-      <span class="acts">
+    <div v-if="terminals.items.length" class="selbar" :class="{ active: terminals.someSelected }">
+      <label class="selall">
+        <input
+          type="checkbox"
+          :checked="terminals.allSelected"
+          :indeterminate.prop="terminals.someSelected && !terminals.allSelected"
+          @change="terminals.toggleSelectAll()"
+        />
+        <span>{{ terminals.someSelected ? `${terminals.selectedIds.length} selected` : 'Select all' }}</span>
+      </label>
+      <span v-if="terminals.someSelected" class="acts">
         <button class="act" title="Start selected" @click="terminals.startSelected()">▶</button>
         <button class="act" title="Stop selected" @click="terminals.stopSelected()">■</button>
         <button
@@ -145,8 +153,24 @@ function groupColor(id: string | null) {
   justify-content: space-between;
   padding: 7px 14px;
   font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.selbar.active {
   color: var(--accent);
   background: var(--accent-soft);
+  border-bottom-color: transparent;
+}
+.selall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.selall input {
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 .acts {
   display: flex;

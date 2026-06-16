@@ -37,7 +37,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')">
+  <div class="backdrop">
     <div class="picker" role="dialog" aria-modal="true">
       <h3>Choose a folder</h3>
       <div class="cur"><code>{{ path || '…' }}</code></div>

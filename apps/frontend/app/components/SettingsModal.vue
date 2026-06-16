@@ -86,7 +86,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')">
+  <div class="backdrop">
     <div class="modal" role="dialog" aria-modal="true">
       <h2>Settings</h2>
 

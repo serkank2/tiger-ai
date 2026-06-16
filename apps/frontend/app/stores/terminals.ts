@@ -44,6 +44,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
 
   const byId = computed<Record<string, TerminalDto>>(() => Object.fromEntries(items.value.map((t) => [t.id, t])));
   const active = computed(() => (activeId.value ? byId.value[activeId.value] ?? null : null));
+  const someSelected = computed(() => selectedIds.value.length > 0);
+  const allSelected = computed(() => items.value.length > 0 && selectedIds.value.length === items.value.length);
 
   async function fetchAll() {
     try {
@@ -172,6 +174,14 @@ export const useTerminalsStore = defineStore('terminals', () => {
   function clearSelection() {
     selectedIds.value = [];
   }
+  function selectAll() {
+    selectedIds.value = items.value.map((t) => t.id);
+  }
+  /** Select every terminal, or clear if all are already selected. */
+  function toggleSelectAll() {
+    if (allSelected.value) clearSelection();
+    else selectAll();
+  }
 
   /** Build the WS command target from the current UI selection. */
   function buildTarget(): CommandTarget {
@@ -212,6 +222,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
     setActive,
     toggleSelected,
     clearSelection,
+    selectAll,
+    toggleSelectAll,
+    someSelected,
+    allSelected,
     buildTarget,
   };
 });

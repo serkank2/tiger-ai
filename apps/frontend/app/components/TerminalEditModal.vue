@@ -133,7 +133,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
+  <div class="backdrop" @keydown.esc="emit('close')">
     <div class="modal" role="dialog" aria-modal="true">
       <h2>{{ isEdit ? 'Edit terminal' : 'New terminal' }}</h2>
 
