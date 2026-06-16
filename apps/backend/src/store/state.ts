@@ -63,6 +63,10 @@ function normalize(parsed: unknown): PersistedState {
   if (!parsed || typeof parsed !== 'object') return base;
   const p = parsed as Partial<PersistedState> & { settings?: Partial<AppSettings> };
   const settings: Partial<AppSettings> = p.settings ?? {};
+  const tigerWorkspace =
+    p.tiger && typeof p.tiger === 'object' && typeof p.tiger.lastWorkspace === 'string'
+      ? p.tiger.lastWorkspace
+      : undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
     terminals: Array.isArray(p.terminals) ? p.terminals.filter(isValidTerminal) : [],
@@ -76,6 +80,7 @@ function normalize(parsed: unknown): PersistedState {
         ...(settings.commandRouting ?? {}),
       },
     },
+    ...(tigerWorkspace ? { tiger: { lastWorkspace: tigerWorkspace } } : {}),
     updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : base.updatedAt,
   };
 }

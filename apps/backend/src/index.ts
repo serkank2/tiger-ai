@@ -10,19 +10,30 @@ import { createGroupsRouter } from './http/groups.routes.js';
 import { createSettingsRouter } from './http/settings.routes.js';
 import { createFsRouter } from './http/fs.routes.js';
 import { createPromptsRouter } from './http/prompts.routes.js';
+import { createTigerRouter } from './http/tiger.routes.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
+import { Orchestrator } from './orchestrator/Orchestrator.js';
 
 const state = await loadState();
 await ensurePromptsDir(); // create <repo>/prompts (or KAPLAN_PROMPTS_DIR) if missing
 const manager = new TerminalManager();
 manager.setDefinitions(state.terminals);
+const orchestrator = new Orchestrator(manager);
 
 const ctx: AppCtx = {
   state,
   manager,
+  orchestrator,
   save: () => saveState(state),
 };
+
+// Restore the last Tiger workspace (idempotent scaffold + derive stage status from disk).
+if (state.tiger?.lastWorkspace) {
+  orchestrator
+    .attachWorkspace(state.tiger.lastWorkspace)
+    .catch((err) => console.error('[tiger] failed to restore workspace:', err));
+}
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
@@ -41,6 +52,10 @@ app.use((req, res, next) => {
 // Prompt bodies are larger than the rest of the API; give this router its own bigger
 // JSON parser, mounted BEFORE the global 64kb cap so prompt writes aren't pre-limited.
 app.use('/api/prompts', express.json({ limit: '160kb' }), createPromptsRouter(ctx));
+
+// Tiger accepts a full project prompt (can be large) on /workspace — give it a roomier parser
+// mounted before the global tight cap.
+app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
@@ -84,6 +99,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[${signal}] shutting down — killing terminals...`);
+  orchestrator.stopStage(); // abort any running stage so no new agents spawn
   manager.beginShutdown();
   await autostartDone.catch(() => {});
   await manager.killAll();

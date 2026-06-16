@@ -1,4 +1,5 @@
 import type { CommandTarget, TerminalRunState } from '../store/types.js';
+import type { OrchestratorState } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
 // WebSocket message protocol. One socket per browser window; terminals are
@@ -110,6 +111,11 @@ export interface PongMsg {
   type: 'pong';
   ts?: number;
 }
+/** Full Tiger orchestrator state snapshot pushed whenever it changes. */
+export interface TigerStateMsg {
+  type: 'tiger.state';
+  state: OrchestratorState;
+}
 
 export type ServerMsg =
   | AttachedMsg
@@ -119,7 +125,8 @@ export type ServerMsg =
   | ExitMsg
   | ErrorMsg
   | BroadcastResultMsg
-  | PongMsg;
+  | PongMsg
+  | TigerStateMsg;
 
 const CLIENT_MSG_TYPES = new Set<string>([
   'term.attach',

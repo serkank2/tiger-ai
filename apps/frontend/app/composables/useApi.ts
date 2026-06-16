@@ -1,4 +1,16 @@
-import type { AppSettings, Group, PromptFile, PromptSummary, TerminalDto, TerminalInput, TerminalStatus } from '~/types';
+import type {
+  AppSettings,
+  Group,
+  PromptFile,
+  PromptSummary,
+  TerminalDto,
+  TerminalInput,
+  TerminalStatus,
+  TigerConfig,
+  TigerStageId,
+  TigerStageRunConfig,
+  TigerState,
+} from '~/types';
 
 interface Size {
   cols?: number;
@@ -52,5 +64,20 @@ export function useApi() {
     deletePrompt: (path: string) => req<void>(`/api/prompts/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
     renamePrompt: (fromPath: string, toPath: string, overwrite = false) =>
       req<PromptFile>('/api/prompts/rename', { method: 'POST', body: { fromPath, toPath, overwrite } }),
+
+    // --- Tiger orchestrator ---
+    getTigerState: () => req<TigerState>('/api/tiger/state'),
+    getTigerConfig: () => req<TigerConfig>('/api/tiger/config'),
+    updateTigerConfig: (body: Partial<TigerConfig>) =>
+      req<TigerConfig>('/api/tiger/config', { method: 'PUT', body }),
+    initTigerWorkspace: (path: string, projectPrompt: string) =>
+      req<TigerState>('/api/tiger/workspace', { method: 'POST', body: { path, projectPrompt } }),
+    runTigerStage: (stage: TigerStageId, cfg: TigerStageRunConfig) =>
+      req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: cfg }),
+    retryTigerStage: (stage: TigerStageId) =>
+      req<TigerState>(`/api/tiger/stages/${stage}/retry`, { method: 'POST' }),
+    stopTiger: () => req<TigerState>('/api/tiger/stop', { method: 'POST' }),
+    readTigerFile: (path: string) =>
+      req<{ path: string; content: string }>(`/api/tiger/file?path=${encodeURIComponent(path)}`),
   };
 }

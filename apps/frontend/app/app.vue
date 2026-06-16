@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
 import PromptComposerModal from '~/components/PromptComposerModal.vue';
+import TigerView from '~/components/tiger/TigerView.vue';
 
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
@@ -8,6 +9,7 @@ const settings = useSettingsStore();
 const theme = useThemeStore();
 const socket = useSocket();
 
+const view = ref<'terminals' | 'tiger'>('terminals');
 const showEditor = ref(false);
 const editing = ref<TerminalDto | null>(null);
 const showGroups = ref(false);
@@ -60,17 +62,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <CommandBar
-      @create="openCreate"
-      @manage-groups="showGroups = true"
-      @open-settings="showSettings = true"
-      @open-composer="showComposer = true"
-    />
-    <div class="body">
-      <TerminalSidebar @create="openCreate" @edit="openEdit" />
-      <TerminalPane v-if="terminals.layoutMode === 'focus'" />
-      <TerminalGrid v-else @create="openCreate" />
-    </div>
+    <template v-if="view === 'terminals'">
+      <CommandBar
+        @create="openCreate"
+        @manage-groups="showGroups = true"
+        @open-settings="showSettings = true"
+        @open-composer="showComposer = true"
+        @open-tiger="view = 'tiger'"
+      />
+      <div class="body">
+        <TerminalSidebar @create="openCreate" @edit="openEdit" />
+        <TerminalPane v-if="terminals.layoutMode === 'focus'" />
+        <TerminalGrid v-else @create="openCreate" />
+      </div>
+    </template>
+    <TigerView v-else @back="view = 'terminals'" />
 
     <div v-if="terminals.loadError && !terminals.loaded" class="backend-down">
       <div class="card">

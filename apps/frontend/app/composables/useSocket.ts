@@ -1,4 +1,4 @@
-import type { CommandTarget, ServerMessage } from '~/types';
+import type { CommandTarget, ServerMessage, TigerState } from '~/types';
 
 // Module-scoped singletons: one WebSocket per browser window, shared across callers.
 let socket: WebSocket | null = null;
@@ -42,6 +42,7 @@ export function useSocket() {
   const conn = useConnectionStore();
   const terminals = useTerminalsStore();
   const notices = useNoticesStore();
+  const tiger = useTigerStore();
   const wsBase = config.public.wsBase as string;
 
   function connect(): void {
@@ -168,6 +169,10 @@ export function useSocket() {
         if (msg.id) settleWaiter(msg.id, null); // server-side broadcast error: settle so the caller doesn't wait 5s
         if (msg.message) notices.push(msg.message, 'error');
         if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll().catch(() => {});
+        break;
+      case 'tiger.state':
+        // tiger.state carries the full orchestrator snapshot in `state` (typed loosely here).
+        tiger.applyState((msg as unknown as { state: TigerState }).state);
         break;
     }
   }

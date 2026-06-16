@@ -1,0 +1,656 @@
+import { EventEmitter } from 'node:events';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { nanoid } from 'nanoid';
+import type { TerminalManager } from '../terminal/TerminalManager.js';
+import { STAGE_META, TigerPaths, agentLabel } from './paths.js';
+import { STAGE_ORDER } from './types.js';
+import type {
+  AgentRun,
+  AgentType,
+  OrchestratorState,
+  StageId,
+  StageRunConfig,
+  StageState,
+  StageStatus,
+  TaskRecord,
+  TigerConfig,
+} from './types.js';
+import { defaultTigerConfig, loadConfig, normalizeConfig, saveConfig } from './config.js';
+import { ensureScaffold } from './scaffold.js';
+import { buildLaunchCommand } from './launch-command.js';
+import { AgentSession } from './AgentSession.js';
+import { composePrompt, type ComposeOptions } from './compose.js';
+import { checkOutputFile } from './validate.js';
+import { logAgentResult, logNote, logStageEnd, logStageStart } from './runlog.js';
+import {
+  acquireLock,
+  parseExecutionResult,
+  parseTasks,
+  releaseLock,
+  summarizeTasks,
+  updateTaskFields,
+} from './tasks.js';
+
+const nowIso = (): string => new Date().toISOString();
+
+/** Run items through `worker` with bounded concurrency. */
+async function runPool<T>(items: T[], limit: number, worker: (item: T, i: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const n = Math.max(1, Math.min(limit, items.length || 1));
+  const runner = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      await worker(items[i]!, i);
+    }
+  };
+  await Promise.all(Array.from({ length: n }, runner));
+}
+
+/**
+ * The Tiger workflow engine. Owns the selected workspace, per-workspace config, and
+ * in-memory stage/agent run state. Reuses the shared TerminalManager to run interactive
+ * Claude/Codex CLI agents (one ephemeral terminal per agent run), detects completion via
+ * AgentSession, validates outputs, writes the run log, and tracks task status.
+ *
+ * Emits 'state' (OrchestratorState) whenever anything observable changes so the WS layer
+ * can push the snapshot to the UI.
+ */
+export class Orchestrator extends EventEmitter {
+  private workspace: string | null = null;
+  private paths: TigerPaths | null = null;
+  private config: TigerConfig = defaultTigerConfig();
+  private projectPrompt = '';
+  private initialized = false;
+  private busy = false;
+  private currentStage: StageId | null = null;
+  private stages: Record<StageId, StageState> = blankStages();
+  private abort: AbortController | null = null;
+  /** Serializes read-modify-write of merged-tasks/tasks.md across parallel workers. */
+  private tasksWrite: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly manager: TerminalManager) {
+    super();
+  }
+
+  // --- state ---
+
+  getConfig(): TigerConfig {
+    return this.config;
+  }
+
+  getState(): OrchestratorState {
+    return {
+      workspace: this.workspace,
+      tigerRoot: this.paths?.root ?? null,
+      initialized: this.initialized,
+      projectPromptPreview: this.projectPrompt.slice(0, 400),
+      currentStage: this.currentStage,
+      busy: this.busy,
+      stages: this.stages,
+      tasks: this.tasksSummary,
+    };
+  }
+
+  private tasksSummary: OrchestratorState['tasks'] = null;
+
+  private emitState(): void {
+    this.emit('state', this.getState());
+  }
+
+  // --- workspace lifecycle ---
+
+  /** User-initiated: scaffold the tiger/ tree with this project prompt and load it. */
+  async initialize(workspace: string, projectPrompt: string): Promise<void> {
+    if (this.busy) throw httpError(409, 'a stage is currently running');
+    this.paths = await ensureScaffold(workspace, projectPrompt);
+    this.workspace = workspace;
+    this.projectPrompt = projectPrompt;
+    this.config = await loadConfig(this.paths.configFile);
+    this.initialized = true;
+    this.stages = blankStages();
+    await this.deriveStagesFromDisk();
+    await this.refreshTasks();
+    this.emitState();
+  }
+
+  /** Startup restore: attach to an existing workspace without overwriting the prompt. */
+  async attachWorkspace(workspace: string): Promise<void> {
+    const paths = new TigerPaths(workspace);
+    const existing = await fs.readFile(paths.projectPromptFile, 'utf8').catch(() => null);
+    if (existing == null) {
+      // Not initialized yet — just remember the directory.
+      this.workspace = workspace;
+      this.paths = paths;
+      this.initialized = false;
+      this.emitState();
+      return;
+    }
+    await this.initialize(workspace, existing);
+  }
+
+  async updateConfig(partial: unknown): Promise<TigerConfig> {
+    if (!this.paths) throw httpError(400, 'no workspace selected');
+    const merged = normalizeConfig({ ...this.config, ...(partial && typeof partial === 'object' ? partial : {}) });
+    this.config = merged;
+    await saveConfig(this.paths.configFile, merged);
+    return merged;
+  }
+
+  // --- stage control ---
+
+  /** Validate + kick off a stage (non-blocking). Progress arrives via 'state' events. */
+  startStage(stageId: StageId, cfg: StageRunConfig): void {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (this.busy) throw httpError(409, 'a stage is already running');
+    if (!STAGE_ORDER.includes(stageId)) throw httpError(400, 'unknown stage');
+
+    this.busy = true;
+    this.currentStage = stageId;
+    this.abort = new AbortController();
+    const stage = this.stages[stageId];
+    // Clear previous agent terminals for this stage so old tiles don't linger.
+    void this.cleanupStageTerminals(stage);
+    stage.status = 'running';
+    stage.runs = [];
+    stage.startedAt = nowIso();
+    stage.endedAt = undefined;
+    stage.message = undefined;
+    this.emitState();
+
+    void this.executeStage(stageId, cfg)
+      .catch((err) => {
+        stage.status = 'failed';
+        stage.message = err instanceof Error ? err.message : String(err);
+      })
+      .finally(() => {
+        this.busy = false;
+        this.abort = null;
+        stage.endedAt = nowIso();
+        this.emitState();
+      });
+  }
+
+  /** Re-run only the failed agents of a stage. */
+  retryStage(stageId: StageId): void {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (this.busy) throw httpError(409, 'a stage is already running');
+    const stage = this.stages[stageId];
+    const failed = stage.runs.filter((r) => r.state === 'failed' || r.state === 'stopped');
+    if (failed.length === 0) throw httpError(400, 'no failed agents to retry');
+
+    this.busy = true;
+    this.currentStage = stageId;
+    this.abort = new AbortController();
+    stage.status = 'running';
+    this.emitState();
+
+    void (async () => {
+      const signal = this.abort!.signal;
+      await logNote(this.paths!.runLogFile, `Retrying ${failed.length} failed agent(s) in stage ${stageId}.`);
+      await runPool(failed, this.concurrency(stageId, failed.length), async (run) => {
+        if (signal.aborted) return;
+        await this.executeAgentRun(run, this.composeExtrasFor(run), signal);
+      });
+      this.finalizeStage(stageId);
+    })()
+      .catch((err) => {
+        stage.status = 'failed';
+        stage.message = err instanceof Error ? err.message : String(err);
+      })
+      .finally(() => {
+        this.busy = false;
+        this.abort = null;
+        stage.endedAt = nowIso();
+        this.emitState();
+      });
+  }
+
+  stopStage(): void {
+    this.abort?.abort();
+    if (this.currentStage) this.stages[this.currentStage].message = 'Stopped by user.';
+  }
+
+  // --- stage execution ---
+
+  private async executeStage(stageId: StageId, cfg: StageRunConfig): Promise<void> {
+    const paths = this.paths!;
+    const signal = this.abort!.signal;
+    await fs.mkdir(paths.runtimeDir(stageId), { recursive: true }).catch(() => {});
+    await logStageStart(paths.runLogFile, stageId, cfg);
+
+    if (stageId === 'executing-plan') {
+      await this.executeExecutionStage(cfg, signal);
+    } else if (stageId === 'task-review') {
+      await this.executeTaskReviewStage(cfg, signal);
+    } else {
+      await this.executeFanOutStage(stageId, cfg, signal);
+    }
+
+    this.finalizeStage(stageId);
+
+    if (stageId === 'merge-tasks') await this.refreshTasks();
+    if (stageId === 'requesting-code-review') await this.writeFinalSummary(stageId);
+  }
+
+  /** Standard stages (brainstorming, plan, tasks, merge, code-review): N+M independent agents. */
+  private async executeFanOutStage(stageId: StageId, cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
+    const meta = STAGE_META[stageId];
+    const stage = this.stages[stageId];
+    const runs: AgentRun[] = [];
+
+    if (meta.singleAgent) {
+      const type = cfg.mergeAgent ?? 'claude';
+      runs.push(this.makeRun(stageId, type, 1, cfg));
+    } else {
+      for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) runs.push(this.makeRun(stageId, 'claude', i, cfg));
+      for (let i = 1; i <= clampCount(cfg.codexAgents); i++) runs.push(this.makeRun(stageId, 'codex', i, cfg));
+    }
+    stage.runs = runs;
+    runs.forEach((r) => this.registerRun(r));
+    this.emitState();
+
+    if (runs.length === 0) {
+      stage.message = 'No agents were configured for this stage.';
+      return;
+    }
+    await runPool(runs, this.concurrency(stageId, runs.length, cfg.parallel), async (run) => {
+      if (signal.aborted) return;
+      await this.executeAgentRun(run, this.composeExtrasFor(run), signal);
+    });
+  }
+
+  /** Stage 5: claim not_started tasks under locks and implement one task per agent run. */
+  private async executeExecutionStage(cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
+    const paths = this.paths!;
+    const stage = this.stages['executing-plan'];
+    const content = await fs.readFile(paths.mergedTasksFile, 'utf8').catch(() => null);
+    if (content == null) {
+      stage.message = 'No merged task file found. Run the Merge Tasks stage first.';
+      stage.runs = [];
+      return;
+    }
+    const tasks = parseTasks(content);
+    if (tasks.length === 0) {
+      stage.message = 'The merged task file contains no tasks.';
+      return;
+    }
+    const pending = tasks.filter((t) => t.executionStatus === 'not_started');
+    if (pending.length === 0) {
+      stage.message = 'No tasks are in not_started state; nothing to execute.';
+      return;
+    }
+
+    // Worker type slots. Parallel: one concurrent worker per configured agent. Sequential: a
+    // single worker that round-robins types so both claude and codex are still used.
+    const types: AgentType[] = [];
+    for (let i = 0; i < clampCount(cfg.claudeAgents); i++) types.push('claude');
+    for (let i = 0; i < clampCount(cfg.codexAgents); i++) types.push('codex');
+    if (types.length === 0) {
+      stage.message = 'No agents were configured for this stage.';
+      return;
+    }
+
+    let counter = 0;
+    const claimNext = (): TaskRecord | null => {
+      const t = tasks.find((x) => x.executionStatus === 'not_started');
+      if (!t) return null;
+      t.executionStatus = 'in_progress'; // synchronous claim — guards against double-pick
+      return t;
+    };
+
+    // Claim + implement exactly one task with the given agent type. Returns false when no
+    // not_started task remains (the queue is drained). Shared by parallel + sequential paths.
+    const processTask = async (type: AgentType): Promise<boolean> => {
+      const task = claimNext();
+      if (!task) return false;
+      const index = ++counter;
+      const run = this.makeRun('executing-plan', type, index, cfg, task.id);
+      stage.runs.push(run);
+      this.registerRun(run);
+      this.emitState();
+      await acquireLock(paths.lockFile(task.id), {
+        taskId: task.id,
+        agentId: run.label,
+        agentType: type,
+        pid: process.pid,
+      }).catch(() => false);
+      await this.patchTask(task.id, {
+        executionStatus: 'in_progress',
+        assignedAgent: run.label,
+        startedAt: nowIso(),
+      });
+      const block = await this.extractTaskBlock(task.id);
+      await this.executeAgentRun(run, { taskId: task.id, taskBlock: block }, signal);
+
+      // Resolve final task status from the agent's self-report, falling back to the run state.
+      let finalStatus: 'done' | 'blocked' = run.state === 'completed' ? 'done' : 'blocked';
+      const reported = await fs
+        .readFile(run.outputPath, 'utf8')
+        .then((t) => parseExecutionResult(t))
+        .catch(() => null);
+      if (reported && run.state === 'completed') finalStatus = reported.status;
+      await this.patchTask(task.id, { executionStatus: finalStatus, completedAt: nowIso() });
+      await releaseLock(paths.lockFile(task.id));
+      await this.refreshTasks();
+      return true;
+    };
+
+    if (cfg.parallel) {
+      const worker = async (type: AgentType): Promise<void> => {
+        while (!signal.aborted && (await processTask(type))) {
+          /* keep draining the shared queue */
+        }
+      };
+      await Promise.all(types.map(worker));
+    } else {
+      let ti = 0;
+      while (!signal.aborted) {
+        const did = await processTask(types[ti % types.length]!);
+        if (!did) break;
+        ti++;
+      }
+    }
+    await this.refreshTasks();
+  }
+
+  /** Stage 6A: partition done tasks across review agents; apply reported review statuses. */
+  private async executeTaskReviewStage(cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
+    const paths = this.paths!;
+    const stage = this.stages['task-review'];
+    const content = await fs.readFile(paths.mergedTasksFile, 'utf8').catch(() => null);
+    const done = content ? parseTasks(content).filter((t) => t.executionStatus === 'done') : [];
+
+    const runs: AgentRun[] = [];
+    for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) runs.push(this.makeRun('task-review', 'claude', i, cfg));
+    for (let i = 1; i <= clampCount(cfg.codexAgents); i++) runs.push(this.makeRun('task-review', 'codex', i, cfg));
+    stage.runs = runs;
+    runs.forEach((r) => this.registerRun(r));
+    this.emitState();
+    if (runs.length === 0) {
+      stage.message = 'No agents were configured for this stage.';
+      return;
+    }
+
+    // Partition the done-task ids across review agents to reduce concurrent edit conflicts.
+    const partitions = new Map<string, string[]>();
+    runs.forEach((r) => partitions.set(r.id, []));
+    done.forEach((t, i) => partitions.get(runs[i % runs.length]!.id)!.push(t.id));
+
+    // Mark assigned tasks as reviewing up front.
+    for (const t of done) await this.patchTask(t.id, { reviewStatus: 'reviewing' });
+    await this.refreshTasks();
+
+    await runPool(runs, this.concurrency('task-review', runs.length, cfg.parallel), async (run) => {
+      if (signal.aborted) return;
+      const ids = partitions.get(run.id) ?? [];
+      const resultsPath = paths.promptFileFor('task-review', run.id).replace(/\.prompt\.md$/, '.results');
+      await this.executeAgentRun(run, { reviewTaskIds: ids, resultsPath }, signal);
+      await this.applyReviewResults(resultsPath);
+    });
+    await this.refreshTasks();
+  }
+
+  /** Read a review agent's results file and update each task's Review Status. */
+  private async applyReviewResults(resultsPath: string): Promise<void> {
+    const text = await fs.readFile(resultsPath, 'utf8').catch(() => '');
+    if (!text.trim()) return;
+    const re = /^\s*(TASK-[A-Za-z0-9_-]+)\s+(approved|needs_fix|fixed)\s*$/gim;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      await this.patchTask(m[1]!, { reviewStatus: m[2]!.toLowerCase() as 'approved' | 'needs_fix' | 'fixed' });
+    }
+  }
+
+  // --- single agent run ---
+
+  private composeExtrasFor(run: AgentRun): Partial<ComposeOptions> {
+    if (run.stage === 'task-review') {
+      const resultsPath = this.paths!.promptFileFor('task-review', run.id).replace(/\.prompt\.md$/, '.results');
+      return { resultsPath };
+    }
+    return {};
+  }
+
+  private async executeAgentRun(run: AgentRun, extras: Partial<ComposeOptions>, signal: AbortSignal): Promise<void> {
+    const paths = this.paths!;
+    this.registerRun(run); // idempotent safety net (covers the retry path)
+    run.attempts += 1;
+    run.startedAt = nowIso();
+    run.endedAt = undefined;
+    run.error = undefined;
+    run.completion = undefined;
+    run.state = 'starting';
+    this.emitState();
+
+    await fs.mkdir(paths.runtimeDir(run.stage), { recursive: true }).catch(() => {});
+    const promptText = await composePrompt({
+      paths,
+      stage: run.stage,
+      label: run.label,
+      outputPath: run.outputPath,
+      markerPath: run.markerPath,
+      taskId: run.taskId,
+      ...extras,
+    });
+    await fs.writeFile(run.promptPath, promptText, 'utf8');
+    // Clear any stale marker so detection reflects this run only.
+    await fs.rm(run.markerPath, { force: true }).catch(() => {});
+
+    const session = new AgentSession({
+      manager: this.manager,
+      termId: run.terminalId,
+      label: run.label,
+      command: run.command,
+      cwd: paths.root,
+      promptPath: run.promptPath,
+      outputPath: run.outputPath,
+      markerPath: run.markerPath,
+      timing: this.config.timing,
+      onState: (s) => {
+        run.state = s;
+        this.emitState();
+      },
+    });
+
+    const result = await session.run(signal);
+    run.state = result.state;
+    run.completion = result.completion;
+    run.exitCode = result.exitCode ?? null;
+    run.error = result.error;
+    run.endedAt = nowIso();
+    await logAgentResult(paths.runLogFile, run);
+    this.emitState();
+  }
+
+  // --- helpers ---
+
+  private makeRun(
+    stage: StageId,
+    type: AgentType,
+    index: number,
+    cfg: StageRunConfig,
+    taskId?: string,
+  ): AgentRun {
+    const id = nanoid();
+    const outputPath = this.paths!.outputFile(stage, type, index);
+    const model = type === 'claude' ? cfg.claudeModel : cfg.codexModel;
+    const effort = type === 'claude' ? cfg.claudeEffort : cfg.codexEffort;
+    const permission = type === 'claude' ? cfg.claudePermission : cfg.codexPermission;
+    return {
+      id,
+      terminalId: id,
+      stage,
+      type,
+      index,
+      label: agentLabel(type, index),
+      outputPath,
+      outputRel: this.paths!.rel(outputPath),
+      markerPath: this.paths!.markerFile(stage, id),
+      promptPath: this.paths!.promptFileFor(stage, id),
+      command: buildLaunchCommand(this.config, type, { model, effort, permission }),
+      state: 'pending',
+      attempts: 0,
+      taskId,
+    };
+  }
+
+  private concurrency(stageId: StageId, count: number, parallel = true): number {
+    if (!parallel) return 1;
+    return Math.max(1, Math.min(this.config.execution.maxConcurrent, count));
+  }
+
+  private finalizeStage(stageId: StageId): void {
+    const stage = this.stages[stageId];
+    const total = stage.runs.length;
+    const succeeded = stage.runs.filter((r) => r.state === 'completed').length;
+    const stopped = stage.runs.some((r) => r.state === 'stopped') || this.abort?.signal.aborted;
+    let status: StageStatus;
+    if (total === 0) status = stage.status === 'running' ? 'completed' : stage.status;
+    else if (succeeded === total) status = 'completed';
+    else if (stopped) status = 'stopped';
+    else status = 'failed';
+    stage.status = status;
+    if (!stage.message) {
+      stage.message =
+        total === 0 ? stage.message : `${succeeded}/${total} agent(s) completed successfully.`;
+    }
+    void logStageEnd(this.paths!.runLogFile, stageId, status, succeeded, total);
+    this.emitState();
+  }
+
+  private async cleanupStageTerminals(stage: StageState): Promise<void> {
+    await Promise.allSettled(stage.runs.map((r) => this.manager.remove(r.terminalId)));
+  }
+
+  /** Register the ephemeral agent terminal so the live UI tile can attach immediately. */
+  private registerRun(run: AgentRun): void {
+    const now = nowIso();
+    this.manager.upsertDefinition({
+      id: run.terminalId,
+      name: run.label,
+      groupId: null,
+      cwd: this.paths!.root,
+      initialCommand: run.command,
+      shell: { kind: 'system-default' },
+      // Protected: a fan-out/broadcast from the Terminals view must never type into an agent.
+      protected: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  /** Serialized read-modify-write of the merged tasks file. */
+  private patchTask(taskId: string, fields: Parameters<typeof updateTaskFields>[2]): Promise<void> {
+    const file = this.paths!.mergedTasksFile;
+    const next = this.tasksWrite.then(async () => {
+      const content = await fs.readFile(file, 'utf8').catch(() => null);
+      if (content == null) return;
+      await fs.writeFile(file, updateTaskFields(content, taskId, fields), 'utf8');
+    });
+    this.tasksWrite = next.catch(() => {});
+    return next;
+  }
+
+  private async extractTaskBlock(taskId: string): Promise<string> {
+    const content = await fs.readFile(this.paths!.mergedTasksFile, 'utf8').catch(() => '');
+    const rec = parseTasks(content).find((t) => t.id === taskId);
+    return rec ? content.slice(rec.start, rec.end).trim() : `(task ${taskId})`;
+  }
+
+  private async refreshTasks(): Promise<void> {
+    const content = await fs.readFile(this.paths!.mergedTasksFile, 'utf8').catch(() => null);
+    this.tasksSummary = content ? summarizeTasks(parseTasks(content)) : null;
+    this.emitState();
+  }
+
+  private async writeFinalSummary(stageId: StageId): Promise<void> {
+    const paths = this.paths!;
+    const runs = this.stages[stageId].runs.filter((r) => r.state === 'completed');
+    const parts: string[] = [
+      '# Final Code Review Summary',
+      '',
+      `Generated by the Tiger orchestrator on ${nowIso()}.`,
+      '',
+      'This file aggregates the individual final code review reports produced in this stage. ' +
+        'Refer to each report below for the per-reviewer findings and final decision.',
+    ];
+    for (const run of runs) {
+      const content = await fs.readFile(run.outputPath, 'utf8').catch(() => '(report not found)');
+      parts.push('', '---', '', `## Report: ${run.label} (${run.outputRel})`, '', content);
+    }
+    if (runs.length === 0) parts.push('', '_No completed final code review reports were produced._');
+    await fs.writeFile(paths.finalSummaryFile, parts.join('\n'), 'utf8').catch(() => {});
+  }
+
+  /** On (re)load, infer stage completion from on-disk outputs so progress survives restarts. */
+  private async deriveStagesFromDisk(): Promise<void> {
+    if (!this.paths) return;
+    for (const stageId of STAGE_ORDER) {
+      const has = await this.stageHasOutput(stageId);
+      this.stages[stageId] = { id: stageId, status: has ? 'completed' : 'not_started', runs: [] };
+    }
+  }
+
+  private async stageHasOutput(stageId: StageId): Promise<boolean> {
+    const meta = STAGE_META[stageId];
+    if (meta.singleAgent) {
+      const chk = await checkOutputFile(this.paths!.mergedTasksFile);
+      return chk.ok;
+    }
+    const dir = this.paths!.stageDir(stageId);
+    const entries = await fs.readdir(dir).catch(() => [] as string[]);
+    for (const name of entries) {
+      if (name.startsWith('.')) continue;
+      if (name.endsWith(meta.outputSuffix)) {
+        const chk = await checkOutputFile(`${dir}/${name}`);
+        if (chk.ok) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Read an artifact file from within the tiger root (path-guarded), for the UI. */
+  async readArtifact(rel: string): Promise<{ path: string; content: string }> {
+    if (!this.paths) throw httpError(400, 'no workspace selected');
+    if (typeof rel !== 'string' || !rel.trim()) throw httpError(400, 'path required');
+    const clean = rel.trim().replace(/\\/g, '/');
+    if (clean.startsWith('/') || /^[a-zA-Z]:/.test(clean)) throw httpError(400, 'absolute path not allowed');
+    if (clean.split('/').some((s) => s === '' || s === '.' || s === '..')) throw httpError(400, 'invalid path segment');
+    const abs = path.resolve(this.paths.root, clean);
+    const relCheck = path.relative(this.paths.root, abs);
+    if (relCheck.startsWith('..') || path.isAbsolute(relCheck)) throw httpError(400, 'path is outside the tiger root');
+    const st = await fs.stat(abs).catch(() => {
+      throw httpError(404, 'file not found');
+    });
+    if (!st.isFile()) throw httpError(400, 'not a file');
+    if (st.size > 4 * 1024 * 1024) throw httpError(413, 'file too large');
+    return { path: clean, content: await fs.readFile(abs, 'utf8') };
+  }
+
+  /** Kill any live agent terminals (called on shutdown). */
+  async killAgents(): Promise<void> {
+    const ids = STAGE_ORDER.flatMap((s) => this.stages[s].runs.map((r) => r.terminalId));
+    await Promise.allSettled(ids.map((id) => this.manager.remove(id)));
+  }
+}
+
+function blankStages(): Record<StageId, StageState> {
+  const out = {} as Record<StageId, StageState>;
+  for (const s of STAGE_ORDER) out[s] = { id: s, status: 'not_started', runs: [] };
+  return out;
+}
+
+function clampCount(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : 0;
+  return Math.max(0, Math.min(8, v));
+}
+
+interface HttpError extends Error {
+  status: number;
+}
+function httpError(status: number, message: string): HttpError {
+  const e = new Error(message) as HttpError;
+  e.status = status;
+  return e;
+}

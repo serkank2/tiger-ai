@@ -44,7 +44,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     },
   });
   const peers = new Set<Peer>();
-  const { manager, state } = ctx;
+  const { manager, state, orchestrator } = ctx;
 
   const send = (ws: WebSocket, msg: ServerMsg): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -88,9 +88,18 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   manager.on('status', onStatus);
   manager.on('exit', onExit);
 
+  // Tiger orchestrator state: push the full snapshot to every peer whenever it changes.
+  // (Agent terminal output itself rides the term.* path above, since orchestrator agents
+  // run on the shared manager.)
+  const onTigerState = (s: import('../orchestrator/types.js').OrchestratorState) =>
+    broadcast({ type: 'tiger.state', state: s });
+  orchestrator.on('state', onTigerState);
+
   wss.on('connection', (ws: WebSocket) => {
     const peer: Peer = { ws, attached: new Set(), alive: true };
     peers.add(peer);
+    // Send the current orchestrator snapshot immediately so a fresh client is in sync.
+    send(ws, { type: 'tiger.state', state: orchestrator.getState() });
     ws.on('pong', () => {
       peer.alive = true;
     });
@@ -205,6 +214,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     manager.off('output', onOutput);
     manager.off('status', onStatus);
     manager.off('exit', onExit);
+    orchestrator.off('state', onTigerState);
   });
 
   return wss;

@@ -57,11 +57,18 @@ export interface AppSettings {
   commandRouting: CommandRoutingSettings;
 }
 
+/** Tiger orchestrator persistence (only what must survive a restart). */
+export interface TigerPersisted {
+  /** Last workspace directory selected for the Tiger orchestrator. */
+  lastWorkspace?: string;
+}
+
 export interface PersistedState {
   schemaVersion: 1;
   terminals: TerminalDefinition[];
   groups: TerminalGroup[];
   settings: AppSettings;
+  tiger?: TigerPersisted;
   updatedAt: string;
 }
 

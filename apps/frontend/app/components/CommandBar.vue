@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { strictestLimit } from '~/lib/shellLimits';
 
-const emit = defineEmits<{ create: []; manageGroups: []; openSettings: []; openComposer: [] }>();
+const emit = defineEmits<{ create: []; manageGroups: []; openSettings: []; openComposer: []; openTiger: [] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
@@ -117,6 +117,7 @@ function sendKey(ch: string) {
       <button :class="{ on: terminals.layoutMode === 'grid' }" title="Tiled grid view" aria-label="Grid view" @click="terminals.layoutMode = 'grid'">▦</button>
     </div>
 
+    <button class="tiger" title="Open the Tiger AI orchestrator" @click="emit('openTiger')">🐅 Tiger</button>
     <button class="new" @click="emit('create')">+ New Terminal</button>
   </header>
 </template>
@@ -271,5 +272,15 @@ function sendKey(ch: string) {
 .new:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.tiger {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 7px 12px;
+  font-weight: 700;
+  flex: none;
+}
+.tiger:hover {
+  background: var(--accent-soft);
 }
 </style>

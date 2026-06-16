@@ -108,6 +108,129 @@ export interface PromptFile extends PromptSummary {
   body: string;
 }
 
+// --- Tiger orchestrator (mirror of apps/backend/src/orchestrator/types.ts) ---
+
+export type TigerStageId =
+  | 'brainstorming'
+  | 'writing-plan'
+  | 'writing-tasks'
+  | 'merge-tasks'
+  | 'executing-plan'
+  | 'task-review'
+  | 'requesting-code-review';
+
+export type TigerAgentType = 'claude' | 'codex';
+export type AgentRunState =
+  | 'pending'
+  | 'starting'
+  | 'waiting_ready'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'stopped';
+export type TigerStageStatus = 'not_started' | 'running' | 'completed' | 'failed' | 'stopped';
+export type TigerExecutionStatus = 'not_started' | 'in_progress' | 'done' | 'blocked';
+export type TigerReviewStatus = 'pending' | 'reviewing' | 'approved' | 'needs_fix' | 'fixed';
+
+export interface TigerAgentRun {
+  id: string;
+  terminalId: string;
+  stage: TigerStageId;
+  type: TigerAgentType;
+  index: number;
+  label: string;
+  outputPath: string;
+  outputRel: string;
+  markerPath: string;
+  promptPath: string;
+  command: string;
+  state: AgentRunState;
+  completion?: 'marker' | 'idle' | 'exit';
+  exitCode?: number | null;
+  error?: string;
+  taskId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  attempts: number;
+}
+
+export interface TigerStageState {
+  id: TigerStageId;
+  status: TigerStageStatus;
+  runs: TigerAgentRun[];
+  startedAt?: string;
+  endedAt?: string;
+  message?: string;
+}
+
+export interface TigerTaskItem {
+  id: string;
+  title: string;
+  executionStatus: TigerExecutionStatus;
+  reviewStatus: TigerReviewStatus;
+  assignedAgent: string;
+}
+
+export interface TigerTaskSummary {
+  total: number;
+  byExecution: Record<TigerExecutionStatus, number>;
+  byReview: Record<TigerReviewStatus, number>;
+  items: TigerTaskItem[];
+}
+
+export interface TigerState {
+  workspace: string | null;
+  tigerRoot: string | null;
+  initialized: boolean;
+  projectPromptPreview: string;
+  currentStage: TigerStageId | null;
+  busy: boolean;
+  stages: Record<TigerStageId, TigerStageState>;
+  tasks: TigerTaskSummary | null;
+}
+
+export interface TigerCliToolConfig {
+  executable: string;
+  modelFlag: string;
+  effortFlag?: string;
+  effortConfigKey?: string;
+  extraArgs?: string[];
+  permissionModes: Record<string, string[]>;
+}
+
+export interface TigerStageDefaults {
+  claudeAgents: number;
+  codexAgents: number;
+  claudeModel: string;
+  codexModel: string;
+  claudeEffort: string;
+  codexEffort: string;
+  claudePermission: string;
+  codexPermission: string;
+  parallel: boolean;
+}
+
+export interface TigerConfig {
+  version: number;
+  cli: { claude: TigerCliToolConfig; codex: TigerCliToolConfig };
+  defaults: TigerStageDefaults;
+  timing: Record<string, number>;
+  execution: { parallel: boolean; locking: boolean; maxConcurrent: number };
+}
+
+export interface TigerStageRunConfig {
+  claudeAgents: number;
+  codexAgents: number;
+  claudeModel: string;
+  codexModel: string;
+  claudeEffort: string;
+  codexEffort: string;
+  claudePermission: string;
+  codexPermission: string;
+  parallel: boolean;
+  mergeAgent?: TigerAgentType;
+}
+
 /** Loose shape of any server->client WS message (client reads a subset). */
 export interface ServerMessage {
   type: string;
