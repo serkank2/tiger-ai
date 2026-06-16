@@ -34,7 +34,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, terminals: state.terminals.length, dataDir: config.dataDir });
@@ -86,3 +86,12 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
+// Last-resort: kill child ptys instead of leaving them orphaned on an unexpected crash.
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandledRejection:', reason);
+  void shutdown('unhandledRejection');
+});
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaughtException:', err);
+  void shutdown('uncaughtException');
+});

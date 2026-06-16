@@ -22,6 +22,21 @@ function resolveDataDir(): string {
 
 const dataDir = resolveDataDir();
 
+/**
+ * Bind to loopback by default. A non-loopback host exposes the unauthenticated
+ * terminal API to the network, so it requires an explicit KAPLAN_ALLOW_REMOTE=1 opt-in.
+ */
+function resolveHost(): string {
+  const h = process.env.KAPLAN_HOST;
+  if (!h) return '127.0.0.1';
+  const isLoopback = h === '127.0.0.1' || h === '::1' || h === 'localhost';
+  if (isLoopback || process.env.KAPLAN_ALLOW_REMOTE === '1') return h;
+  console.warn(
+    `[kaplan] refusing non-loopback KAPLAN_HOST="${h}" (no auth); set KAPLAN_ALLOW_REMOTE=1 to override. Binding 127.0.0.1.`,
+  );
+  return '127.0.0.1';
+}
+
 function parseOrigins(): string[] {
   const raw = process.env.KAPLAN_CORS_ORIGINS;
   if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -29,7 +44,7 @@ function parseOrigins(): string[] {
 }
 
 export const config = {
-  host: process.env.KAPLAN_HOST || '127.0.0.1',
+  host: resolveHost(),
   port: Number(process.env.KAPLAN_PORT || 4517),
   dataDir,
   stateFile: path.join(dataDir, 'state.json'),

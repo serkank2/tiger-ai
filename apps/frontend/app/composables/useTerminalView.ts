@@ -119,13 +119,15 @@ export function useTerminalView(
     onResize = t.onResize(() => sendResize(id));
     mousedown = () => terminals.setActive(id);
     mountedHost.addEventListener('mousedown', mousedown);
-    sendResize(id); // size the pty before the server replays its snapshot
-    socket.attach(id);
+    sendResize(id); // initial size hint
 
     await nextTick();
     if (token !== mountToken) return;
     safeFit();
-    sendResize(id);
+    sendResize(id); // corrected size once the element has real layout
+    // Attach AFTER the pty has been told the real size, so the replayed snapshot
+    // is rendered at the correct dimensions (no corruption in grid under paint latency).
+    socket.attach(id);
     if (opts.focusOnMount && !isTypingElsewhere()) t.focus();
 
     ro = new ResizeObserver(() => {
@@ -156,6 +158,4 @@ export function useTerminalView(
     mountToken++;
     teardown();
   });
-
-  return { refit: safeFit };
 }

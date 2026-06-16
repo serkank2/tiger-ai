@@ -22,7 +22,6 @@ export function useApi() {
 
   return {
     listTerminals: () => req<TerminalDto[]>('/api/terminals'),
-    getTerminal: (id: string) => req<TerminalDto>(`/api/terminals/${id}`),
     createTerminal: (body: TerminalInput) => req<TerminalDto>('/api/terminals', { method: 'POST', body }),
     updateTerminal: (id: string, body: Partial<TerminalInput>) =>
       req<TerminalDto>(`/api/terminals/${id}`, { method: 'PUT', body }),

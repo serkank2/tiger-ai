@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 import { spawn as spawnChild } from 'node:child_process';
-import { promises as fsp } from 'node:fs';
 import pty from 'node-pty';
 import type { IDisposable, IPty } from 'node-pty';
 import { config } from '../config.js';
+import { resolveExistingDir } from '../util/paths.js';
 import type {
   ShellSpec,
   TerminalDefinition,
@@ -148,8 +148,13 @@ export class TerminalSession extends EventEmitter {
 
   // --- non-lifecycle (safe to call any time) ---
 
-  write(data: string): void {
-    if (this.proc && this.isAlive()) this.proc.write(data);
+  /** Returns true if the data was written to a live pty. */
+  write(data: string): boolean {
+    if (this.proc && this.isAlive()) {
+      this.proc.write(data);
+      return true;
+    }
+    return false;
   }
 
   resize(cols: number, rows: number): void {
@@ -182,15 +187,20 @@ export class TerminalSession extends EventEmitter {
     this.ring = '';
     this.pending = '';
     this.clearInitialTimer();
+    // dispose any stale pty listeners (e.g. an old generation that never reached handleExit)
+    this.dataDisp?.dispose();
+    this.exitDisp?.dispose();
+    this.dataDisp = this.exitDisp = undefined;
     this.setState('starting');
 
     let proc: IPty;
+    let cwd: string;
     try {
-      await this.validateCwd(this.def.cwd);
+      cwd = await this.validateCwd(this.def.cwd);
       const { file, args } = resolveShell(this.def.shell);
       // Merge over process.env so Windows essentials (SystemRoot, ComSpec, Path, ...) survive.
       const env = { ...process.env, ...(this.def.env ?? {}) } as Record<string, string>;
-      proc = pty.spawn(file, args, { name: 'xterm-256color', cols, rows, cwd: this.def.cwd, env });
+      proc = pty.spawn(file, args, { name: 'xterm-256color', cols, rows, cwd, env });
     } catch (err) {
       this.errorInfo = { message: errMessage(err), code: errCode(err) };
       this.proc = null;
@@ -250,8 +260,15 @@ export class TerminalSession extends EventEmitter {
       }
     }
 
-    // handleExit (if it fired) already set 'stopped' because stopRequested is true.
-    if (this.state !== 'stopped') this.setState('stopped');
+    // If the process is somehow still alive, the kill failed — be honest rather than
+    // claiming 'stopped' (which would let a restart orphan the old process).
+    if (this.proc && this.isAlive()) {
+      this.errorInfo = { message: 'failed to terminate process', code: 'EKILL' };
+      this.setState('failed');
+    } else if (this.state !== 'stopped') {
+      // handleExit (if it fired) already set 'stopped' because stopRequested is true.
+      this.setState('stopped');
+    }
     return this.getStatus();
   }
 
@@ -278,6 +295,7 @@ export class TerminalSession extends EventEmitter {
 
   /** Windows: taskkill the tree (avoids node-pty's console-list helper). Awaited. */
   private forceKill(pid?: number): Promise<void> {
+    const proc = this.proc; // snapshot — a concurrent restart may reassign this.proc
     return new Promise((resolve) => {
       if (process.platform === 'win32' && pid) {
         let settled = false;
@@ -294,7 +312,7 @@ export class TerminalSession extends EventEmitter {
           tk.on('close', done);
           tk.on('error', () => {
             try {
-              this.proc?.kill();
+              proc?.kill();
             } catch {
               /* already dead */
             }
@@ -303,7 +321,7 @@ export class TerminalSession extends EventEmitter {
           setTimeout(done, 1500).unref();
         } catch {
           try {
-            this.proc?.kill();
+            proc?.kill();
           } catch {
             /* already dead */
           }
@@ -312,7 +330,7 @@ export class TerminalSession extends EventEmitter {
         return;
       }
       try {
-        this.proc?.kill();
+        proc?.kill();
       } catch {
         /* already dead */
       }
@@ -320,16 +338,11 @@ export class TerminalSession extends EventEmitter {
     });
   }
 
-  private async validateCwd(cwd: string): Promise<void> {
-    try {
-      const st = await fsp.stat(cwd);
-      if (!st.isDirectory()) throw makeError(`cwd is not a directory: ${cwd}`, 'EINVAL_CWD');
-    } catch (err) {
-      if ((err as { code?: string })?.code === 'EINVAL_CWD') throw err;
-      const code = (err as NodeJS.ErrnoException)?.code;
-      const msg = code === 'ENOENT' ? `cwd does not exist: ${cwd}` : errMessage(err);
-      throw makeError(msg, 'EINVAL_CWD');
-    }
+  /** Validate + normalize the cwd via the shared path guard (rejects relative/UNC/missing). */
+  private async validateCwd(cwd: string): Promise<string> {
+    const check = await resolveExistingDir(cwd);
+    if (!check.ok) throw makeError(`cwd ${check.reason}`, 'EINVAL_CWD');
+    return check.path;
   }
 
   private handleData(data: string): void {

@@ -40,7 +40,7 @@ function expand() {
       <button v-if="!running" class="ic" title="Start" @click="terminals.start(terminal.id)">▶</button>
       <button v-else class="ic" title="Stop" @click="terminals.stop(terminal.id)">■</button>
       <button class="ic" title="Restart" @click="terminals.restart(terminal.id)">⟳</button>
-      <button class="ic" title="Open full screen" @click="expand">⛶</button>
+      <button class="ic" title="Expand to single view" @click="expand">⛶</button>
     </div>
     <div class="tile-body">
       <div ref="host" class="term" />

@@ -15,7 +15,7 @@ export const useThemeStore = defineStore('theme', () => {
     apply(themeId);
     useSettingsStore()
       .update({ theme: id.value })
-      .catch(() => {});
+      .catch(() => useNoticesStore().push('Could not save theme preference', 'error'));
   }
   /** Apply on load (from persisted settings) without re-persisting. */
   function init(themeId?: string | null) {

@@ -114,8 +114,11 @@ export async function loadState(): Promise<PersistedState> {
 
   try {
     return parseAndNormalize(raw);
-  } catch {
-    // Corrupt (or newer-schema) primary. Preserve it, then recover from backup.
+  } catch (err) {
+    // Newer schema than we support: refuse to downgrade. Leave the file intact and fail
+    // loudly rather than resetting (which would discard the user's newer data).
+    if ((err as NodeJS.ErrnoException)?.code === 'ESCHEMA_NEWER') throw err;
+    // Corrupt primary. Preserve it, then recover from backup.
     await preserveBadFile(file);
     const fromBak = await tryLoadBackup();
     if (fromBak) {

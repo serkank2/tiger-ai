@@ -7,8 +7,25 @@ const notices = useNoticesStore();
 const COLORS = ['#f59e42', '#6cc56c', '#5aa9e6', '#c08cd6', '#e5564b', '#e0b03a', '#5bc2b8', '#7c8390'];
 
 const newName = ref('');
-const newColor = ref(COLORS[0]);
+const newColor = ref(COLORS[0]!);
 const busy = ref(false);
+
+// two-step delete confirm (consistent with the terminal list)
+const confirmingId = ref<string | null>(null);
+let resetTimer: ReturnType<typeof setTimeout> | null = null;
+function onDelete(id: string) {
+  if (resetTimer) clearTimeout(resetTimer);
+  if (confirmingId.value === id) {
+    confirmingId.value = null;
+    void remove(id);
+  } else {
+    confirmingId.value = id;
+    resetTimer = setTimeout(() => (confirmingId.value = null), 2500);
+  }
+}
+onBeforeUnmount(() => {
+  if (resetTimer) clearTimeout(resetTimer);
+});
 
 async function create() {
   const name = newName.value.trim();
@@ -80,7 +97,14 @@ function errText(e: unknown): string {
           <span class="dot" :style="{ background: g.color || 'var(--text-faint)' }" />
           <input class="gname" :value="g.name" @change="rename(g.id, ($event.target as HTMLInputElement).value)" />
           <span class="n">{{ terminals.items.filter((t) => t.groupId === g.id).length }}</span>
-          <button class="del" title="Delete group" @click="remove(g.id)">🗑</button>
+          <button
+            class="del"
+            :class="{ confirm: confirmingId === g.id }"
+            :title="confirmingId === g.id ? 'Click again to delete' : 'Delete group'"
+            @click="onDelete(g.id)"
+          >
+            {{ confirmingId === g.id ? '✓?' : '🗑' }}
+          </button>
         </li>
         <li v-if="!groups.groups.length" class="empty">No groups yet.</li>
       </ul>
@@ -180,7 +204,8 @@ h2 {
   height: 28px;
   color: var(--text-dim);
 }
-.del:hover {
+.del:hover,
+.del.confirm {
   color: var(--red);
 }
 .empty {

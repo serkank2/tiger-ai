@@ -9,7 +9,7 @@ const tiles = computed(() => terminals.items);
 <template>
   <section class="grid-pane">
     <div v-if="tiles.length" class="grid-bar">
-      <span class="hint">Tiling all {{ tiles.length }} terminal(s) · click a tile to focus, ⛶ for full screen</span>
+      <span class="hint">Tiling all {{ tiles.length }} terminal(s) · click a tile to focus it, ⛶ to expand to single view</span>
     </div>
 
     <div v-if="tiles.length" class="grid">

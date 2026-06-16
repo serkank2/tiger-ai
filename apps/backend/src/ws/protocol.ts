@@ -121,6 +121,15 @@ export type ServerMsg =
   | BroadcastResultMsg
   | PongMsg;
 
+const CLIENT_MSG_TYPES = new Set<string>([
+  'term.attach',
+  'term.detach',
+  'term.input',
+  'term.resize',
+  'term.broadcastInput',
+  'ping',
+]);
+
 /** Narrowing parse for an incoming client message. Returns null when invalid. */
 export function parseClientMessage(raw: string): ClientMsg | null {
   let obj: unknown;
@@ -131,7 +140,7 @@ export function parseClientMessage(raw: string): ClientMsg | null {
   }
   if (!obj || typeof obj !== 'object') return null;
   const msg = obj as { type?: unknown };
-  if (typeof msg.type !== 'string') return null;
-  // Trust the discriminant; the dispatcher validates fields it actually uses.
+  if (typeof msg.type !== 'string' || !CLIENT_MSG_TYPES.has(msg.type)) return null;
+  // Discriminant is known; the dispatcher validates the fields it actually uses.
   return obj as ClientMsg;
 }

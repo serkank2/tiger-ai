@@ -22,14 +22,29 @@ const SHELLS: { value: ShellKind; label: string }[] = [
 
 const isEdit = computed(() => !!props.terminal);
 
+function envToText(env?: Record<string, string>): string {
+  return env ? Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+}
+function parseEnv(text: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    const i = t.indexOf('=');
+    if (i > 0) out[t.slice(0, i).trim()] = t.slice(i + 1);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 const form = reactive({
   name: props.terminal?.name ?? '',
   groupId: props.terminal?.groupId ?? null,
   cwd: props.terminal?.cwd ?? settings.settings?.defaultCwd ?? '',
   initialCommand: props.terminal?.initialCommand ?? '',
-  shellKind: (props.terminal?.shell.kind ?? 'system-default') as ShellKind,
-  shellPath: props.terminal?.shell.path ?? '',
+  // new terminals inherit the configured default shell
+  shellKind: (props.terminal?.shell.kind ?? settings.settings?.defaultShell.kind ?? 'system-default') as ShellKind,
+  shellPath: props.terminal?.shell.path ?? settings.settings?.defaultShell.path ?? '',
   shellArgs: (props.terminal?.shell.args ?? []).join(' '),
+  env: envToText(props.terminal?.env),
   autostart: props.terminal?.autostart ?? false,
 });
 
@@ -82,6 +97,7 @@ async function save() {
     cwd: form.cwd.trim() || (settings.settings?.defaultCwd ?? ''),
     initialCommand: form.initialCommand.trim() || undefined,
     shell,
+    env: parseEnv(form.env),
     autostart: form.autostart,
   };
 
@@ -150,6 +166,11 @@ async function save() {
         </label>
       </template>
 
+      <label class="field">
+        <span>Environment variables <i>(KEY=VALUE per line, optional)</i></span>
+        <textarea v-model="form.env" rows="3" spellcheck="false" placeholder="NODE_ENV=development" />
+      </label>
+
       <label class="check">
         <input v-model="form.autostart" type="checkbox" />
         <span>Auto-start when Kaplan launches</span>
@@ -206,8 +227,14 @@ h2 {
   font-style: normal;
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
+}
+.field textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
 }
 .cwd-row {
   display: flex;

@@ -10,6 +10,13 @@ const snapshotListeners = new Map<string, Set<(data: string) => void>>();
 // ref-counted: a terminal may be bound by >1 view briefly (focus<->grid swap)
 const attached = new Map<string, number>();
 
+export interface BroadcastOutcome {
+  matched: number;
+  written: number;
+  failed: { termId: string; code: string }[];
+}
+const broadcastWaiters = new Map<string, (r: BroadcastOutcome) => void>();
+
 /**
  * Single multiplexed WebSocket to the backend. Routes status/exit/snapshot into
  * the stores and per-terminal listeners; auto-reconnects and re-attaches.
@@ -117,18 +124,35 @@ export function useSocket() {
         if (msg.termId) terminals.applyExit(msg.termId, msg.exitCode ?? null, msg.signal ?? null);
         break;
       case 'term.broadcastResult': {
-        const failed = msg.failed?.length ?? 0;
+        const failed = msg.failed ?? [];
         const written = msg.written ?? 0;
         const matched = msg.matched ?? 0;
-        notices.push(
-          failed > 0 ? `Sent to ${written}/${matched} — ${failed} not running` : `Sent to ${written} terminal(s)`,
-          failed > 0 ? 'error' : 'info',
-        );
+        if (msg.id) {
+          const waiter = broadcastWaiters.get(msg.id);
+          if (waiter) {
+            broadcastWaiters.delete(msg.id);
+            waiter({ matched, written, failed });
+          }
+        }
+        if (failed.length === 0) {
+          notices.push(`Sent to ${written} terminal(s)`, 'info');
+        } else {
+          const counts: Record<string, number> = {};
+          for (const f of failed) counts[f.code] = (counts[f.code] ?? 0) + 1;
+          const labels: Record<string, string> = {
+            NOT_RUNNING: 'not running',
+            START_FAILED: 'failed to start',
+            UNKNOWN: 'unknown',
+          };
+          const parts = Object.entries(counts).map(([c, n]) => `${n} ${labels[c] ?? c.toLowerCase()}`);
+          notices.push(`Sent to ${written}/${matched} — ${parts.join(', ')}`, written > 0 ? 'info' : 'error');
+          if (counts.UNKNOWN) void terminals.fetchAll().catch(() => {});
+        }
         break;
       }
       case 'term.error':
         if (msg.message) notices.push(msg.message, 'error');
-        if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll();
+        if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll().catch(() => {});
         break;
     }
   }
@@ -153,9 +177,21 @@ export function useSocket() {
   function resize(id: string, cols: number, rows: number): void {
     raw({ type: 'term.resize', termId: id, cols, rows });
   }
-  /** Returns true if the command was sent. */
-  function broadcast(target: CommandTarget, data: string, appendNewline?: boolean): boolean {
-    return raw({ type: 'term.broadcastInput', id: `c${++msgSeq}`, target, data, appendNewline });
+  /** Resolves with the routing outcome, or null if the socket wasn't open / timed out. */
+  function broadcast(
+    target: CommandTarget,
+    data: string,
+    appendNewline?: boolean,
+  ): Promise<BroadcastOutcome | null> {
+    const id = `c${++msgSeq}`;
+    const sent = raw({ type: 'term.broadcastInput', id, target, data, appendNewline });
+    if (!sent) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      broadcastWaiters.set(id, resolve);
+      setTimeout(() => {
+        if (broadcastWaiters.delete(id)) resolve(null);
+      }, 5000);
+    });
   }
 
   function subscribe(map: Map<string, Set<(d: string) => void>>, id: string, cb: (d: string) => void): () => void {
@@ -190,5 +226,6 @@ if (import.meta.hot) {
     outputListeners.clear();
     snapshotListeners.clear();
     attached.clear();
+    broadcastWaiters.clear();
   });
 }

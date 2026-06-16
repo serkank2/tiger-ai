@@ -150,7 +150,10 @@ export const useTerminalsStore = defineStore('terminals', () => {
   /** Build the WS command target from the current UI selection. */
   function buildTarget(): CommandTarget {
     if (commandMode.value === 'selected') return { mode: 'selected', termIds: [...selectedIds.value] };
-    if (commandMode.value === 'group') return { mode: 'group', groupId: commandGroupId.value ?? '' };
+    // group mode requires a real group; otherwise fall back to 'all' (never emit groupId:'')
+    if (commandMode.value === 'group' && commandGroupId.value) {
+      return { mode: 'group', groupId: commandGroupId.value };
+    }
     return { mode: 'all' };
   }
 

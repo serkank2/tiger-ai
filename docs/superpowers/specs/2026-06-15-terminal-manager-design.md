@@ -135,3 +135,13 @@ Claude is the lead/integrator and the only reliable file-writer; Codex is a para
 ## 10. Out of scope (YAGNI)
 
 Auth, roles, multi-user, cloud sync, team features, seq-based WS resync, backpressure dropping, idle xterm dispose timers (v1), GUI folder picker beyond a validated text input (v1).
+
+## 11. Update log (post-spec additions)
+
+The sections above are the original 2026-06-15 design. Subsequent iterations added:
+
+- **Grid view (§7 revised):** beyond the single Focus pane, a **Focus | Grid** toggle. Grid auto-tiles *all* terminals (responsive `auto-fit`, min tile width) — each tile is an independent live `useTerminalView`. The xterm lifecycle was extracted into the shared `useTerminalView` composable (used by both the Focus pane and every Grid tile); there is no separate `useXtermManager`.
+- **Themes (§5 revised):** `settings.theme` is a **theme id string** (not the original `'system'|'light'|'dark'` enum). 10 curated palettes in `app/theme/themes.ts`, applied live via CSS custom properties + per-terminal xterm recolor, selected in the Settings modal, persisted in settings.
+- **Removed `confirmBeforeKill`:** the destructive delete actions use a two-step inline confirm instead, so the setting was dropped from `AppSettings`.
+- **Per-terminal `env`:** exposed via a KEY=VALUE editor in the create/edit modal.
+- **Structure:** single `app.vue` (no `pages/`), Pinia stores `terminals`/`groups`/`settings`/`theme`/`notices`/`connection`. Security hardening: server-side Origin guard (REST + WS), loopback-only bind by default (`KAPLAN_ALLOW_REMOTE=1` to override), shared `safeDirPath`/`resolveExistingDir` cwd validation.

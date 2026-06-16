@@ -96,7 +96,9 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     });
     ws.on('message', (raw: RawData, isBinary: boolean) => {
       if (isBinary) return; // text protocol only
-      void handleMessage(peer, raw.toString());
+      handleMessage(peer, raw.toString()).catch(() => {
+        /* dispatch already sends term.error for known failures; this guards the rest */
+      });
     });
     ws.on('close', () => peers.delete(peer));
     ws.on('error', () => cleanup(peer));
@@ -112,7 +114,10 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
             send(peer.ws, { type: 'term.error', termId: msg.termId, id: msg.id, code: 'UNKNOWN_TERMINAL', message: 'unknown terminal' });
             break;
           }
-          if (peer.attached.size >= MAX_ATTACH) break;
+          if (peer.attached.size >= MAX_ATTACH) {
+            send(peer.ws, { type: 'term.error', termId: msg.termId, id: msg.id, code: 'TOO_MANY_ATTACHMENTS', message: 'attachment limit reached' });
+            break;
+          }
           // Drain pending output to already-attached peers BEFORE this peer joins, so the
           // upcoming snapshot (which reads the ring) doesn't then get re-delivered as live output.
           manager.flush(msg.termId);

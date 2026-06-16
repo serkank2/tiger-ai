@@ -67,10 +67,10 @@ onBeforeUnmount(() => {
 
     <div v-if="terminals.loadError && !terminals.loaded" class="backend-down">
       <div class="card">
-        <p class="big">⚠ Backend'e ulaşılamıyor</p>
+        <p class="big">⚠ Can't reach the backend</p>
         <p class="dim">http://127.0.0.1:4517 — {{ terminals.loadError }}</p>
-        <p class="dim">Terminalde <code>npm run dev</code> çalışıyor mu?</p>
-        <button class="retry" @click="loadAll">Tekrar dene</button>
+        <p class="dim">Is <code>npm run dev</code> running?</p>
+        <button class="retry" @click="loadAll">Retry</button>
       </div>
     </div>
 
@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
       @saved="terminals.fetchAll()"
     />
     <GroupsModal v-if="showGroups" @close="showGroups = false" />
-    <SettingsModal v-if="showSettings" @close="showSettings = false" />
+    <SettingsModal v-if="showSettings && settings.settings" @close="showSettings = false" />
     <NoticeToast />
   </div>
 </template>

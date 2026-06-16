@@ -75,6 +75,19 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
       return;
     }
+    let shell = ctx.state.settings.defaultShell;
+    if (body.shell !== undefined) {
+      const s = normalizeShell(body.shell);
+      if (!s) {
+        res.status(400).json({ error: { message: 'invalid shell' } });
+        return;
+      }
+      shell = s;
+    }
+    if (body.env != null && !isStringRecord(body.env)) {
+      res.status(400).json({ error: { message: 'env must be a map of string values' } });
+      return;
+    }
     const now = new Date().toISOString();
     const def: TerminalDefinition = {
       id: nanoid(),
@@ -82,7 +95,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       groupId: group.value,
       cwd: cwdCheck.path,
       initialCommand: typeof body.initialCommand === 'string' ? body.initialCommand : undefined,
-      shell: normalizeShell(body.shell) ?? ctx.state.settings.defaultShell,
+      shell,
       env: isStringRecord(body.env) ? body.env : undefined,
       autostart: asBool(body.autostart),
       createdAt: now,
@@ -101,15 +114,19 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       return;
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // Validate everything into a patch FIRST; only apply once all checks pass, so a
+    // rejected request can never partially mutate the live definition.
+    const patch: Partial<TerminalDefinition> = {};
+
     const name = nonEmptyString(body.name);
-    if (name) def.name = name;
+    if (name) patch.name = name;
     if ('groupId' in body) {
       const group = resolveGroupId(ctx, body.groupId);
       if (!group.ok) {
         res.status(400).json({ error: { message: 'invalid groupId' } });
         return;
       }
-      def.groupId = group.value;
+      patch.groupId = group.value;
     }
     if (nonEmptyString(body.cwd)) {
       const cwdCheck = await resolveExistingDir(body.cwd);
@@ -117,19 +134,30 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
         res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
         return;
       }
-      def.cwd = cwdCheck.path;
+      patch.cwd = cwdCheck.path;
     }
     if ('initialCommand' in body) {
-      def.initialCommand = typeof body.initialCommand === 'string' ? body.initialCommand : undefined;
+      patch.initialCommand = typeof body.initialCommand === 'string' ? body.initialCommand : undefined;
     }
-    if (body.shell) {
+    if (body.shell !== undefined) {
       const shell = normalizeShell(body.shell);
-      if (shell) def.shell = shell;
+      if (!shell) {
+        res.status(400).json({ error: { message: 'invalid shell' } });
+        return;
+      }
+      patch.shell = shell;
     }
-    if ('env' in body) def.env = isStringRecord(body.env) ? body.env : undefined;
-    if ('autostart' in body) def.autostart = asBool(body.autostart);
-    def.updatedAt = new Date().toISOString();
+    if ('env' in body) {
+      if (body.env != null && !isStringRecord(body.env)) {
+        res.status(400).json({ error: { message: 'env must be a map of string values' } });
+        return;
+      }
+      patch.env = isStringRecord(body.env) ? body.env : undefined;
+    }
+    if ('autostart' in body) patch.autostart = asBool(body.autostart);
 
+    Object.assign(def, patch);
+    def.updatedAt = new Date().toISOString();
     ctx.manager.upsertDefinition(def);
     await ctx.save();
     res.json(present(ctx, def));

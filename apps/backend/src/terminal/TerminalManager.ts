@@ -93,8 +93,9 @@ export class TerminalManager extends EventEmitter {
     return s.restart(cols ?? size?.cols, rows ?? size?.rows);
   }
 
-  write(id: TerminalId, data: string): void {
-    this.sessions.get(id)?.write(data);
+  /** Returns true if written to a live pty. */
+  write(id: TerminalId, data: string): boolean {
+    return this.sessions.get(id)?.write(data) ?? false;
   }
   resize(id: TerminalId, cols: number, rows: number): void {
     this.sizes.set(id, { cols, rows }); // remembered even with no live session, used on next start
@@ -115,9 +116,6 @@ export class TerminalManager extends EventEmitter {
   }
   getBuffer(id: TerminalId): string {
     return this.sessions.get(id)?.getBuffer() ?? '';
-  }
-  listStatuses(): TerminalRuntimeStatus[] {
-    return [...this.sessions.values()].map((s) => s.getStatus());
   }
 
   /** Dispose the live process (used when a definition is deleted). */
@@ -162,7 +160,7 @@ export class TerminalManager extends EventEmitter {
   private resolveTargets(target: CommandTarget): TerminalId[] {
     switch (target.mode) {
       case 'selected':
-        return target.termIds.filter((id) => this.defs.has(id));
+        return [...new Set(target.termIds)].filter((id) => this.defs.has(id));
       case 'group':
         return [...this.defs.values()].filter((d) => d.groupId === target.groupId).map((d) => d.id);
       case 'all':
@@ -193,8 +191,11 @@ export class TerminalManager extends EventEmitter {
           continue;
         }
       }
-      this.write(id, payload);
-      written += 1;
+      if (this.write(id, payload)) {
+        written += 1;
+      } else {
+        failed.push({ termId: id, code: 'NOT_RUNNING' }); // exited between check and write
+      }
     }
 
     return { matched: ids.length, written, failed };

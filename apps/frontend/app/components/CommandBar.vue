@@ -23,10 +23,11 @@ const canSend = computed(() => {
   return targetCount.value > 0;
 });
 
-function send() {
+async function send() {
   if (!canSend.value) return;
-  // broadcast() returns false if the socket isn't open — keep the input then.
-  if (socket.broadcast(terminals.buildTarget(), cmd.value)) cmd.value = '';
+  const result = await socket.broadcast(terminals.buildTarget(), cmd.value);
+  // keep the input for retry if nothing actually ran (all targets failed, or not sent)
+  if (result && result.written > 0) cmd.value = '';
 }
 </script>
 
