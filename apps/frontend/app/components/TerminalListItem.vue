@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
+import IconTrash from '~/components/IconTrash.vue';
 
 const props = defineProps<{ terminal: TerminalDto; active: boolean; selected: boolean }>();
 const emit = defineEmits<{
@@ -68,7 +69,8 @@ onBeforeUnmount(() => {
       <button class="ic" title="Duplicate" @click="emit('duplicate')">⧉</button>
       <button class="ic" title="Edit" @click="emit('edit')">✎</button>
       <button class="ic danger" :class="{ confirm: confirming }" :title="confirming ? 'Click again to delete' : 'Delete'" @click="onDelete">
-        {{ confirming ? '✓?' : '🗑' }}
+        <template v-if="confirming">✓?</template>
+        <IconTrash v-else />
       </button>
     </div>
   </div>

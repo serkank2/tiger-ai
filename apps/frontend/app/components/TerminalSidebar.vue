@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
+import IconTrash from '~/components/IconTrash.vue';
 
 const emit = defineEmits<{ create: []; edit: [terminal: TerminalDto] }>();
 const terminals = useTerminalsStore();
@@ -78,7 +79,8 @@ function groupSomeSelected(list: TerminalDto[]) {
           :title="confirmBulk ? 'Click again to delete all selected' : 'Delete selected'"
           @click="onBulkDelete"
         >
-          {{ confirmBulk ? '✓?' : '🗑' }}
+          <template v-if="confirmBulk">✓?</template>
+          <IconTrash v-else />
         </button>
         <button class="link" @click="terminals.clearSelection()">clear</button>
       </span>

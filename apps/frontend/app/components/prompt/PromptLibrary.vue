@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { PromptSummary } from '~/types';
+import IconTrash from '~/components/IconTrash.vue';
 
 const props = defineProps<{ items: PromptSummary[]; currentPath: string | null; dirty: boolean }>();
 const emit = defineEmits<{
@@ -96,7 +97,8 @@ onBeforeUnmount(() => {
           <div class="row-actions" @click.stop>
             <button class="ic" title="Rename" @click="startRename(p.path)">✎</button>
             <button class="ic danger" :class="{ confirm: confirmingPath === p.path }" :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'" @click="onDelete(p.path)">
-              {{ confirmingPath === p.path ? '✓?' : '🗑' }}
+              <template v-if="confirmingPath === p.path">✓?</template>
+              <IconTrash v-else />
             </button>
           </div>
         </template>

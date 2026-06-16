@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errText } from '~/lib/apiError';
+import IconTrash from '~/components/IconTrash.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const groups = useGroupsStore();
@@ -100,7 +101,8 @@ async function remove(id: string) {
             :title="confirmingId === g.id ? 'Click again to delete' : 'Delete group'"
             @click="onDelete(g.id)"
           >
-            {{ confirmingId === g.id ? '✓?' : '🗑' }}
+            <template v-if="confirmingId === g.id">✓?</template>
+            <IconTrash v-else />
           </button>
         </li>
         <li v-if="!groups.groups.length" class="empty">No groups yet.</li>
