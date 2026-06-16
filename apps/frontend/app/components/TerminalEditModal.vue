@@ -46,7 +46,50 @@ const form = reactive({
   shellArgs: (props.terminal?.shell.args ?? []).join(' '),
   env: envToText(props.terminal?.env),
   autostart: props.terminal?.autostart ?? false,
+  // AI CLI quick-start presets — build the initial command (still editable below)
+  aiTool: '' as '' | 'claude' | 'codex',
+  aiModel: '',
+  aiMode: '',
 });
+
+// Preset options (flags verified against `claude --help` / `codex --help`).
+const CLAUDE_MODELS = ['', 'opus', 'sonnet', 'haiku', 'fable'];
+const CLAUDE_MODES: { v: string; label: string }[] = [
+  { v: 'default', label: 'Normal — asks each time' },
+  { v: 'plan', label: 'Plan mode' },
+  { v: 'acceptEdits', label: 'Auto-accept edits' },
+  { v: 'full', label: 'Full access (skip all permissions)' },
+];
+const CODEX_MODES: { v: string; label: string }[] = [
+  { v: 'workspace-write', label: 'Workspace write' },
+  { v: 'read-only', label: 'Read-only' },
+  { v: 'full', label: 'Full access (bypass sandbox + approvals)' },
+];
+function buildAiCommand(): string {
+  if (form.aiTool === 'claude') {
+    const p = ['claude'];
+    if (form.aiModel) p.push('--model', form.aiModel);
+    if (form.aiMode === 'full') p.push('--dangerously-skip-permissions');
+    else if (form.aiMode && form.aiMode !== 'default') p.push('--permission-mode', form.aiMode);
+    return p.join(' ');
+  }
+  if (form.aiTool === 'codex') {
+    const p = ['codex'];
+    if (form.aiModel.trim()) p.push('-m', form.aiModel.trim());
+    if (form.aiMode === 'full') p.push('--dangerously-bypass-approvals-and-sandbox');
+    else if (form.aiMode) p.push('--sandbox', form.aiMode);
+    return p.join(' ');
+  }
+  return '';
+}
+function rebuildAi() {
+  if (form.aiTool) form.initialCommand = buildAiCommand();
+}
+function onToolChange() {
+  form.aiModel = '';
+  form.aiMode = form.aiTool === 'codex' ? 'workspace-write' : form.aiTool === 'claude' ? 'default' : '';
+  rebuildAi();
+}
 
 const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
@@ -161,6 +204,34 @@ async function save() {
         </span>
       </label>
 
+      <div class="ai">
+        <div class="ai-head">🤖 AI CLI quick start <i>(fills the initial command — still editable)</i></div>
+        <div class="ai-row">
+          <select v-model="form.aiTool" aria-label="AI CLI" @change="onToolChange">
+            <option value="">— none —</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
+          <template v-if="form.aiTool === 'claude'">
+            <select v-model="form.aiModel" aria-label="Claude model" @change="rebuildAi">
+              <option v-for="m in CLAUDE_MODELS" :key="m" :value="m">{{ m || 'default model' }}</option>
+            </select>
+            <select v-model="form.aiMode" aria-label="Claude permission mode" @change="rebuildAi">
+              <option v-for="o in CLAUDE_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+            </select>
+          </template>
+          <template v-else-if="form.aiTool === 'codex'">
+            <input v-model="form.aiModel" placeholder="model (optional)" spellcheck="false" @input="rebuildAi" />
+            <select v-model="form.aiMode" aria-label="Codex sandbox mode" @change="rebuildAi">
+              <option v-for="o in CODEX_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+            </select>
+          </template>
+        </div>
+        <p v-if="form.aiMode === 'full'" class="ai-warn">
+          ⚠ Full access bypasses all {{ form.aiTool === 'claude' ? 'permission prompts' : 'sandbox + approval checks' }}.
+        </p>
+      </div>
+
       <label class="field">
         <span>Initial command <i>(optional)</i></span>
         <input v-model="form.initialCommand" placeholder="npm run dev · claude · codex" spellcheck="false" />
@@ -230,8 +301,8 @@ async function save() {
   backdrop-filter: blur(2px);
 }
 .modal {
-  width: min(520px, 92vw);
-  max-height: 90vh;
+  width: min(720px, 95vw);
+  max-height: 92vh;
   overflow-y: auto;
   background: var(--bg-elev);
   border: 1px solid var(--border-strong);
@@ -266,6 +337,38 @@ h2 {
   font-family: var(--font-mono);
   font-size: 12px;
   resize: vertical;
+}
+.ai {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 13px;
+  background: var(--bg);
+}
+.ai-head {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.ai-head i {
+  color: var(--text-faint);
+  font-style: normal;
+}
+.ai-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-row select,
+.ai-row input {
+  flex: 1;
+  min-width: 130px;
+  font-size: 12px;
+}
+.ai-warn {
+  color: var(--amber);
+  font-size: 11px;
+  margin: 8px 0 0;
 }
 .cwd-row {
   display: flex;

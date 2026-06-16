@@ -100,11 +100,17 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   // bulk actions over the current multi-selection
+  async function startMany(ids: string[]) {
+    for (const id of [...ids]) await start(id);
+  }
+  async function stopMany(ids: string[]) {
+    for (const id of [...ids]) await stop(id);
+  }
   async function startSelected() {
-    for (const id of [...selectedIds.value]) await start(id);
+    await startMany(selectedIds.value);
   }
   async function stopSelected() {
-    for (const id of [...selectedIds.value]) await stop(id);
+    await stopMany(selectedIds.value);
   }
   async function removeSelected() {
     for (const id of [...selectedIds.value]) await remove(id);
@@ -179,6 +185,16 @@ export const useTerminalsStore = defineStore('terminals', () => {
     if (allSelected.value) clearSelection();
     else selectAll();
   }
+  /** Select all ids in the list (a group), or deselect them if they're already all selected. */
+  function toggleGroup(ids: string[]) {
+    const allSel = ids.length > 0 && ids.every((id) => selectedIds.value.includes(id));
+    if (allSel) {
+      const set = new Set(ids);
+      selectedIds.value = selectedIds.value.filter((id) => !set.has(id));
+    } else {
+      selectedIds.value = [...new Set([...selectedIds.value, ...ids])];
+    }
+  }
 
   /** Build the WS command target from the current UI selection. */
   function buildTarget(): CommandTarget {
@@ -211,6 +227,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
     restart,
     startSelected,
     stopSelected,
+    startMany,
+    stopMany,
     removeSelected,
     duplicate,
     replace,
@@ -221,6 +239,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     clearSelection,
     selectAll,
     toggleSelectAll,
+    toggleGroup,
     someSelected,
     allSelected,
     buildTarget,

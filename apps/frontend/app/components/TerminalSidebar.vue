@@ -40,6 +40,16 @@ function groupName(id: string | null) {
 function groupColor(id: string | null) {
   return (id && groups.byId[id]?.color) || 'var(--text-faint)';
 }
+// per-group selection (checkbox on the group header)
+function groupIds(list: TerminalDto[]) {
+  return list.map((t) => t.id);
+}
+function groupAllSelected(list: TerminalDto[]) {
+  return list.length > 0 && list.every((t) => terminals.selectedIds.includes(t.id));
+}
+function groupSomeSelected(list: TerminalDto[]) {
+  return list.some((t) => terminals.selectedIds.includes(t.id));
+}
 </script>
 
 <template>
@@ -77,9 +87,22 @@ function groupColor(id: string | null) {
     <div class="list">
       <template v-for="[gid, list] in sections" :key="gid ?? '__none__'">
         <div class="ghead">
+          <input
+            class="gchk"
+            type="checkbox"
+            :checked="groupAllSelected(list)"
+            :indeterminate.prop="groupSomeSelected(list) && !groupAllSelected(list)"
+            :title="`Select all in ${groupName(gid)}`"
+            :aria-label="`Select all in ${groupName(gid)}`"
+            @change="terminals.toggleGroup(groupIds(list))"
+          />
           <span class="gdot" :style="{ background: groupColor(gid) }" />
           <span class="gname">{{ groupName(gid) }}</span>
           <span class="count">{{ list.length }}</span>
+          <span class="gacts">
+            <button class="gact" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</button>
+            <button class="gact" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</button>
+          </span>
         </div>
         <TerminalListItem
           v-for="t in list"
@@ -213,6 +236,34 @@ function groupColor(id: string | null) {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--text-faint);
+}
+.gchk {
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: none;
+  margin: 0;
+}
+.gacts {
+  display: none;
+  gap: 2px;
+  margin-left: 4px;
+}
+.ghead:hover .gacts,
+.ghead:focus-within .gacts {
+  display: flex;
+}
+.gact {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+}
+.gact:hover {
+  color: var(--accent);
+  background: var(--bg);
 }
 .gdot {
   width: 8px;
