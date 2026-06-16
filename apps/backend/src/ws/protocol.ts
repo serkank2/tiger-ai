@@ -80,6 +80,11 @@ export interface StatusMsg {
   termId: string;
   state: TerminalRunState;
   pid?: number;
+  exitCode?: number | null;
+  signal?: number | null;
+  error?: { message: string; code?: string };
+  cols?: number;
+  rows?: number;
 }
 export interface ExitMsg {
   type: 'term.exit';

@@ -19,7 +19,10 @@ export function normalizeShell(input: unknown): ShellSpec | null {
   const out: ShellSpec = { kind: s.kind as ShellSpec['kind'] };
   if (typeof s.path === 'string') out.path = s.path;
   if (Array.isArray(s.args)) out.args = s.args.filter((a): a is string => typeof a === 'string');
-  if (out.kind === 'custom' && !out.path) return null;
+  if (out.kind === 'custom') {
+    if (!out.path) return null;
+    if (out.path.startsWith('\\\\') || out.path.startsWith('//')) return null; // no UNC/device shell
+  }
   return out;
 }
 

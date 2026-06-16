@@ -7,8 +7,31 @@ import type {
   TerminalStatus,
 } from '~/types';
 
+interface StatusInfo {
+  pid?: number;
+  exitCode?: number | null;
+  signal?: number | null;
+  error?: { message: string; code?: string };
+}
+
 export const useTerminalsStore = defineStore('terminals', () => {
   const api = useApi();
+  const notices = useNoticesStore();
+
+  function errText(e: unknown): string {
+    const err = e as { data?: { error?: { message?: string } }; message?: string };
+    return err?.data?.error?.message ?? err?.message ?? 'Request failed';
+  }
+  // Wrap a lifecycle call: surface failures as a toast, and resync on a 404 (stale id).
+  async function guarded(label: string, fn: () => Promise<void>) {
+    try {
+      await fn();
+    } catch (e) {
+      const status = (e as { statusCode?: number; status?: number })?.statusCode ?? (e as { status?: number })?.status;
+      notices.push(`${label} failed: ${errText(e)}`, 'error');
+      if (status === 404) await fetchAll().catch(() => {});
+    }
+  }
 
   const items = ref<TerminalDto[]>([]);
   const activeId = ref<string | null>(null);
@@ -58,20 +81,22 @@ export const useTerminalsStore = defineStore('terminals', () => {
     replace(await api.updateTerminal(id, body));
   }
   async function remove(id: string) {
-    await api.deleteTerminal(id);
-    items.value = items.value.filter((t) => t.id !== id);
-    selectedIds.value = selectedIds.value.filter((x) => x !== id);
-    if (activeId.value === id) activeId.value = items.value[0]?.id ?? null;
+    await guarded('Delete', async () => {
+      await api.deleteTerminal(id);
+      items.value = items.value.filter((t) => t.id !== id);
+      selectedIds.value = selectedIds.value.filter((x) => x !== id);
+      if (activeId.value === id) activeId.value = items.value[0]?.id ?? null;
+    });
   }
 
   async function start(id: string, size?: { cols?: number; rows?: number }) {
-    applyStatusObj(id, await api.startTerminal(id, size));
+    await guarded('Start', async () => applyStatusObj(id, await api.startTerminal(id, size)));
   }
   async function stop(id: string) {
-    applyStatusObj(id, await api.stopTerminal(id));
+    await guarded('Stop', async () => applyStatusObj(id, await api.stopTerminal(id)));
   }
   async function restart(id: string, size?: { cols?: number; rows?: number }) {
-    applyStatusObj(id, await api.restartTerminal(id, size));
+    await guarded('Restart', async () => applyStatusObj(id, await api.restartTerminal(id, size)));
   }
 
   function replace(dto: TerminalDto) {
@@ -80,16 +105,21 @@ export const useTerminalsStore = defineStore('terminals', () => {
     else items.value.push(dto);
   }
   // WS-driven updates:
-  function applyStatus(id: string, state: TerminalRunState, pid?: number) {
+  function applyStatus(id: string, state: TerminalRunState, info: StatusInfo = {}) {
     const t = byId.value[id];
     if (!t) return;
     t.status.state = state;
-    if (pid !== undefined) t.status.pid = pid;
-    // a fresh run clears the previous exit/error info
-    if (state === 'starting' || state === 'running') {
+    if (state === 'running' || state === 'starting') {
+      if (info.pid !== undefined) t.status.pid = info.pid;
+      // a fresh run clears the previous exit/error info
       t.status.exitCode = null;
       t.status.signal = null;
       t.status.error = undefined;
+    } else {
+      t.status.pid = undefined; // clear stale pid once not running
+      if (info.exitCode !== undefined) t.status.exitCode = info.exitCode;
+      if (info.signal !== undefined) t.status.signal = info.signal;
+      if (info.error !== undefined) t.status.error = info.error;
     }
   }
   function applyExit(id: string, exitCode: number | null, signal: number | null) {

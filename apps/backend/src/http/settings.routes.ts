@@ -13,18 +13,12 @@ export function createSettingsRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const s = ctx.state.settings;
 
-    if (body.theme === 'system' || body.theme === 'light' || body.theme === 'dark') {
-      s.theme = body.theme;
-    }
     if (typeof body.defaultCwd === 'string' && body.defaultCwd.trim()) {
       s.defaultCwd = body.defaultCwd;
     }
     if (body.defaultShell) {
       const shell = normalizeShell(body.defaultShell);
       if (shell) s.defaultShell = shell;
-    }
-    if (typeof body.confirmBeforeKill === 'boolean') {
-      s.confirmBeforeKill = body.confirmBeforeKill;
     }
     if (body.commandRouting && typeof body.commandRouting === 'object') {
       const cr = body.commandRouting as Record<string, unknown>;

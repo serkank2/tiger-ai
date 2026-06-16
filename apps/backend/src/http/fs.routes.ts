@@ -3,21 +3,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AppCtx } from '../context.js';
-
-/**
- * Accept only absolute local directory paths. Reject relative paths (which would
- * resolve against the backend cwd) and Windows UNC/device paths like \\host\share
- * or \\?\... (a crafted localhost request could otherwise trigger outbound access).
- */
-function safePath(input: unknown): string | null {
-  if (typeof input !== 'string' || !input.trim()) return null;
-  const raw = input.trim();
-  if (process.platform === 'win32' && (raw.startsWith('\\\\') || raw.startsWith('//'))) return null;
-  if (!path.isAbsolute(raw)) return null;
-  const resolved = path.resolve(raw);
-  if (process.platform === 'win32' && resolved.startsWith('\\\\')) return null;
-  return resolved;
-}
+import { safeDirPath as safePath } from '../util/paths.js';
 
 /** Filesystem helpers for the cwd picker (validate a path, browse directories). */
 export function createFsRouter(_ctx: AppCtx): Router {

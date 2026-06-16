@@ -73,10 +73,8 @@ export interface CommandRoutingSettings {
 }
 
 export interface AppSettings {
-  theme: 'system' | 'light' | 'dark';
   defaultCwd: string;
   defaultShell: ShellSpec;
-  confirmBeforeKill: boolean;
   commandRouting: CommandRoutingSettings;
 }
 
@@ -102,6 +100,7 @@ export interface ServerMessage {
   matched?: number;
   written?: number;
   failed?: { termId: string; code: string }[];
+  error?: { message: string; code?: string };
   code?: string;
   message?: string;
   ts?: number;

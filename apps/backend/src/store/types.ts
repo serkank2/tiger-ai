@@ -49,10 +49,8 @@ export interface CommandRoutingSettings {
 }
 
 export interface AppSettings {
-  theme: 'system' | 'light' | 'dark';
   defaultCwd: string;
   defaultShell: ShellSpec;
-  confirmBeforeKill: boolean;
   commandRouting: CommandRoutingSettings;
 }
 

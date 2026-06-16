@@ -12,10 +12,8 @@ export function defaultShell(): ShellSpec {
 
 export function defaultSettings(): AppSettings {
   return {
-    theme: 'system',
     defaultCwd: os.homedir(),
     defaultShell: defaultShell(),
-    confirmBeforeKill: true,
     commandRouting: {
       appendNewlineByDefault: true,
       startTerminalOnSend: false,

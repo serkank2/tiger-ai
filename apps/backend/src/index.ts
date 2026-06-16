@@ -23,6 +23,17 @@ const ctx: AppCtx = {
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
+// Server-side Origin guard: block cross-origin browser requests outright (CORS only
+// blocks reading the *response*; a simple cross-origin POST could still hit a route).
+// Non-browser local clients send no Origin and are allowed.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && !config.corsOrigins.includes(origin)) {
+    res.status(403).json({ error: { message: 'forbidden origin' } });
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (_req, res) => {
@@ -47,7 +58,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const server = http.createServer(app);
-createWsServer(server, ctx);
+const wss = createWsServer(server, ctx);
 
 let autostartDone: Promise<void> = Promise.resolve();
 
@@ -67,6 +78,7 @@ async function shutdown(signal: string): Promise<void> {
   manager.beginShutdown();
   await autostartDone.catch(() => {});
   await manager.killAll();
+  wss.close();
   server.close(() => process.exit(0));
   // Safety net if server.close hangs on lingering sockets.
   setTimeout(() => process.exit(0), 2000).unref();

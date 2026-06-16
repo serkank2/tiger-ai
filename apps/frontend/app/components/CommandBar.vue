@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const emit = defineEmits<{ create: []; manageGroups: [] }>();
+const emit = defineEmits<{ create: []; manageGroups: []; openSettings: [] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
@@ -50,7 +50,8 @@ function send() {
         <option :value="null" disabled>Choose group…</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <button class="manage" title="Manage groups" @click="emit('manageGroups')">⚙</button>
+      <button class="iconbtn" title="Manage groups" @click="emit('manageGroups')">🗂</button>
+      <button class="iconbtn" title="Settings" @click="emit('openSettings')">⚙</button>
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -109,13 +110,14 @@ function send() {
   align-items: center;
   gap: 8px;
 }
-.manage {
+.iconbtn {
   border: 1px solid var(--border-strong);
   width: 32px;
   height: 32px;
   color: var(--text-dim);
+  flex: none;
 }
-.manage:hover {
+.iconbtn:hover {
   color: var(--accent);
   border-color: var(--accent);
 }

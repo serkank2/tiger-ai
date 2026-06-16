@@ -1,12 +1,9 @@
 <script setup lang="ts">
-import type { ShellKind, TerminalDto, TerminalInput } from '~/types';
+import type { AppSettings, ShellKind } from '~/types';
 
-const props = defineProps<{ terminal: TerminalDto | null }>();
-const emit = defineEmits<{ close: []; saved: [] }>();
-
-const terminals = useTerminalsStore();
-const groups = useGroupsStore();
+const emit = defineEmits<{ close: [] }>();
 const settings = useSettingsStore();
+const notices = useNoticesStore();
 const api = useApi();
 
 const SHELLS: { value: ShellKind; label: string }[] = [
@@ -20,17 +17,13 @@ const SHELLS: { value: ShellKind; label: string }[] = [
   { value: 'custom', label: 'Custom…' },
 ];
 
-const isEdit = computed(() => !!props.terminal);
-
+const s = settings.settings;
 const form = reactive({
-  name: props.terminal?.name ?? '',
-  groupId: props.terminal?.groupId ?? null,
-  cwd: props.terminal?.cwd ?? settings.settings?.defaultCwd ?? '',
-  initialCommand: props.terminal?.initialCommand ?? '',
-  shellKind: (props.terminal?.shell.kind ?? 'system-default') as ShellKind,
-  shellPath: props.terminal?.shell.path ?? '',
-  shellArgs: (props.terminal?.shell.args ?? []).join(' '),
-  autostart: props.terminal?.autostart ?? false,
+  defaultCwd: s?.defaultCwd ?? '',
+  shellKind: (s?.defaultShell.kind ?? 'system-default') as ShellKind,
+  shellPath: s?.defaultShell.path ?? '',
+  appendNewlineByDefault: s?.commandRouting.appendNewlineByDefault ?? true,
+  startTerminalOnSend: s?.commandRouting.startTerminalOnSend ?? false,
 });
 
 const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
@@ -38,7 +31,7 @@ const saving = ref(false);
 const error = ref('');
 
 async function checkCwd() {
-  const p = form.cwd.trim();
+  const p = form.defaultCwd.trim();
   if (!p) {
     cwdState.value = 'idle';
     return;
@@ -54,41 +47,27 @@ async function checkCwd() {
 
 async function save() {
   error.value = '';
-  if (!form.name.trim()) {
-    error.value = 'Name is required.';
-    return;
-  }
   if (form.shellKind === 'custom' && !form.shellPath.trim()) {
-    error.value = 'A custom shell needs a path.';
-    return;
-  }
-  if (cwdState.value === 'bad') {
-    error.value = 'Working directory does not exist.';
+    error.value = 'A custom default shell needs a path.';
     return;
   }
   saving.value = true;
-  const shell =
+  const defaultShell =
     form.shellKind === 'custom'
-      ? {
-          kind: 'custom' as const,
-          path: form.shellPath.trim(),
-          args: form.shellArgs.trim() ? form.shellArgs.trim().split(/\s+/) : undefined,
-        }
+      ? { kind: 'custom' as const, path: form.shellPath.trim() }
       : { kind: form.shellKind };
-
-  const body: TerminalInput = {
-    name: form.name.trim(),
-    groupId: form.groupId,
-    cwd: form.cwd.trim() || (settings.settings?.defaultCwd ?? ''),
-    initialCommand: form.initialCommand.trim() || undefined,
-    shell,
-    autostart: form.autostart,
+  const patch: Partial<AppSettings> = {
+    defaultShell,
+    commandRouting: {
+      appendNewlineByDefault: form.appendNewlineByDefault,
+      startTerminalOnSend: form.startTerminalOnSend,
+    },
   };
+  if (form.defaultCwd.trim()) patch.defaultCwd = form.defaultCwd.trim();
 
   try {
-    if (props.terminal) await terminals.update(props.terminal.id, body);
-    else await terminals.create(body);
-    emit('saved');
+    await settings.update(patch);
+    notices.push('Settings saved');
     emit('close');
   } catch (e) {
     const err = e as { data?: { error?: { message?: string } }; message?: string };
@@ -100,27 +79,14 @@ async function save() {
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
+  <div class="backdrop" @click.self="emit('close')">
     <div class="modal" role="dialog" aria-modal="true">
-      <h2>{{ isEdit ? 'Edit terminal' : 'New terminal' }}</h2>
+      <h2>Settings</h2>
 
       <label class="field">
-        <span>Name</span>
-        <input v-model="form.name" placeholder="e.g. Frontend Claude" autofocus />
-      </label>
-
-      <label class="field">
-        <span>Group</span>
-        <select v-model="form.groupId">
-          <option :value="null">— none —</option>
-          <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span>Working directory</span>
+        <span>Default working directory <i>(for new terminals)</i></span>
         <span class="cwd-row">
-          <input v-model="form.cwd" placeholder="C:\path\to\project" spellcheck="false" @blur="checkCwd" />
+          <input v-model="form.defaultCwd" spellcheck="false" placeholder="C:\path" @blur="checkCwd" />
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -128,40 +94,33 @@ async function save() {
       </label>
 
       <label class="field">
-        <span>Initial command <i>(optional)</i></span>
-        <input v-model="form.initialCommand" placeholder="npm run dev · claude · codex" spellcheck="false" />
-      </label>
-
-      <label class="field">
-        <span>Shell</span>
+        <span>Default shell</span>
         <select v-model="form.shellKind">
-          <option v-for="s in SHELLS" :key="s.value" :value="s.value">{{ s.label }}</option>
+          <option v-for="o in SHELLS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
       </label>
-
-      <template v-if="form.shellKind === 'custom'">
-        <label class="field">
-          <span>Shell path</span>
-          <input v-model="form.shellPath" placeholder="C:\path\to\shell.exe" spellcheck="false" />
-        </label>
-        <label class="field">
-          <span>Shell args <i>(space-separated)</i></span>
-          <input v-model="form.shellArgs" spellcheck="false" />
-        </label>
-      </template>
-
-      <label class="check">
-        <input v-model="form.autostart" type="checkbox" />
-        <span>Auto-start when Kaplan launches</span>
+      <label v-if="form.shellKind === 'custom'" class="field">
+        <span>Default shell path</span>
+        <input v-model="form.shellPath" spellcheck="false" placeholder="C:\path\to\shell.exe" />
       </label>
+
+      <div class="group">
+        <span class="group-title">Command routing</span>
+        <label class="check">
+          <input v-model="form.appendNewlineByDefault" type="checkbox" />
+          <span>Append a newline so sent commands run immediately</span>
+        </label>
+        <label class="check">
+          <input v-model="form.startTerminalOnSend" type="checkbox" />
+          <span>Start a stopped terminal when a command is sent to it</span>
+        </label>
+      </div>
 
       <p v-if="error" class="err">{{ error }}</p>
 
       <div class="foot">
         <button class="ghost" @click="emit('close')">Cancel</button>
-        <button class="primary" :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create' }}
-        </button>
+        <button class="primary" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
     </div>
   </div>
@@ -178,9 +137,7 @@ async function save() {
   backdrop-filter: blur(2px);
 }
 .modal {
-  width: min(520px, 92vw);
-  max-height: 90vh;
-  overflow-y: auto;
+  width: min(500px, 92vw);
   background: var(--bg-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -229,21 +186,33 @@ h2 {
 .flag.bad {
   color: var(--red);
 }
+.group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 6px 0 4px;
+}
+.group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+}
 .check {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: 16px 0;
+  margin-top: 10px;
   font-size: 13px;
   color: var(--text-dim);
 }
 .check input {
   accent-color: var(--accent);
+  flex: none;
 }
 .err {
   color: var(--red);
   font-size: 13px;
-  margin: 6px 0 0;
 }
 .foot {
   display: flex;
@@ -256,18 +225,12 @@ h2 {
   padding: 8px 16px;
   color: var(--text-dim);
 }
-.ghost:hover {
-  color: var(--text);
-}
 .primary {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: #1b1206;
   font-weight: 700;
   padding: 8px 18px;
-}
-.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
 }
 .primary:disabled {
   opacity: 0.5;

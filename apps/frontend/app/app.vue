@@ -9,6 +9,7 @@ const socket = useSocket();
 const showEditor = ref(false);
 const editing = ref<TerminalDto | null>(null);
 const showGroups = ref(false);
+const showSettings = ref(false);
 
 function openCreate() {
   editing.value = null;
@@ -27,21 +28,34 @@ async function loadAll() {
   }
 }
 
-let poll: ReturnType<typeof setInterval> | null = null;
+// Self-scheduling preview refresh: waits for each request before the next, never overlaps,
+// and stops cleanly on unmount. (Live status itself arrives via WebSocket.)
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let disposed = false;
+async function pollLoop() {
+  if (disposed) return;
+  try {
+    await terminals.refreshPreviews();
+  } catch {
+    /* ignore transient errors */
+  }
+  if (!disposed) pollTimer = setTimeout(pollLoop, 4000);
+}
+
 onMounted(async () => {
   socket.connect();
   await loadAll();
-  // Refresh last-output previews periodically (live status arrives via WebSocket).
-  poll = setInterval(() => void terminals.refreshPreviews().catch(() => {}), 4000);
+  if (!disposed) pollTimer = setTimeout(pollLoop, 4000);
 });
 onBeforeUnmount(() => {
-  if (poll) clearInterval(poll);
+  disposed = true;
+  if (pollTimer) clearTimeout(pollTimer);
 });
 </script>
 
 <template>
   <div class="app">
-    <CommandBar @create="openCreate" @manage-groups="showGroups = true" />
+    <CommandBar @create="openCreate" @manage-groups="showGroups = true" @open-settings="showSettings = true" />
     <div class="body">
       <TerminalSidebar @create="openCreate" @edit="openEdit" />
       <TerminalPane />
@@ -63,6 +77,7 @@ onBeforeUnmount(() => {
       @saved="terminals.fetchAll()"
     />
     <GroupsModal v-if="showGroups" @close="showGroups = false" />
+    <SettingsModal v-if="showSettings" @close="showSettings = false" />
     <NoticeToast />
   </div>
 </template>

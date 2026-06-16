@@ -32,6 +32,7 @@ function stoppedStatus(id: TerminalId): TerminalRuntimeStatus {
 export class TerminalManager extends EventEmitter {
   private sessions = new Map<TerminalId, TerminalSession>();
   private defs = new Map<TerminalId, TerminalDefinition>();
+  private sizes = new Map<TerminalId, { cols: number; rows: number }>();
   private stopping = false;
 
   // --- definitions ---
@@ -69,7 +70,8 @@ export class TerminalManager extends EventEmitter {
     if (this.stopping) return stoppedStatus(id); // don't spawn during shutdown
     const s = this.ensureSession(def);
     s.updateDefinition(def);
-    return s.start(cols, rows);
+    const size = this.sizes.get(id);
+    return s.start(cols ?? size?.cols, rows ?? size?.rows);
   }
 
   // Idempotent: stopping a known-but-never-started terminal is a no-op, not an error.
@@ -87,14 +89,21 @@ export class TerminalManager extends EventEmitter {
     if (!def) throw new Error(`unknown terminal: ${id}`);
     const s = this.ensureSession(def);
     s.updateDefinition(def);
-    return s.restart(cols, rows);
+    const size = this.sizes.get(id);
+    return s.restart(cols ?? size?.cols, rows ?? size?.rows);
   }
 
   write(id: TerminalId, data: string): void {
     this.sessions.get(id)?.write(data);
   }
   resize(id: TerminalId, cols: number, rows: number): void {
+    this.sizes.set(id, { cols, rows }); // remembered even with no live session, used on next start
     this.sessions.get(id)?.resize(cols, rows);
+  }
+
+  /** Drain a session's coalesced output (used before an attach snapshot). */
+  flush(id: TerminalId): void {
+    this.sessions.get(id)?.flushPending();
   }
 
   hasSession(id: TerminalId): boolean {
@@ -113,12 +122,15 @@ export class TerminalManager extends EventEmitter {
 
   /** Dispose the live process (used when a definition is deleted). */
   async remove(id: TerminalId): Promise<void> {
+    // Remove the definition FIRST so a concurrent start/restart/route can't resolve
+    // this id; the session's `disposed` flag then rejects anything already queued.
+    this.defs.delete(id);
+    this.sizes.delete(id);
     const s = this.sessions.get(id);
     if (s) {
-      await s.dispose();
       this.sessions.delete(id);
+      await s.dispose();
     }
-    this.defs.delete(id);
   }
 
   async autostartAll(): Promise<void> {

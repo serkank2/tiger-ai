@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { spawn as spawnChild } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import pty from 'node-pty';
-import type { IPty } from 'node-pty';
+import type { IDisposable, IPty } from 'node-pty';
 import { config } from '../config.js';
 import type {
   ShellSpec,
@@ -65,6 +65,9 @@ export class TerminalSession extends EventEmitter {
   // lifecycle serialization + user-stop tracking
   private lock: Promise<unknown> = Promise.resolve();
   private stopRequested = false;
+  private disposed = false;
+  private dataDisp?: IDisposable;
+  private exitDisp?: IDisposable;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
 
   // output coalescing + scrollback
@@ -121,10 +124,16 @@ export class TerminalSession extends EventEmitter {
   }
   dispose(): Promise<void> {
     return this.serialize(async () => {
+      this.disposed = true; // reject any start queued behind this in the lock
       await this.stopImpl({ force: true });
       this.clearInitialTimer();
       this.removeAllListeners();
     });
+  }
+
+  /** Drain coalesced output immediately (used before producing an attach snapshot). */
+  flushPending(): void {
+    this.flush();
   }
 
   /** Run lifecycle ops one at a time, regardless of prior success/failure. */
@@ -159,6 +168,7 @@ export class TerminalSession extends EventEmitter {
   // --- impl ---
 
   private async startImpl(cols: number, rows: number): Promise<TerminalRuntimeStatus> {
+    if (this.disposed) return this.getStatus(); // removed while this start was queued
     if (this.isAlive()) return this.getStatus();
 
     this.stopRequested = false;
@@ -195,10 +205,10 @@ export class TerminalSession extends EventEmitter {
     this.startedAt = new Date().toISOString();
     this.setState('running');
 
-    proc.onData((data) => {
+    this.dataDisp = proc.onData((data) => {
       if (gen === this.generation) this.handleData(data);
     });
-    proc.onExit(({ exitCode, signal }) => this.handleExit(gen, exitCode, signal ?? null));
+    this.exitDisp = proc.onExit(({ exitCode, signal }) => this.handleExit(gen, exitCode, signal ?? null));
 
     // Run the initial command once the shell prompt is ready. Tied to this generation
     // so a quick restart never writes the old command into the new shell.
@@ -348,6 +358,9 @@ export class TerminalSession extends EventEmitter {
 
   private handleExit(gen: number, exitCode: number, signal: number | null): void {
     if (gen !== this.generation) return; // stale pty from a previous run
+    this.dataDisp?.dispose();
+    this.exitDisp?.dispose();
+    this.dataDisp = this.exitDisp = undefined;
     this.clearInitialTimer();
     this.flush();
     this.exitCode = exitCode;

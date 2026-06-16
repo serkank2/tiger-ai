@@ -37,6 +37,8 @@ export function useSocket() {
         reconnectTimer = null;
       }
       for (const id of attached) raw({ type: 'term.attach', termId: id });
+      // Reconcile every terminal's status — some may have changed while disconnected.
+      void terminals.fetchAll().catch(() => {});
     };
     ws.onclose = () => {
       if (socket !== ws) return; // a newer socket already replaced us
@@ -102,7 +104,13 @@ export function useSocket() {
         if (msg.termId && msg.state) terminals.applyStatus(msg.termId, msg.state);
         break;
       case 'term.status':
-        if (msg.termId && msg.state) terminals.applyStatus(msg.termId, msg.state, msg.pid);
+        if (msg.termId && msg.state)
+          terminals.applyStatus(msg.termId, msg.state, {
+            pid: msg.pid,
+            exitCode: msg.exitCode,
+            signal: msg.signal,
+            error: msg.error,
+          });
         break;
       case 'term.exit':
         if (msg.termId) terminals.applyExit(msg.termId, msg.exitCode ?? null, msg.signal ?? null);

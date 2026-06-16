@@ -148,11 +148,14 @@ onBeforeUnmount(() => {
       <span class="pcwd" :title="active.cwd">{{ active.cwd }}</span>
       <span v-if="active.status.pid" class="ppid">pid {{ active.status.pid }}</span>
       <span
-        v-if="active.status.exitCode !== null && active.status.exitCode !== undefined && !running"
+        v-if="active.status.state === 'exited' && active.status.exitCode !== null"
         class="pexit"
         :class="{ bad: active.status.exitCode !== 0 }"
       >
         exit {{ active.status.exitCode }}
+      </span>
+      <span v-else-if="active.status.state === 'failed'" class="pexit bad" :title="active.status.error?.message">
+        failed{{ active.status.error?.message ? ': ' + active.status.error.message : '' }}
       </span>
       <span class="spacer" />
       <button v-if="!running" class="pbtn go" @click="terminals.start(active.id)">▶ Start</button>

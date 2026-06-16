@@ -15,6 +15,7 @@ interface Peer {
 const HEARTBEAT_MS = 30_000;
 const MAX_PAYLOAD = 512 * 1024; // input/command frames are tiny; this is a generous cap
 const MAX_ATTACH = 256;
+const MAX_BUFFERED = 8 * 1024 * 1024; // drop output to a peer lagging beyond this (snapshot recovers it)
 
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isPosInt = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 2000;
@@ -63,10 +64,24 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   // Fan manager events out. Output only to attached peers; status/exit to all
   // (the sidebar needs status for every terminal regardless of which one is open).
   const onOutput = ({ termId, data }: ManagerOutputEvent) => {
-    for (const p of peers) if (p.attached.has(termId)) send(p.ws, { type: 'term.output', termId, data });
+    for (const p of peers) {
+      if (!p.attached.has(termId)) continue;
+      if (p.ws.bufferedAmount > MAX_BUFFERED) continue; // lagging peer: drop, snapshot recovers on reattach
+      send(p.ws, { type: 'term.output', termId, data });
+    }
   };
   const onStatus = (s: TerminalRuntimeStatus) =>
-    broadcast({ type: 'term.status', termId: s.id, state: s.state, pid: s.pid });
+    broadcast({
+      type: 'term.status',
+      termId: s.id,
+      state: s.state,
+      pid: s.pid,
+      exitCode: s.exitCode,
+      signal: s.signal,
+      error: s.error,
+      cols: s.cols,
+      rows: s.rows,
+    });
   const onExit = (s: TerminalRuntimeStatus) =>
     broadcast({ type: 'term.exit', termId: s.id, exitCode: s.exitCode, signal: s.signal });
   manager.on('output', onOutput);
@@ -98,6 +113,9 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
             break;
           }
           if (peer.attached.size >= MAX_ATTACH) break;
+          // Drain pending output to already-attached peers BEFORE this peer joins, so the
+          // upcoming snapshot (which reads the ring) doesn't then get re-delivered as live output.
+          manager.flush(msg.termId);
           peer.attached.add(msg.termId);
           const status = manager.getStatus(msg.termId);
           const state = status?.state ?? 'stopped';

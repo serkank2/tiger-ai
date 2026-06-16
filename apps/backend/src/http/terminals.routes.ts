@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
 import type { TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
 import { asBool, isStringRecord, nonEmptyString, normalizeShell, toDimension } from './validate.js';
+import { resolveExistingDir } from '../util/paths.js';
 
 /** Validate a groupId payload: must be null/absent or reference an existing group. */
 function resolveGroupId(ctx: AppCtx, raw: unknown): { ok: true; value: string | null } | { ok: false } {
@@ -69,12 +70,17 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: 'invalid groupId' } });
       return;
     }
+    const cwdCheck = await resolveExistingDir(nonEmptyString(body.cwd) ?? ctx.state.settings.defaultCwd);
+    if (!cwdCheck.ok) {
+      res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
+      return;
+    }
     const now = new Date().toISOString();
     const def: TerminalDefinition = {
       id: nanoid(),
       name,
       groupId: group.value,
-      cwd: nonEmptyString(body.cwd) ?? ctx.state.settings.defaultCwd,
+      cwd: cwdCheck.path,
       initialCommand: typeof body.initialCommand === 'string' ? body.initialCommand : undefined,
       shell: normalizeShell(body.shell) ?? ctx.state.settings.defaultShell,
       env: isStringRecord(body.env) ? body.env : undefined,
@@ -105,8 +111,14 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       }
       def.groupId = group.value;
     }
-    const cwd = nonEmptyString(body.cwd);
-    if (cwd) def.cwd = cwd;
+    if (nonEmptyString(body.cwd)) {
+      const cwdCheck = await resolveExistingDir(body.cwd);
+      if (!cwdCheck.ok) {
+        res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
+        return;
+      }
+      def.cwd = cwdCheck.path;
+    }
     if ('initialCommand' in body) {
       def.initialCommand = typeof body.initialCommand === 'string' ? body.initialCommand : undefined;
     }
