@@ -23,6 +23,36 @@ const canSend = computed(() => {
   return targetCount.value > 0;
 });
 
+// Long-input guard: a shell truncates a single command line. cmd.exe caps at ~8191
+// chars, Windows PowerShell at ~16K; bash/zsh/custom are effectively unbounded here.
+// Warn (never block) when the command exceeds the strictest limit among the targets.
+const SHELL_LIMITS: Record<string, number> = {
+  cmd: 8190,
+  'system-default': 8190, // may resolve to cmd.exe on Windows — stay conservative
+  powershell: 16380,
+  pwsh: 16380,
+};
+const targetTerminals = computed(() => {
+  if (terminals.commandMode === 'selected')
+    return terminals.items.filter((t) => terminals.selectedIds.includes(t.id));
+  if (terminals.commandMode === 'group')
+    return terminals.commandGroupId
+      ? terminals.items.filter((t) => t.groupId === terminals.commandGroupId)
+      : [];
+  return terminals.items;
+});
+const inputLimit = computed(() => {
+  const limits = targetTerminals.value.map((t) => SHELL_LIMITS[t.shell?.kind ?? 'system-default'] ?? Infinity);
+  return limits.length ? Math.min(...limits) : Infinity;
+});
+const lengthWarning = computed(() => {
+  const len = cmd.value.length;
+  if (Number.isFinite(inputLimit.value) && len > inputLimit.value) {
+    return `${len} karakter — hedef kabuk ~${inputLimit.value} sınırında komutu kesebilir. Çok uzun içerik için dosyaya yazıp çalıştırın.`;
+  }
+  return null;
+});
+
 async function send() {
   if (!canSend.value) return;
   const result = await socket.broadcast(terminals.buildTarget(), cmd.value);
@@ -69,6 +99,7 @@ function sendKey(ch: string) {
     <form class="cmd" @submit.prevent="send">
       <input v-model="cmd" :placeholder="`Send command to ${targetCount} terminal(s)…`" spellcheck="false" />
       <button type="submit" class="send" :disabled="!canSend">Send ⏎</button>
+      <p v-if="lengthWarning" class="lenwarn">⚠ {{ lengthWarning }}</p>
     </form>
 
     <div class="keys">
@@ -180,6 +211,23 @@ function sendKey(ch: string) {
   flex: 1;
   display: flex;
   gap: 8px;
+  position: relative;
+}
+.lenwarn {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--amber);
+  background: var(--bg-elev);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
 }
 .cmd input {
   flex: 1;
