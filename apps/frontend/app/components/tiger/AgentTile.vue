@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TigerAgentRun } from '~/types';
+import AgentIcon from '~/components/tiger/AgentIcon.vue';
 
 const props = defineProps<{ run: TigerAgentRun }>();
 
@@ -23,6 +24,7 @@ const stateClass = computed(() => `s-${props.run.state}`);
   <div class="atile" :class="stateClass">
     <div class="ahead">
       <span class="dot" :class="stateClass" />
+      <AgentIcon :type="run.type" :size="15" />
       <span class="label">{{ run.label }}</span>
       <span class="type" :class="run.type">{{ run.type }}</span>
       <span v-if="run.taskId" class="task">{{ run.taskId }}</span>

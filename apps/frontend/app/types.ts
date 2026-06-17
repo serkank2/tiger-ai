@@ -162,6 +162,7 @@ export interface TigerStageState {
   endedAt?: string;
   message?: string;
   continued?: boolean;
+  config?: TigerStageRunConfig;
 }
 
 export interface TigerTaskItem {

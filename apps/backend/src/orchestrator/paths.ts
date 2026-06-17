@@ -43,7 +43,7 @@ export const STAGE_META: Record<StageId, StageMeta> = {
     dir: 'executing-plan',
     promptFile: '05-executing-plan.md',
     outputSuffix: 'execution-log.md',
-    title: 'Executing Plan',
+    title: 'Executing Tasks',
     // The single assigned task block is supplied via the run assignment; no bulk context.
     contextDirs: [],
   },

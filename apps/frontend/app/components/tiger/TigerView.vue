@@ -18,7 +18,7 @@ const STAGES: { id: TigerStageId; num: string; title: string }[] = [
   { id: 'writing-plan', num: '2', title: 'Writing Plan' },
   { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
   { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Plan' },
+  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
   { id: 'task-review', num: '6A', title: 'Task Review' },
   { id: 'requesting-code-review', num: '6B', title: 'Requesting Code Review' },
 ];
@@ -108,6 +108,14 @@ const stageMeta = computed(() => STAGES.find((s) => s.id === selectedStage.value
 const stageState = computed(() => tiger.state?.stages?.[selectedStage.value] ?? null);
 const runs = computed(() => stageState.value?.runs ?? []);
 const hasFailed = computed(() => runs.value.some((r) => r.state === 'failed' || r.state === 'stopped'));
+
+// Once a stage has run (e.g. during a Run All), show the exact config it used (read-only);
+// otherwise show the editable local config for a manual single-stage run.
+const ranWithConfig = computed(
+  () => !!stageState.value?.config && stageState.value?.status !== 'not_started',
+);
+const shownCfg = computed(() => (ranWithConfig.value ? stageState.value!.config! : runCfg));
+const cfgDisabled = computed(() => tiger.busy || ranWithConfig.value);
 
 const atCycleLimit = computed(
   () => (tiger.state?.correctionCycles ?? 0) >= (tiger.state?.maxCorrectionCycles ?? 0),
@@ -220,15 +228,19 @@ onMounted(() => {
           </button>
         </div>
 
+        <p v-if="selectedStage === 'brainstorming'" class="opt-note">
+          ℹ Optional stage — for a clear prompt you can skip it and start from Writing Plan (or set 0 agents).
+        </p>
         <p v-if="prevIncomplete" class="warn">⚠ Earlier stage “{{ prevIncomplete }}” is not completed yet.</p>
         <p v-if="stageState?.message" class="msg">{{ stageState.message }}</p>
 
+        <p v-if="ranWithConfig" class="cfg-note">Showing the configuration this stage ran with.</p>
         <StageConfigPanel
           v-if="tiger.config"
           :config="tiger.config"
           :stage="selectedStage"
-          :cfg="runCfg"
-          :disabled="tiger.busy"
+          :cfg="shownCfg"
+          :disabled="cfgDisabled"
         />
 
         <div v-if="selectedStage === 'requesting-code-review'" class="route">
@@ -564,6 +576,16 @@ code {
   margin: 0 0 10px;
   color: var(--amber);
   font-size: 12px;
+}
+.opt-note {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.cfg-note {
+  margin: 0 0 8px;
+  color: var(--text-faint);
+  font-size: 11px;
 }
 .msg {
   margin: 0 0 10px;

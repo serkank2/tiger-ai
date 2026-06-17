@@ -5,12 +5,12 @@ import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 const emit = defineEmits<{ close: [] }>();
 const tiger = useTigerStore();
 
-const STAGES: { id: TigerStageId; num: string; title: string }[] = [
-  { id: 'brainstorming', num: '1', title: 'Brainstorming' },
+const STAGES: { id: TigerStageId; num: string; title: string; opt?: boolean }[] = [
+  { id: 'brainstorming', num: '1', title: 'Brainstorming', opt: true },
   { id: 'writing-plan', num: '2', title: 'Writing Plan' },
   { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
   { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Plan' },
+  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
   { id: 'task-review', num: '6A', title: 'Task Review' },
   { id: 'requesting-code-review', num: '6B', title: 'Requesting Code Review' },
 ];
@@ -85,6 +85,7 @@ async function start() {
           <summary>
             <span class="snum">{{ s.num }}</span>
             <span class="stitle">{{ s.title }}</span>
+            <span v-if="s.opt" class="sopt" title="Optional stage">optional</span>
             <span class="sskip" v-if="!willRun(s.id)">skipped</span>
             <span class="ssum" v-else>{{ stageSummary(s.id) }}</span>
           </summary>
@@ -199,6 +200,15 @@ summary {
 }
 .stitle {
   font-weight: 600;
+}
+.sopt {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
 }
 .ssum {
   margin-left: auto;

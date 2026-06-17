@@ -171,6 +171,7 @@ export class Orchestrator extends EventEmitter {
     stage.startedAt = nowIso();
     stage.endedAt = undefined;
     stage.message = undefined;
+    stage.config = cfg; // remember what this stage ran with, for the UI
     this.emitState();
 
     void this.executeStage(stageId, cfg)
@@ -424,6 +425,7 @@ export class Orchestrator extends EventEmitter {
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
       stage.runs.push(run);
       this.registerRun(run);
+      void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`);
       this.emitState();
 
       await this.executeAgentRun(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
@@ -616,9 +618,9 @@ export class Orchestrator extends EventEmitter {
     };
   }
 
-  private concurrency(stageId: StageId, count: number, parallel = true): number {
-    if (!parallel) return 1;
-    return Math.max(1, Math.min(this.config.execution.maxConcurrent, count));
+  private concurrency(_stageId: StageId, count: number, parallel = true): number {
+    // No imposed cap — the user chooses the agent counts; in parallel mode run them all at once.
+    return parallel ? Math.max(1, count) : 1;
   }
 
   private finalizeStage(stageId: StageId): void {

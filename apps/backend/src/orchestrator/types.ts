@@ -184,6 +184,8 @@ export interface StageState {
   message?: string;
   /** User explicitly chose to continue past this stage's failures. */
   continued?: boolean;
+  /** The run configuration this stage last ran with (so the UI can show what was used). */
+  config?: StageRunConfig;
 }
 
 // ---------------------------------------------------------------------------

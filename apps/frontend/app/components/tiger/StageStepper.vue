@@ -4,12 +4,12 @@ import type { TigerStageId, TigerStageState } from '~/types';
 defineProps<{ stages: Record<TigerStageId, TigerStageState> | null }>();
 const selected = defineModel<TigerStageId>({ required: true });
 
-const STAGES: { id: TigerStageId; num: string; title: string }[] = [
-  { id: 'brainstorming', num: '1', title: 'Brainstorming' },
+const STAGES: { id: TigerStageId; num: string; title: string; opt?: boolean }[] = [
+  { id: 'brainstorming', num: '1', title: 'Brainstorming', opt: true },
   { id: 'writing-plan', num: '2', title: 'Writing Plan' },
   { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
   { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Plan' },
+  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
   { id: 'task-review', num: '6A', title: 'Task Review' },
   { id: 'requesting-code-review', num: '6B', title: 'Code Review' },
 ];
@@ -27,6 +27,7 @@ const STAGES: { id: TigerStageId; num: string; title: string }[] = [
     >
       <span class="num">{{ s.num }}</span>
       <span class="title">{{ s.title }}</span>
+      <span v-if="s.opt" class="opt" title="Optional stage">opt</span>
       <span class="dot" />
     </button>
   </nav>
@@ -65,6 +66,15 @@ const STAGES: { id: TigerStageId; num: string; title: string }[] = [
 .title {
   font-size: 13px;
   font-weight: 600;
+}
+.opt {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
 }
 .dot {
   width: 8px;
