@@ -5,6 +5,7 @@ import PromptTargetPicker from './prompt/PromptTargetPicker.vue';
 import { serializePrompt } from '~/lib/frontmatter';
 import { render, hasPerTerminalVars, detectVariables } from '~/lib/promptTemplate';
 import type { PromptMeta } from '~/types';
+import type { BroadcastOutcome } from '~/composables/useSocket';
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -181,6 +182,20 @@ function payloadFor(text: string, ids: string[]): string {
   const bracket = safe.includes('\n') && ids.length > 0 && ids.every((id) => BRACKET_OK.has(terminals.byId[id]?.shell?.kind ?? ''));
   return bracket ? `\x1b[200~${safe}\x1b[201~` : safe;
 }
+function broadcastFailureMessage(result: BroadcastOutcome): string | null {
+  switch (result.kind) {
+    case 'ok':
+      return null;
+    case 'not_sent':
+      return result.reason === 'server_error'
+        ? `Send failed: ${result.message ?? 'the backend rejected the request.'}`
+        : 'Send failed: the socket is not connected.';
+    case 'timeout':
+      return 'Send status unknown: no broadcast confirmation was received within 5 seconds.';
+    case 'disconnected':
+      return 'Send status unknown: the socket disconnected before confirming delivery.';
+  }
+}
 
 async function doSend() {
   if (!canSend.value) return;
@@ -189,21 +204,32 @@ async function doSend() {
     const ids = terminals.unprotectedIds([...selectedTermIds.value]); // protected never receive a send
     const date = today();
     let delivered = false;
+    let deliveryFailureMessage: string | null = null;
     if (perTerminal.value) {
       for (const id of ids) {
         const t = terminals.byId[id];
         if (!t) continue;
         const txt = render(draft.body, { values, terminal: { name: t.name, cwd: t.cwd }, date });
         const r = await socket.broadcast({ mode: 'selected', termIds: [id] }, payloadFor(txt, [id]), draft.run);
-        if (r && r.written > 0) delivered = true;
+        if (r.kind === 'ok') {
+          if (r.written > 0) delivered = true;
+        } else {
+          deliveryFailureMessage = broadcastFailureMessage(r);
+        }
       }
     } else {
       const txt = render(draft.body, { values, date });
       const r = await socket.broadcast({ mode: 'selected', termIds: ids }, payloadFor(txt, ids), draft.run);
-      if (r && r.written > 0) delivered = true;
+      if (r.kind === 'ok') {
+        if (r.written > 0) delivered = true;
+      } else {
+        deliveryFailureMessage = broadcastFailureMessage(r);
+      }
     }
-    // Surface the silent-failure case the per-send toast doesn't cover (socket closed → null result).
-    if (!delivered) notices.push('Not sent — no terminal received it (disconnected or not running)', 'error');
+    // Surface cases the per-send toast cannot fully cover.
+    if (!delivered) {
+      notices.push(deliveryFailureMessage ?? 'Not sent: no eligible terminal received it.', 'error');
+    }
     showPreview.value = false;
   } finally {
     sending.value = false;

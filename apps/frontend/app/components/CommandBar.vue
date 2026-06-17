@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { strictestLimit } from '~/lib/shellLimits';
+import type { BroadcastOutcome } from '~/composables/useSocket';
 
 const emit = defineEmits<{ create: []; manageGroups: []; openSettings: []; openComposer: []; openTiger: [] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
 const socket = useSocket();
+const notices = useNoticesStore();
 
 const cmd = ref('');
 
@@ -42,16 +44,33 @@ const inputLimit = computed(() => strictestLimit(targetTerminals.value.map((t) =
 const lengthWarning = computed(() => {
   const len = cmd.value.length;
   if (Number.isFinite(inputLimit.value) && len > inputLimit.value) {
-    return `${len} karakter — hedef kabuk ~${inputLimit.value} sınırında komutu kesebilir. Çok uzun içerik için dosyaya yazıp çalıştırın.`;
+    return `${len} characters - the target shell may truncate the command near the ${inputLimit.value} character limit. For very long content, write it to a file and run it from there.`;
   }
   return null;
 });
 
+function broadcastFailureMessage(result: BroadcastOutcome): string | null {
+  switch (result.kind) {
+    case 'ok':
+      return null;
+    case 'not_sent':
+      return result.reason === 'server_error'
+        ? `Command not sent: ${result.message ?? 'the backend rejected the request.'}`
+        : 'Command not sent: the socket is not connected.';
+    case 'timeout':
+      return 'Command status unknown: no broadcast confirmation was received within 5 seconds.';
+    case 'disconnected':
+      return 'Command status unknown: the socket disconnected before confirming delivery.';
+  }
+}
+
 async function send() {
   if (!canSend.value) return;
   const result = await socket.broadcast(terminals.buildTarget(), cmd.value);
+  const failureMessage = broadcastFailureMessage(result);
+  if (failureMessage) notices.push(failureMessage, 'error');
   // keep the input for retry if nothing actually ran (all targets failed, or not sent)
-  if (result && result.written > 0) cmd.value = '';
+  if (result.kind === 'ok' && result.written > 0) cmd.value = '';
 }
 
 // one-click control keys sent to the current target (raw byte, no trailing newline)

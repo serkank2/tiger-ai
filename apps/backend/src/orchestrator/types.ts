@@ -61,7 +61,7 @@ export interface CliToolConfig {
   effortConfigKey?: string;
   /** Flags always included on launch (e.g. codex "--skip-git-repo-check"). */
   extraArgs?: string[];
-  /** Permission-mode key -> argv. Dangerous modes live here but are never the default. */
+  /** Permission-mode key -> argv. Defaults are defined in config.ts and may be unrestricted. */
   permissionModes: Record<string, string[]>;
 }
 

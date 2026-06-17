@@ -49,6 +49,10 @@ export function resolveShell(spec: ShellSpec): { file: string; args: string[] } 
 export class TerminalSession extends EventEmitter {
   readonly id: string;
   private def: TerminalDefinition;
+  // A definition edited while the pty is live: held here and promoted on the next start
+  // (cwd/shell/env/initialCommand only take effect at spawn time, so they can't be applied
+  // under the running process). null when there is no deferred edit.
+  private pendingDef: TerminalDefinition | null = null;
   private proc: IPty | null = null;
   private generation = 0;
 
@@ -78,11 +82,34 @@ export class TerminalSession extends EventEmitter {
   constructor(def: TerminalDefinition) {
     super();
     this.id = def.id;
-    this.def = def;
+    // Store a copy so later in-place mutation of the caller's object (e.g. the HTTP
+    // PUT route's Object.assign on the shared state entry) can't leak into a live session.
+    this.def = { ...def };
   }
 
-  updateDefinition(def: TerminalDefinition): void {
-    this.def = def;
+  /**
+   * Apply a definition edit.
+   *
+   * While the pty is live, cwd/shell/env/initialCommand cannot be changed under the
+   * already-spawned process, so the edit is *deferred*: it is held as a pending definition
+   * and promoted on the next start (e.g. via restart). The returned `deferred` flag lets the
+   * caller tell the client the change only takes effect after a restart. While stopped, the
+   * edit applies immediately and the next start uses it. A copy is stored so later in-place
+   * mutation of the source object can't leak into a running session.
+   */
+  updateDefinition(def: TerminalDefinition): { deferred: boolean } {
+    if (this.isAlive()) {
+      this.pendingDef = { ...def };
+      return { deferred: true };
+    }
+    this.def = { ...def };
+    this.pendingDef = null;
+    return { deferred: false };
+  }
+
+  /** The definition the current/next pty actually runs with (pending edits excluded). */
+  getEffectiveDefinition(): TerminalDefinition {
+    return this.def;
   }
 
   getStatus(): TerminalRuntimeStatus {
@@ -179,6 +206,13 @@ export class TerminalSession extends EventEmitter {
   private async startImpl(cols: number, rows: number): Promise<TerminalRuntimeStatus> {
     if (this.disposed) return this.getStatus(); // removed while this start was queued
     if (this.isAlive()) return this.getStatus();
+
+    // A definition edited while the previous process was running was deferred — apply it now,
+    // so this (re)start uses the up-to-date cwd/shell/env/initialCommand.
+    if (this.pendingDef) {
+      this.def = this.pendingDef;
+      this.pendingDef = null;
+    }
 
     // A previous force-kill may have failed, leaving a live process still referenced by
     // this.proc (state 'failed'). Spawning now would overwrite the reference and orphan

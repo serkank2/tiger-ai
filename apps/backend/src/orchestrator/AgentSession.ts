@@ -156,6 +156,7 @@ export class AgentSession {
       this.o.onState?.('running');
       st.lastOutputTs = Date.now();
       const runStart = Date.now();
+      let idleOutputCandidate: { size: number; stableSince: number; lastOutputTs: number } | null = null;
 
       // --- detect completion ---
       while (true) {
@@ -190,8 +191,25 @@ export class AgentSession {
         const idle = Date.now() - st.lastOutputTs;
         if (timing.doneIdleMs > 0 && idle >= timing.doneIdleMs) {
           const chk = await checkOutputFile(this.o.outputPath);
-          if (chk.ok) return await finish({ state: 'completed', completion: 'idle' });
+          if (chk.ok) {
+            const now = Date.now();
+            if (
+              idleOutputCandidate &&
+              idleOutputCandidate.size === chk.size &&
+              idleOutputCandidate.lastOutputTs === st.lastOutputTs
+            ) {
+              if (now - idleOutputCandidate.stableSince >= timing.doneIdleMs) {
+                return await finish({ state: 'completed', completion: 'idle' });
+              }
+            } else {
+              idleOutputCandidate = { size: chk.size, stableSince: now, lastOutputTs: st.lastOutputTs };
+            }
+          } else {
+            idleOutputCandidate = null;
+          }
           // idle but no valid output yet — keep waiting until the timeout.
+        } else {
+          idleOutputCandidate = null;
         }
 
         if (Date.now() - runStart >= timing.agentTimeoutMs) {

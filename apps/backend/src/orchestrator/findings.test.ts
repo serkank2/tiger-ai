@@ -11,6 +11,7 @@ import {
   parseFindingBlocks,
   parseFindingFileName,
   parseFixResult,
+  reclaimStaleFindings,
   splitFindingsToFiles,
   summarizeFindings,
 } from './findings.js';
@@ -87,6 +88,82 @@ test('findings queue: split, claim-by-rename, finish, summarize', async () => {
 
     const sum = summarizeFindings(await listFindings(dir));
     assert.deepEqual(sum, { total: 2, open: 0, fixing: 0, fixed: 1, wontfix: 1 });
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale fixing findings are reclaimed, claimed again, and completed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-findings-reclaim-'));
+  const locksDir = path.join(dir, 'locks');
+  try {
+    await splitFindingsToFiles([{ label: 'claude-01', content: LOG_A }], dir);
+    const claimed = await claimNextFinding(dir, {
+      locksDir,
+      agentId: 'claude-01',
+      agentType: 'claude',
+      ttlMs: 60_000,
+    });
+    assert.equal(claimed?.id, 'FINDING-001');
+    assert.match(claimed!.block, /Missing null check/);
+
+    await fs.writeFile(
+      path.join(locksDir, 'FINDING-001.lock'),
+      [
+        'Task ID: FINDING-001',
+        'Agent ID: claude-01',
+        'Agent Type: claude',
+        'Created: 2020-01-01T00:00:00.000Z',
+        `Process ID: ${process.pid}`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const reclaimed = await reclaimStaleFindings(dir, {
+      locksDir,
+      ttlMs: 1000,
+      nowMs: Date.parse('2026-01-01T00:00:00.000Z'),
+    });
+    assert.deepEqual(reclaimed.map((f) => f.id), ['FINDING-001']);
+    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__open.md')).then(() => true).catch(() => false), true);
+    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__fixing.md')).then(() => true).catch(() => false), false);
+    assert.match(await fs.readFile(path.join(dir, 'FINDING-001__open.md'), 'utf8'), /Missing null check/);
+
+    const next = await claimNextFinding(dir, {
+      locksDir,
+      agentId: 'codex-01',
+      agentType: 'codex',
+      ttlMs: 1000,
+    });
+    assert.equal(next?.id, 'FINDING-001');
+    await finishFinding(dir, 'FINDING-001', 'fixed');
+
+    const findingFiles = (await fs.readdir(dir)).filter((name) => name.startsWith('FINDING-001__'));
+    assert.deepEqual(findingFiles, ['FINDING-001__fixed.md']);
+    const f1 = (await listFindings(dir)).find((f) => f.id === 'FINDING-001')!;
+    assert.equal(f1.status, 'fixed');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('fresh fixing findings are not reclaimed or double-claimed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-findings-fresh-'));
+  const locksDir = path.join(dir, 'locks');
+  try {
+    await splitFindingsToFiles([{ label: 'claude-01', content: LOG_A }], dir);
+    await claimNextFinding(dir, {
+      locksDir,
+      agentId: 'claude-01',
+      agentType: 'claude',
+      ttlMs: 60_000,
+    });
+
+    const reclaimed = await reclaimStaleFindings(dir, { locksDir, ttlMs: 60_000, nowMs: Date.now() });
+    assert.equal(reclaimed.length, 0);
+    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__fixing.md')).then(() => true).catch(() => false), true);
+    assert.equal((await listFindings(dir)).find((f) => f.id === 'FINDING-001')!.status, 'fixing');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

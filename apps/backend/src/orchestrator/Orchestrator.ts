@@ -32,6 +32,8 @@ import {
   listTaskRecords,
   parseExecutionResult,
   parseTasks,
+  reclaimStaleTaskClaims,
+  releaseLock,
   reviewTaskFile,
   splitTasksToFiles,
   summarizeTasks,
@@ -42,6 +44,7 @@ import {
   hasFindings,
   listFindings,
   parseFixResult,
+  reclaimStaleFindings,
   readFindingBlock,
   splitFindingsToFiles,
   summarizeFindings,
@@ -50,6 +53,21 @@ import {
 import { deleteTemplate, listTemplates, saveTemplate } from './templates.js';
 
 const nowIso = (): string => new Date().toISOString();
+
+interface TerminalRemovalTarget {
+  id: string;
+  label: string;
+}
+
+function formatRemovalFailure(reason: unknown): string {
+  if (reason instanceof Error) return reason.message || reason.name;
+  if (typeof reason === 'string') return reason;
+  try {
+    return JSON.stringify(reason) ?? String(reason);
+  } catch {
+    return String(reason);
+  }
+}
 
 /** Run items through `worker` with bounded concurrency. */
 async function runPool<T>(items: T[], limit: number, worker: (item: T, i: number) => Promise<void>): Promise<void> {
@@ -136,8 +154,10 @@ export class Orchestrator extends EventEmitter {
     this.initialized = true;
     this.correctionCycles = 0;
     this.stages = blankStages();
+    await this.reclaimStaleClaims();
     await this.deriveStagesFromDisk();
     await this.refreshTasks();
+    await this.refreshFindings();
     this.emitState();
   }
 
@@ -376,6 +396,8 @@ export class Orchestrator extends EventEmitter {
     const paths = this.paths!;
     const signal = this.abort!.signal;
     await fs.mkdir(paths.runtimeDir(stageId), { recursive: true }).catch(() => {});
+    if (stageId === 'executing-plan') await this.reclaimStaleExecutionClaims();
+    if (stageId === 'task-review') await this.reclaimStaleFindingClaims();
     await logStageStart(paths.runLogFile, stageId, cfg);
 
     if (stageId === 'executing-plan') {
@@ -424,6 +446,7 @@ export class Orchestrator extends EventEmitter {
     const paths = this.paths!;
     const stage = this.stages['executing-plan'];
     await this.ensureTaskFiles();
+    await this.reclaimStaleExecutionClaims();
     if (!(await hasTaskFiles(paths.tasksDir))) {
       stage.message = 'No merged task file found. Run the Merge Tasks stage first.';
       stage.runs = [];
@@ -457,7 +480,14 @@ export class Orchestrator extends EventEmitter {
     // (queue drained) simply never creates a run, so extra agents beyond the task count never start.
     const processTask = async (type: AgentType): Promise<boolean> => {
       const index = ++counter;
-      const claimed = await claimNextTaskFile(paths.tasksDir, agentLabel(type, index), nowIso());
+      const claimed = await claimNextTaskFile(
+        paths.tasksDir,
+        agentLabel(type, index),
+        nowIso(),
+        this.config.execution.locking
+          ? { locksDir: paths.locksDir, agentType: type, ttlMs: this.config.execution.lockTtlMs }
+          : undefined,
+      );
       if (!claimed) return false;
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
       stage.runs.push(run);
@@ -475,6 +505,7 @@ export class Orchestrator extends EventEmitter {
         .catch(() => null);
       if (reported && run.state === 'completed') finalStatus = reported.status;
       await finishTaskFile(paths.tasksDir, claimed.record.id, finalStatus, nowIso());
+      if (this.config.execution.locking) await releaseLock(paths.lockFile(claimed.record.id));
       await this.refreshTasks();
       return true;
     };
@@ -540,6 +571,7 @@ export class Orchestrator extends EventEmitter {
     const found = await splitFindingsToFiles(logs, paths.findingsDir);
     await logNote(paths.runLogFile, `Task review reported ${found.length} finding(s).`);
     await this.refreshFindings();
+    await this.reclaimStaleFindingClaims();
 
     // --- Phase 2: FIX (only if there are findings; clean review skips this entirely) ---
     if (!signal.aborted && (await hasFindings(paths.findingsDir))) {
@@ -548,9 +580,15 @@ export class Orchestrator extends EventEmitter {
       for (let i = 0; i < clampCount(cfg.codexAgents); i++) types.push('codex');
       let counter = findRuns.length; // keep run labels/output files unique within this stage
       const processFinding = async (type: AgentType): Promise<boolean> => {
-        const claimed = await claimNextFinding(paths.findingsDir);
-        if (!claimed) return false;
         const index = ++counter;
+        const label = agentLabel(type, index);
+        const claimed = await claimNextFinding(
+          paths.findingsDir,
+          this.config.execution.locking
+            ? { locksDir: paths.findingLocksDir, agentId: label, agentType: type, ttlMs: this.config.execution.lockTtlMs }
+            : undefined,
+        );
+        if (!claimed) return false;
         const run = this.makeRun('task-review', type, index, cfg, claimed.id);
         stage.runs.push(run);
         this.registerRun(run);
@@ -560,6 +598,7 @@ export class Orchestrator extends EventEmitter {
         const reported =
           run.state === 'completed' ? parseFixResult(await fs.readFile(run.outputPath, 'utf8').catch(() => '')) : null;
         await finishFinding(paths.findingsDir, claimed.id, reported?.status === 'fixed' ? 'fixed' : 'wontfix');
+        if (this.config.execution.locking) await releaseLock(paths.findingLockFile(claimed.id));
         await this.refreshFindings();
         return true;
       };
@@ -590,6 +629,41 @@ export class Orchestrator extends EventEmitter {
     }
     await this.refreshTasks();
     await this.refreshFindings();
+  }
+
+  private async reclaimStaleClaims(): Promise<void> {
+    await this.reclaimStaleExecutionClaims();
+    await this.reclaimStaleFindingClaims();
+  }
+
+  private async reclaimStaleExecutionClaims(): Promise<void> {
+    if (!this.paths || !this.config.execution.locking) return;
+    const reclaimed = await reclaimStaleTaskClaims(this.paths.tasksDir, {
+      locksDir: this.paths.locksDir,
+      ttlMs: this.config.execution.lockTtlMs,
+    });
+    if (reclaimed.length > 0) {
+      await logNote(
+        this.paths.runLogFile,
+        `Reclaimed ${reclaimed.length} stale executing-plan claim(s): ${reclaimed.map((t) => t.id).join(', ')}.`,
+      );
+      await this.refreshTasks();
+    }
+  }
+
+  private async reclaimStaleFindingClaims(): Promise<void> {
+    if (!this.paths || !this.config.execution.locking) return;
+    const reclaimed = await reclaimStaleFindings(this.paths.findingsDir, {
+      locksDir: this.paths.findingLocksDir,
+      ttlMs: this.config.execution.lockTtlMs,
+    });
+    if (reclaimed.length > 0) {
+      await logNote(
+        this.paths.runLogFile,
+        `Reclaimed ${reclaimed.length} stale task-review finding claim(s): ${reclaimed.map((f) => f.id).join(', ')}.`,
+      );
+      await this.refreshFindings();
+    }
   }
 
   private async refreshFindings(): Promise<void> {
@@ -745,7 +819,27 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async cleanupStageTerminals(stage: StageState): Promise<void> {
-    await Promise.allSettled(stage.runs.map((r) => this.manager.remove(r.terminalId)));
+    await this.removeTerminalsBestEffort(
+      stage.runs.map((r) => ({ id: r.terminalId, label: `${stage.id}/${r.label}` })),
+      'stage cleanup',
+    );
+  }
+
+  private async removeTerminalsBestEffort(terminals: TerminalRemovalTarget[], context: string): Promise<void> {
+    const results = await Promise.allSettled(terminals.map(async (terminal) => this.manager.remove(terminal.id)));
+    const runLogFile = this.paths?.runLogFile;
+    if (!runLogFile) return;
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i]!;
+      if (result.status === 'rejected') {
+        const terminal = terminals[i]!;
+        await logNote(
+          runLogFile,
+          `Failed to remove terminal ${terminal.label} (${terminal.id}) during ${context}: ${formatRemovalFailure(result.reason)}.`,
+        );
+      }
+    }
   }
 
   /** Register the ephemeral agent terminal so the live UI tile can attach immediately. */
@@ -908,8 +1002,10 @@ export class Orchestrator extends EventEmitter {
 
   /** Kill any live agent terminals (called on shutdown). */
   async killAgents(): Promise<void> {
-    const ids = STAGE_ORDER.flatMap((s) => this.stages[s].runs.map((r) => r.terminalId));
-    await Promise.allSettled(ids.map((id) => this.manager.remove(id)));
+    const terminals = STAGE_ORDER.flatMap((s) =>
+      this.stages[s].runs.map((r) => ({ id: r.terminalId, label: `${s}/${r.label}` })),
+    );
+    await this.removeTerminalsBestEffort(terminals, 'agent shutdown');
   }
 }
 

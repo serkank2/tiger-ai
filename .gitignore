@@ -6,6 +6,7 @@ dist/
 *.log
 .scratch/
 .codex-notes/
+.tiger/
 
 # local app state (normally stored in OS app-data dir; ignore stray local copies)
 state.json

@@ -282,6 +282,28 @@ export async function releaseLock(lockFile: string): Promise<void> {
   await fs.unlink(lockFile).catch(() => {});
 }
 
+function queueLockFile(locksDir: string, id: string): string {
+  return path.join(locksDir, `${id}.lock`);
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  return fs
+    .stat(file)
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function isFileOlderThan(file: string, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+  if (ttlMs <= 0) return false;
+  const st = await fs.stat(file).catch(() => null);
+  return !!st && nowMs - st.mtimeMs > ttlMs;
+}
+
+async function shouldReclaimClaimFile(file: string, lockFile: string | null, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+  if (lockFile && (await pathExists(lockFile))) return isLockStale(lockFile, ttlMs, nowMs);
+  return isFileOlderThan(file, ttlMs, nowMs);
+}
+
 // ---------------------------------------------------------------------------
 // Per-task files: each task is its own file `<TASK-ID>__<execStatus>.md` under merged-tasks/tasks/.
 // The execution status lives in the FILENAME (so it's visible at a glance and claimable by an atomic
@@ -381,6 +403,56 @@ export async function setTaskFileStatus(dir: string, id: string, status: Executi
   await fs.rename(path.join(dir, name), path.join(dir, to)).catch(() => {});
 }
 
+export interface ReclaimStaleTaskClaimsOptions {
+  ttlMs: number;
+  locksDir?: string;
+  nowMs?: number;
+}
+
+/**
+ * Reset abandoned in_progress task files so the atomic rename queue can claim them again.
+ * A claim is abandoned when its lock is stale (dead owner or TTL) or, for legacy claims that
+ * predate lock files, when the in_progress file itself is older than the TTL.
+ */
+export async function reclaimStaleTaskClaims(
+  dir: string,
+  opts: ReclaimStaleTaskClaimsOptions,
+): Promise<TaskRecord[]> {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+  const reclaimed: TaskRecord[] = [];
+  for (const name of names) {
+    const p = parseTaskFileName(name);
+    if (!p || p.status !== 'in_progress') continue;
+    const file = path.join(dir, name);
+    const lockFile = opts.locksDir ? queueLockFile(opts.locksDir, p.id) : null;
+    if (!(await shouldReclaimClaimFile(file, lockFile, opts.ttlMs, opts.nowMs))) continue;
+
+    const to = path.join(dir, taskFileName(p.id, 'not_started'));
+    try {
+      await fs.rename(file, to);
+    } catch {
+      continue;
+    }
+    await patchTaskFileContent(dir, p.id, {
+      executionStatus: 'not_started',
+      assignedAgent: '-',
+      startedAt: '-',
+      completedAt: '-',
+    });
+    if (lockFile) await releaseLock(lockFile);
+    const content = await fs.readFile(to, 'utf8').catch(() => '');
+    reclaimed.push(recordFromFile(p.id, 'not_started', content));
+  }
+  return reclaimed;
+}
+
+export interface ClaimTaskLockOptions {
+  locksDir: string;
+  agentType: string;
+  ttlMs: number;
+  nowMs?: number;
+}
+
 /**
  * Atomically claim the next not_started task: rename it to in_progress (the rename is the lock — if
  * another claimer won, the rename fails and we try the next). Records the assignee + start time in
@@ -390,6 +462,7 @@ export async function claimNextTaskFile(
   dir: string,
   agentLabel: string,
   nowIso: string,
+  lock?: ClaimTaskLockOptions,
 ): Promise<{ record: TaskRecord; block: string } | null> {
   const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
   for (const name of names) {
@@ -397,9 +470,20 @@ export async function claimNextTaskFile(
     if (!p || p.status !== 'not_started') continue;
     const from = path.join(dir, name);
     const to = path.join(dir, taskFileName(p.id, 'in_progress'));
+    const lockOpts = lock;
+    const lockFile = lockOpts ? queueLockFile(lockOpts.locksDir, p.id) : null;
+    if (lockOpts && lockFile) {
+      const locked = await acquireLock(
+        lockFile,
+        { taskId: p.id, agentId: agentLabel, agentType: lockOpts.agentType },
+        { ttlMs: lockOpts.ttlMs, nowMs: lockOpts.nowMs },
+      );
+      if (!locked) continue;
+    }
     try {
       await fs.rename(from, to);
     } catch {
+      if (lockFile) await releaseLock(lockFile);
       continue; // already claimed by someone else
     }
     await patchTaskFileContent(dir, p.id, { executionStatus: 'in_progress', assignedAgent: agentLabel, startedAt: nowIso });

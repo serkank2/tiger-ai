@@ -13,6 +13,7 @@ import {
   parseExecutionResult,
   parseTaskFileName,
   parseTasks,
+  reclaimStaleTaskClaims,
   releaseLock,
   reviewTaskFile,
   splitTasksToFiles,
@@ -221,6 +222,84 @@ test('per-task files: split, list, claim-by-rename, finish, review', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   })();
+});
+
+test('stale in_progress task files are reclaimed, claimed again, and completed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-task-reclaim-'));
+  const locksDir = path.join(dir, 'locks');
+  try {
+    await splitTasksToFiles(SAMPLE, dir);
+
+    const claimed = await claimNextTaskFile(
+      dir,
+      'claude-01',
+      '2026-02-02T00:00:00.000Z',
+      { locksDir, agentType: 'claude', ttlMs: 60_000 },
+    );
+    assert.equal(claimed?.record.id, 'TASK-001');
+    assert.match(claimed!.block, /Create the Express server/);
+
+    await fs.writeFile(
+      path.join(locksDir, 'TASK-001.lock'),
+      [
+        'Task ID: TASK-001',
+        'Agent ID: claude-01',
+        'Agent Type: claude',
+        'Created: 2020-01-01T00:00:00.000Z',
+        `Process ID: ${process.pid}`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const reclaimed = await reclaimStaleTaskClaims(dir, {
+      locksDir,
+      ttlMs: 1000,
+      nowMs: Date.parse('2026-01-01T00:00:00.000Z'),
+    });
+    assert.deepEqual(reclaimed.map((r) => r.id), ['TASK-001']);
+    assert.equal(await fs.stat(path.join(dir, 'TASK-001__not_started.md')).then(() => true).catch(() => false), true);
+    assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), false);
+    assert.match(await fs.readFile(path.join(dir, 'TASK-001__not_started.md'), 'utf8'), /Create the Express server/);
+
+    const next = await claimNextTaskFile(
+      dir,
+      'codex-01',
+      '2026-02-02T01:00:00.000Z',
+      { locksDir, agentType: 'codex', ttlMs: 1000 },
+    );
+    assert.equal(next?.record.id, 'TASK-001');
+    await finishTaskFile(dir, 'TASK-001', 'done', '2026-02-02T02:00:00.000Z');
+    await releaseLock(path.join(locksDir, 'TASK-001.lock'));
+
+    const taskFiles = (await fs.readdir(dir)).filter((name) => name.startsWith('TASK-001__'));
+    assert.deepEqual(taskFiles, ['TASK-001__done.md']);
+    const t1 = (await listTaskRecords(dir)).find((r) => r.id === 'TASK-001')!;
+    assert.equal(t1.executionStatus, 'done');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('fresh in_progress task files are not reclaimed or double-claimed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-task-fresh-'));
+  const locksDir = path.join(dir, 'locks');
+  try {
+    await splitTasksToFiles(SAMPLE, dir);
+    await claimNextTaskFile(
+      dir,
+      'claude-01',
+      '2026-02-02T00:00:00.000Z',
+      { locksDir, agentType: 'claude', ttlMs: 60_000 },
+    );
+
+    const reclaimed = await reclaimStaleTaskClaims(dir, { locksDir, ttlMs: 60_000, nowMs: Date.now() });
+    assert.equal(reclaimed.length, 0);
+    assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), true);
+    assert.equal(await claimNextTaskFile(dir, 'codex-01', '2026-02-02T00:10:00.000Z'), null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('a lock older than the TTL is stale', async () => {

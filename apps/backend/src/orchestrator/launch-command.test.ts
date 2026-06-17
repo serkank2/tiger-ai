@@ -33,6 +33,26 @@ test('codex with no model omits the model flag', () => {
   assert.equal(cmd, 'codex --ask-for-approval never --sandbox read-only --no-alt-screen');
 });
 
+test('default launch commands use the cost-aware autonomous profile', () => {
+  const d = cfg.defaults;
+  assert.equal(
+    buildLaunchCommand(cfg, 'claude', {
+      model: d.claudeModel,
+      effort: d.claudeEffort,
+      permission: d.claudePermission,
+    }),
+    'claude --model sonnet --effort medium --dangerously-skip-permissions',
+  );
+  assert.equal(
+    buildLaunchCommand(cfg, 'codex', {
+      model: d.codexModel,
+      effort: d.codexEffort,
+      permission: d.codexPermission,
+    }),
+    'codex -m gpt-5 -c model_reasoning_effort=medium --dangerously-bypass-approvals-and-sandbox --no-alt-screen',
+  );
+});
+
 test('isDangerousPermission flags only the unrestricted modes', () => {
   assert.equal(isDangerousPermission(cfg, 'claude', 'dangerous'), true);
   assert.equal(isDangerousPermission(cfg, 'claude', 'acceptEdits'), false);

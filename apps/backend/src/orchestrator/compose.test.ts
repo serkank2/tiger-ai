@@ -4,7 +4,42 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureScaffold } from './scaffold.js';
-import { composePrompt } from './compose.js';
+import { composePrompt, measurePromptSize } from './compose.js';
+
+type TestPaths = Awaited<ReturnType<typeof ensureScaffold>>;
+
+function legacyPreamble(paths: TestPaths, label: string, outputPath: string, markerPath: string): string {
+  const outputRel = paths.rel(outputPath);
+  const markerRel = paths.rel(markerPath);
+  return `# AUTOMATION CONTEXT — READ THIS FIRST
+
+You are running as an autonomous background agent inside the **Tiger** multi-agent software-team
+pipeline. There is NO human available to answer questions or approve actions during your run.
+
+Rules:
+- Do NOT ask any questions and do NOT wait for confirmation. Make reasonable, well-justified
+  assumptions and proceed on your own.
+- Complete the assigned task to the highest possible quality.
+- Work only toward the project goal described below; avoid unrelated changes.
+- Every document, log, report, and comment you produce MUST be written in clear, professional English.
+- Your agent ID is: ${label}
+- Your working directory is the .tiger/ root: ${paths.root}
+- Save your deliverable to exactly this file (absolute path):
+    ${outputPath}
+    (relative to the .tiger root: ${outputRel})
+- COMPLETION SIGNAL: when you have completely finished AND your deliverable file is written, your
+  FINAL action MUST be to create this marker file and write the single word "done" into it:
+    ${markerPath}
+    (relative to the .tiger root: ${markerRel})
+  The orchestrator watches for this marker to know you are done. Do not create it early.
+`;
+}
+
+function replaceCurrentPreamble(prompt: string, legacy: string): string {
+  const stageStart = prompt.indexOf('---\n\n# STAGE INSTRUCTIONS');
+  assert.notEqual(stageStart, -1, 'prompt includes stage instructions');
+  return legacy + '\n\n' + prompt.slice(stageStart);
+}
 
 test('composePrompt assembles preamble, system prompt, project prompt, and paths', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-'));
@@ -26,7 +61,7 @@ test('composePrompt assembles preamble, system prompt, project prompt, and paths
     assert.match(prompt, /Build a todo app in English\./); // original project prompt embedded
     assert.ok(prompt.includes(outputPath), 'includes the absolute output path');
     assert.ok(prompt.includes(markerPath), 'includes the marker path');
-    assert.match(prompt, /All content must be written in English\./);
+    assert.match(prompt, /clear, professional English/);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -48,6 +83,95 @@ test('executing-plan prompt includes the assigned task and result convention', a
     assert.match(prompt, /TASK-005/);
     assert.match(prompt, /EXECUTION_RESULT: done/);
     assert.match(prompt, /EXECUTION_RESULT: blocked/);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('composePrompt reports measurable size and is smaller than the legacy preamble baseline', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-size-'));
+  try {
+    const paths = await ensureScaffold(dir, 'Improve the project while keeping prompts lean.');
+    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'claude-01-brainstorming.md'), '# Analysis\nA'.repeat(80));
+    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'codex-01-brainstorming.md'), '# Risks\nB'.repeat(60));
+    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'codex-02-brainstorming.md'), '# Success\nC'.repeat(70));
+
+    const planOutputPath = paths.outputFile('writing-plan', 'claude', 1);
+    const planMarkerPath = paths.markerFile('writing-plan', 'run-plan');
+    const planPrompt = await composePrompt({
+      paths,
+      stage: 'writing-plan',
+      label: 'claude-01',
+      outputPath: planOutputPath,
+      markerPath: planMarkerPath,
+    });
+    const legacyPlanPrompt = replaceCurrentPreamble(
+      planPrompt,
+      legacyPreamble(paths, 'claude-01', planOutputPath, planMarkerPath),
+    );
+
+    const execOutputPath = paths.outputFile('executing-plan', 'codex', 1);
+    const execMarkerPath = paths.markerFile('executing-plan', 'run-exec');
+    const execPrompt = await composePrompt({
+      paths,
+      stage: 'executing-plan',
+      label: 'codex-01',
+      outputPath: execOutputPath,
+      markerPath: execMarkerPath,
+      taskId: 'TASK-001',
+      taskBlock: '## TASK-001: Tighten prompts\n\n### Acceptance Criteria\n- Prompts are smaller.',
+    });
+    const legacyExecPrompt = replaceCurrentPreamble(
+      execPrompt,
+      legacyPreamble(paths, 'codex-01', execOutputPath, execMarkerPath),
+    );
+
+    const planSize = measurePromptSize(planPrompt);
+    const legacyPlanSize = measurePromptSize(legacyPlanPrompt);
+    const execSize = measurePromptSize(execPrompt);
+    const legacyExecSize = measurePromptSize(legacyExecPrompt);
+
+    assert.equal(planSize.approximateTokens, Math.ceil(planSize.characters / 4));
+    assert.ok(
+      planSize.characters < legacyPlanSize.characters,
+      `writing-plan prompt should shrink (${legacyPlanSize.characters} -> ${planSize.characters} chars)`,
+    );
+    assert.ok(
+      execSize.characters < legacyExecSize.characters,
+      `executing-plan prompt should shrink (${legacyExecSize.characters} -> ${execSize.characters} chars)`,
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('context selection prioritizes compact useful files and preserves budget signals', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-context-'));
+  try {
+    const paths = await ensureScaffold(dir, 'Build something useful.');
+    const brainstormingDir = paths.stageDir('brainstorming');
+    await fs.writeFile(path.join(brainstormingDir, 'zzz-useful.md'), 'compact upstream context that should survive');
+    for (let i = 0; i < 9; i++) {
+      await fs.writeFile(path.join(brainstormingDir, `aaa-noise-${i}.md`), `large ${i}\n${'x'.repeat(40_000)}`);
+    }
+
+    const prompt = await composePrompt({
+      paths,
+      stage: 'writing-plan',
+      label: 'claude-01',
+      outputPath: paths.outputFile('writing-plan', 'claude', 1),
+      markerPath: paths.markerFile('writing-plan', 'run-context'),
+    });
+
+    assert.match(prompt, /#### File: brainstorming\/zzz-useful\.md/);
+    assert.match(prompt, /_\(truncated\)_/);
+    assert.match(prompt, /Additional context files omitted to respect the size budget/i);
+    const firstNoisePath = prompt.match(/brainstorming\/aaa-noise-\d+\.md/)?.[0];
+    assert.ok(firstNoisePath, 'at least one oversized context file is retained');
+    assert.ok(
+      prompt.indexOf('brainstorming/zzz-useful.md') < prompt.indexOf(firstNoisePath),
+      'compact context is retained before alphabetically earlier oversized context',
+    );
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

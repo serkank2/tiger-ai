@@ -1,30 +1,21 @@
 <script setup lang="ts">
 import type { TigerRunTemplate, TigerStageId, TigerStageRunConfig } from '~/types';
+import { TIGER_STAGES } from '~/lib/tigerStages';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const tiger = useTigerStore();
 const api = useApi();
 
-const STAGES: { id: TigerStageId; num: string; title: string; opt?: boolean }[] = [
-  { id: 'brainstorming', num: '1', title: 'Brainstorming', opt: true },
-  { id: 'writing-plan', num: '2', title: 'Writing Plan' },
-  { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
-  { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
-  { id: 'task-review', num: '6A', title: 'Task Review' },
-  { id: 'requesting-code-review', num: '6B', title: 'Requesting Code Review' },
-];
-
 function freshCfg(): TigerStageRunConfig {
   const d = tiger.config?.defaults;
   return {
     claudeAgents: d?.claudeAgents ?? 1,
     codexAgents: d?.codexAgents ?? 1,
-    claudeModel: d?.claudeModel ?? 'opus',
-    codexModel: d?.codexModel ?? 'gpt-5.5',
-    claudeEffort: d?.claudeEffort ?? 'xhigh',
-    codexEffort: d?.codexEffort ?? 'high',
+    claudeModel: d?.claudeModel ?? 'sonnet',
+    codexModel: d?.codexModel ?? 'gpt-5',
+    claudeEffort: d?.claudeEffort ?? 'medium',
+    codexEffort: d?.codexEffort ?? 'medium',
     claudePermission: d?.claudePermission ?? 'dangerous',
     codexPermission: d?.codexPermission ?? 'yolo',
     parallel: d?.parallel ?? true,
@@ -33,17 +24,17 @@ function freshCfg(): TigerStageRunConfig {
 }
 
 const stageConfigs = reactive<Record<string, TigerStageRunConfig>>(
-  Object.fromEntries(STAGES.map((s) => [s.id, freshCfg()])),
+  Object.fromEntries(TIGER_STAGES.map((s) => [s.id, freshCfg()])),
 );
 
 function firstIncomplete(): TigerStageId {
   const stages = tiger.state?.stages;
-  if (stages) for (const s of STAGES) if (stages[s.id]?.status !== 'completed') return s.id;
+  if (stages) for (const s of TIGER_STAGES) if (stages[s.id]?.status !== 'completed') return s.id;
   return 'brainstorming';
 }
 const fromStage = ref<TigerStageId>(firstIncomplete());
-const fromIdx = computed(() => STAGES.findIndex((s) => s.id === fromStage.value));
-const willRun = (id: TigerStageId) => STAGES.findIndex((s) => s.id === id) >= fromIdx.value;
+const fromIdx = computed(() => TIGER_STAGES.findIndex((s) => s.id === fromStage.value));
+const willRun = (id: TigerStageId) => TIGER_STAGES.findIndex((s) => s.id === id) >= fromIdx.value;
 
 function stageSummary(id: TigerStageId): string {
   const c = stageConfigs[id]!;
@@ -56,7 +47,7 @@ async function start() {
   if (starting.value) return;
   starting.value = true;
   const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
-  for (const s of STAGES) if (willRun(s.id)) configs[s.id] = { ...stageConfigs[s.id]! };
+  for (const s of TIGER_STAGES) if (willRun(s.id)) configs[s.id] = { ...stageConfigs[s.id]! };
   await tiger.runAll(configs, fromStage.value);
   starting.value = false;
   emit('close');
@@ -78,7 +69,7 @@ onMounted(async () => {
 });
 
 function applyTemplate(t: TigerRunTemplate) {
-  for (const s of STAGES) {
+  for (const s of TIGER_STAGES) {
     const c = t.configs?.[s.id];
     if (c) stageConfigs[s.id] = { ...freshCfg(), ...c };
   }
@@ -90,7 +81,7 @@ async function doSave() {
   const name = newName.value.trim();
   if (!name) return;
   const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
-  for (const s of STAGES) configs[s.id] = { ...stageConfigs[s.id]! };
+  for (const s of TIGER_STAGES) configs[s.id] = { ...stageConfigs[s.id]! };
   try {
     templates.value = await api.saveTigerTemplate({
       name,
@@ -154,17 +145,17 @@ async function removeTemplate(t: TigerRunTemplate) {
       <label class="from">
         <span>Start from</span>
         <select v-model="fromStage">
-          <option v-for="s in STAGES" :key="s.id" :value="s.id">{{ s.num }} · {{ s.title }}</option>
+          <option v-for="s in TIGER_STAGES" :key="s.id" :value="s.id">{{ s.number }} · {{ s.title }}</option>
         </select>
         <small>Stages before this are skipped.</small>
       </label>
 
       <div class="stages">
-        <details v-for="s in STAGES" :key="s.id" :open="s.id === fromStage" :class="{ skipped: !willRun(s.id) }">
+        <details v-for="s in TIGER_STAGES" :key="s.id" :open="s.id === fromStage" :class="{ skipped: !willRun(s.id) }">
           <summary>
-            <span class="snum">{{ s.num }}</span>
+            <span class="snum">{{ s.number }}</span>
             <span class="stitle">{{ s.title }}</span>
-            <span v-if="s.opt" class="sopt" title="Optional stage">optional</span>
+            <span v-if="s.optional" class="sopt" title="Optional stage">optional</span>
             <span class="sskip" v-if="!willRun(s.id)">skipped</span>
             <span class="ssum" v-else>{{ stageSummary(s.id) }}</span>
           </summary>

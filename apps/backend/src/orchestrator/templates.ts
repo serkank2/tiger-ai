@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { defaultTigerConfig } from './config.js';
 import type { RunTemplate, StageId, StageRunConfig } from './types.js';
 import { STAGE_ORDER } from './types.js';
 
@@ -23,6 +24,11 @@ const BASE: StageRunConfig = {
   mergeAgent: 'claude',
 };
 
+const OPTIMUM: StageRunConfig = {
+  ...defaultTigerConfig().defaults,
+  mergeAgent: 'claude',
+};
+
 function allStages(
   base: Partial<StageRunConfig>,
   overrides: Partial<Record<StageId, Partial<StageRunConfig>>> = {},
@@ -34,8 +40,15 @@ function allStages(
 
 export const BUILTIN_TEMPLATES: RunTemplate[] = [
   {
+    name: 'Optimum',
+    description: 'Default cost-aware autonomous profile: lighter models, medium effort, parallel.',
+    builtin: true,
+    fromStage: 'brainstorming',
+    configs: allStages(OPTIMUM),
+  },
+  {
     name: 'Balanced',
-    description: '1 Claude + 1 Codex per stage, top models, parallel. The default.',
+    description: '1 Claude + 1 Codex per stage, top models, maximum effort, parallel.',
     builtin: true,
     fromStage: 'brainstorming',
     configs: allStages({}),

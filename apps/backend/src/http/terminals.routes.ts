@@ -176,9 +176,12 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     }
     Object.assign(current, patch);
     current.updatedAt = new Date().toISOString();
-    ctx.manager.upsertDefinition(current);
+    // While the terminal is running, cwd/shell/env/initialCommand changes can't be applied
+    // under the live pty; they are deferred to the next start. Tell the client so it can
+    // surface that the edit takes effect after a restart instead of silently swapping it in.
+    const { deferred } = ctx.manager.upsertDefinition(current);
     await ctx.save();
-    res.json(present(ctx, current));
+    res.json({ ...present(ctx, current), pendingRestart: deferred });
   });
 
   router.delete('/:id', async (req, res) => {

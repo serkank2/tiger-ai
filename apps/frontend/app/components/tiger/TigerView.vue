@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TigerStageId, TigerStageRunConfig } from '~/types';
+import { TIGER_STAGES } from '~/lib/tigerStages';
 import FolderPicker from '~/components/FolderPicker.vue';
 import StageStepper from '~/components/tiger/StageStepper.vue';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
@@ -12,16 +13,6 @@ import RunAllModal from '~/components/tiger/RunAllModal.vue';
 const emit = defineEmits<{ back: [] }>();
 const tiger = useTigerStore();
 const conn = useConnectionStore();
-
-const STAGES: { id: TigerStageId; num: string; title: string }[] = [
-  { id: 'brainstorming', num: '1', title: 'Brainstorming' },
-  { id: 'writing-plan', num: '2', title: 'Writing Plan' },
-  { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
-  { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
-  { id: 'task-review', num: '6A', title: 'Task Review' },
-  { id: 'requesting-code-review', num: '6B', title: 'Requesting Code Review' },
-];
 
 // --- setup (uninitialized) ---
 const showPicker = ref(false);
@@ -62,10 +53,10 @@ function freshCfg(): TigerStageRunConfig {
   return {
     claudeAgents: d?.claudeAgents ?? 1,
     codexAgents: d?.codexAgents ?? 1,
-    claudeModel: d?.claudeModel ?? 'opus',
-    codexModel: d?.codexModel ?? 'gpt-5.5',
-    claudeEffort: d?.claudeEffort ?? 'xhigh',
-    codexEffort: d?.codexEffort ?? 'high',
+    claudeModel: d?.claudeModel ?? 'sonnet',
+    codexModel: d?.codexModel ?? 'gpt-5',
+    claudeEffort: d?.claudeEffort ?? 'medium',
+    codexEffort: d?.codexEffort ?? 'medium',
     claudePermission: d?.claudePermission ?? 'dangerous',
     codexPermission: d?.codexPermission ?? 'yolo',
     parallel: d?.parallel ?? true,
@@ -100,11 +91,11 @@ watch(
 function firstIncompleteStage(): TigerStageId | null {
   const stages = tiger.state?.stages;
   if (!stages) return null;
-  for (const s of STAGES) if (stages[s.id]?.status !== 'completed') return s.id;
+  for (const s of TIGER_STAGES) if (stages[s.id]?.status !== 'completed') return s.id;
   return null;
 }
 
-const stageMeta = computed(() => STAGES.find((s) => s.id === selectedStage.value)!);
+const stageMeta = computed(() => TIGER_STAGES.find((s) => s.id === selectedStage.value)!);
 const stageState = computed(() => tiger.state?.stages?.[selectedStage.value] ?? null);
 const runs = computed(() => stageState.value?.runs ?? []);
 const hasFailed = computed(() => runs.value.some((r) => r.state === 'failed' || r.state === 'stopped'));
@@ -122,11 +113,11 @@ const atCycleLimit = computed(
 );
 
 const prevIncomplete = computed(() => {
-  const idx = STAGES.findIndex((s) => s.id === selectedStage.value);
+  const idx = TIGER_STAGES.findIndex((s) => s.id === selectedStage.value);
   const stages = tiger.state?.stages;
   if (idx <= 0 || !stages) return null;
   for (let i = 0; i < idx; i++) {
-    const s = STAGES[i]!;
+    const s = TIGER_STAGES[i]!;
     if (stages[s.id]?.status !== 'completed') return s.title;
   }
   return null;
@@ -200,7 +191,7 @@ onMounted(() => {
 
       <div class="stage-card">
         <div class="stage-head">
-          <span class="stage-num">{{ stageMeta.num }}</span>
+          <span class="stage-num">{{ stageMeta.number }}</span>
           <h3>{{ stageMeta.title }}</h3>
           <span class="status" :class="`st-${stageState?.status ?? 'not_started'}`">
             {{ (stageState?.status ?? 'not_started').replace('_', ' ') }}
@@ -228,7 +219,7 @@ onMounted(() => {
           </button>
         </div>
 
-        <p v-if="selectedStage === 'brainstorming'" class="opt-note">
+        <p v-if="stageMeta.optional" class="opt-note">
           ℹ Optional stage — for a clear prompt you can skip it and start from Writing Plan (or set 0 agents).
         </p>
         <p v-if="prevIncomplete" class="warn">⚠ Earlier stage “{{ prevIncomplete }}” is not completed yet.</p>

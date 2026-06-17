@@ -113,6 +113,9 @@ export class TigerPaths {
   get findingsDir(): string {
     return path.join(this.root, 'task-review', 'findings');
   }
+  get findingLocksDir(): string {
+    return path.join(this.root, 'task-review', 'locks');
+  }
   /** Directory of saved Run All templates (one .md file per template). */
   get runTemplatesDir(): string {
     return path.join(this.root, 'run-templates');
@@ -152,6 +155,9 @@ export class TigerPaths {
   lockFile(taskId: string): string {
     return path.join(this.locksDir, `${taskId}.lock`);
   }
+  findingLockFile(findingId: string): string {
+    return path.join(this.findingLocksDir, `${findingId}.lock`);
+  }
 
   /** Path relative to the tiger root (forward-slashed) for display. */
   rel(abs: string): string {
@@ -164,4 +170,5 @@ export const SCAFFOLD_DIRS: string[] = [
   'system-prompts',
   ...STAGE_DIRS,
   'executing-plan/locks',
+  'task-review/locks',
 ];

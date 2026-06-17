@@ -7,6 +7,12 @@ import { readTaskBlock } from './tasks.js';
 
 const PER_FILE_CAP = 24_000;
 const TOTAL_CONTEXT_CAP = 160_000;
+const APPROX_CHARS_PER_TOKEN = 4;
+
+export interface PromptSize {
+  characters: number;
+  approximateTokens: number;
+}
 
 export interface ComposeOptions {
   paths: TigerPaths;
@@ -32,21 +38,25 @@ export interface ComposeOptions {
   summary?: string;
 }
 
+/** Cheap, deterministic size estimate for composed prompts. */
+export function measurePromptSize(prompt: string): PromptSize {
+  return {
+    characters: prompt.length,
+    approximateTokens: Math.ceil(prompt.length / APPROX_CHARS_PER_TOKEN),
+  };
+}
+
 /** Background-agent preamble prepended to every composed prompt. */
 function preamble(opts: ComposeOptions): string {
   const outputRel = opts.paths.rel(opts.outputPath);
   const markerRel = opts.paths.rel(opts.markerPath);
   return `# AUTOMATION CONTEXT — READ THIS FIRST
 
-You are running as an autonomous background agent inside the **Tiger** multi-agent software-team
-pipeline. There is NO human available to answer questions or approve actions during your run.
+You are an autonomous Tiger pipeline background agent. No human is available for questions or approvals.
 
-Rules:
-- Do NOT ask any questions and do NOT wait for confirmation. Make reasonable, well-justified
-  assumptions and proceed on your own.
-- Complete the assigned task to the highest possible quality.
-- Work only toward the project goal described below; avoid unrelated changes.
-- Every document, log, report, and comment you produce MUST be written in clear, professional English.
+- Do NOT ask any questions or wait for confirmation; make reasonable assumptions and proceed.
+- Work only toward the project goal below; avoid unrelated changes.
+- Write every document, log, report, and comment in clear, professional English.
 - Your agent ID is: ${opts.label}
 - Your working directory is the .tiger/ root: ${opts.paths.root}
 - Save your deliverable to exactly this file (absolute path):
@@ -60,6 +70,36 @@ Rules:
 `;
 }
 
+interface ContextCandidate {
+  name: string;
+  abs: string;
+  rel: string;
+  size: number;
+  mtimeMs: number;
+  priority: number;
+}
+
+function contextPriority(name: string): number {
+  const normalized = name.toLowerCase();
+  if (/(^|[-_])(final|summary|merged|plan|tasks|review|findings)([-_.]|$)/.test(normalized)) return 0;
+  if (/(^|[-_])(brainstorming|brainstorm|analysis|architecture|design)([-_.]|$)/.test(normalized)) return 1;
+  if (/(^|[-_])(execution|result|report)([-_.]|$)/.test(normalized)) return 2;
+  if (/(^|[-_])(log|run-log)([-_.]|$)/.test(normalized)) return 4;
+  return 3;
+}
+
+function compareContextCandidates(a: ContextCandidate, b: ContextCandidate): number {
+  const priority = a.priority - b.priority;
+  if (priority !== 0) return priority;
+  const oversized = Number(a.size > PER_FILE_CAP) - Number(b.size > PER_FILE_CAP);
+  if (oversized !== 0) return oversized;
+  const size = a.size - b.size;
+  if (size !== 0) return size;
+  const recency = b.mtimeMs - a.mtimeMs;
+  if (recency !== 0) return recency;
+  return a.name.localeCompare(b.name);
+}
+
 /** Read top-level *.md files in a context directory, with per-file and total size caps. */
 async function readContextDir(absDir: string, rootForRel: string, budget: { left: number }): Promise<string> {
   let entries;
@@ -68,17 +108,31 @@ async function readContextDir(absDir: string, rootForRel: string, budget: { left
   } catch {
     return '';
   }
-  const parts: string[] = [];
-  for (const ent of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+  const candidates: ContextCandidate[] = [];
+  for (const ent of entries) {
     if (!ent.isFile()) continue;
     if (ent.name.startsWith('.')) continue;
     if (!ent.name.toLowerCase().endsWith('.md')) continue;
+    const abs = path.join(absDir, ent.name);
+    const st = await fs.stat(abs).catch(() => null);
+    if (!st?.isFile()) continue;
+    candidates.push({
+      name: ent.name,
+      abs,
+      rel: path.relative(rootForRel, abs).replace(/\\/g, '/'),
+      size: st.size,
+      mtimeMs: st.mtimeMs,
+      priority: contextPriority(ent.name),
+    });
+  }
+
+  const parts: string[] = [];
+  for (const candidate of candidates.sort(compareContextCandidates)) {
     if (budget.left <= 0) {
       parts.push(`\n_(Additional context files omitted to respect the size budget.)_`);
       break;
     }
-    const abs = path.join(absDir, ent.name);
-    let content = await fs.readFile(abs, 'utf8').catch(() => '');
+    let content = await fs.readFile(candidate.abs, 'utf8').catch(() => '');
     if (!content.trim()) continue;
     let truncated = false;
     if (content.length > PER_FILE_CAP) {
@@ -90,8 +144,7 @@ async function readContextDir(absDir: string, rootForRel: string, budget: { left
       truncated = true;
     }
     budget.left -= content.length;
-    const rel = path.relative(rootForRel, abs).replace(/\\/g, '/');
-    parts.push(`\n#### File: ${rel}\n\n${content}${truncated ? '\n\n_(truncated)_' : ''}`);
+    parts.push(`\n#### File: ${candidate.rel}\n\n${content}${truncated ? '\n\n_(truncated)_' : ''}`);
   }
   return parts.join('\n');
 }

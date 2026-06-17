@@ -40,9 +40,15 @@ export class TerminalManager extends EventEmitter {
   setDefinitions(defs: TerminalDefinition[]): void {
     this.defs = new Map(defs.map((d) => [d.id, d]));
   }
-  upsertDefinition(def: TerminalDefinition): void {
+  /**
+   * Store/replace a definition. If the terminal is currently running, the runtime-affecting
+   * fields can't be applied under the live pty, so the session defers them to the next start;
+   * `deferred` is true in that case so the caller can tell the client the edit takes effect
+   * after a restart.
+   */
+  upsertDefinition(def: TerminalDefinition): { deferred: boolean } {
     this.defs.set(def.id, def);
-    this.sessions.get(def.id)?.updateDefinition(def);
+    return this.sessions.get(def.id)?.updateDefinition(def) ?? { deferred: false };
   }
   getDefinition(id: TerminalId): TerminalDefinition | undefined {
     return this.defs.get(id);

@@ -8,10 +8,10 @@ let tmpSeq = 0;
  * Default Tiger configuration. Command templates + flags live here so Claude/Codex
  * invocation can be changed without touching orchestration code.
  *
- * Permission defaults are the AUTONOMOUS-but-sandboxed floor (claude `acceptEdits`,
- * codex `--ask-for-approval never --sandbox workspace-write`) so a background agent can
- * write its output + marker without a human to approve prompts. The fully unrestricted
- * modes (claude `dangerous`, codex `yolo`) are present but never selected by default.
+ * Permission defaults intentionally use the fully autonomous unrestricted modes
+ * (claude `dangerous`, codex `yolo`) so unattended background agents do not stall
+ * on approval prompts. The cost-aware default profile reduces spend through
+ * model/effort choices while preserving unattended execution.
  */
 export function defaultTigerConfig(): TigerConfig {
   return {
@@ -46,10 +46,10 @@ export function defaultTigerConfig(): TigerConfig {
     defaults: {
       claudeAgents: 1,
       codexAgents: 1,
-      claudeModel: 'opus',
-      codexModel: 'gpt-5.5',
-      claudeEffort: 'xhigh',
-      codexEffort: 'high',
+      claudeModel: 'sonnet',
+      codexModel: 'gpt-5',
+      claudeEffort: 'medium',
+      codexEffort: 'medium',
       claudePermission: 'dangerous',
       codexPermission: 'yolo',
       parallel: true,

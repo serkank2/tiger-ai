@@ -2,7 +2,7 @@
 // prints a readiness banner, waits for the instruction line (or a fallback timer), then behaves
 // per --mode. Not a real agent; never imported by production code.
 //
-// Usage: node fake-cli.mjs --out <file> --marker <file> --mode <marker|exit|missing|idle|hang>
+// Usage: node fake-cli.mjs --out <file> --marker <file> --mode <marker|exit|missing|idle|growing-idle|hang>
 import { promises as fs } from 'node:fs';
 
 function arg(name, def) {
@@ -15,6 +15,10 @@ const marker = arg('--marker');
 const mode = arg('--mode', 'marker');
 
 process.stdout.write(`fake-cli ready: mode=${mode}\n`);
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 let acted = false;
 async function act() {
@@ -31,6 +35,19 @@ async function act() {
     process.exit(1); // exit without producing any output
   } else if (mode === 'idle') {
     await fs.writeFile(out, '# Output\n\nGenerated, then idle (no marker, no exit).\n', 'utf8');
+    // stay alive, produce no further output
+  } else if (mode === 'growing-idle') {
+    // Keep appending to the output file for well over a second so an implementation WITHOUT a
+    // stability gate (one that idle-completes on the first quiet poll with a non-empty file)
+    // finishes mid-write and captures a partial file. The per-append gap (100ms) is deliberately
+    // shorter than the test's doneIdleMs (300ms): a correct gate must keep waiting through every
+    // append and only complete once the final write has stayed unchanged for doneIdleMs.
+    await fs.writeFile(out, '# Output\n\npartial chunk 1\n', 'utf8');
+    for (let i = 2; i <= 15; i += 1) {
+      await delay(100);
+      await fs.appendFile(out, `partial chunk ${i}\n`, 'utf8');
+    }
+    await fs.appendFile(out, 'final chunk\n', 'utf8');
     // stay alive, produce no further output
   } else {
     // 'hang': produce nothing and stay alive

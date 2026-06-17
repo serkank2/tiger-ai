@@ -10,18 +10,24 @@ const snapshotListeners = new Map<string, Set<(data: string) => void>>();
 // ref-counted: a terminal may be bound by >1 view briefly (focus<->grid swap)
 const attached = new Map<string, number>();
 
-export interface BroadcastOutcome {
+export interface BroadcastOkOutcome {
+  kind: 'ok';
   matched: number;
   written: number;
   failed: { termId: string; code: string }[];
 }
+export type BroadcastOutcome =
+  | BroadcastOkOutcome
+  | { kind: 'timeout' }
+  | { kind: 'disconnected' }
+  | { kind: 'not_sent'; reason: 'socket_not_open' | 'server_error'; code?: string; message?: string };
 interface BroadcastWaiter {
-  resolve: (r: BroadcastOutcome | null) => void;
+  resolve: (r: BroadcastOutcome) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 const broadcastWaiters = new Map<string, BroadcastWaiter>();
 /** Resolve + clear the timer for one pending broadcast (result, error, timeout, or disconnect). */
-function settleWaiter(id: string, value: BroadcastOutcome | null): void {
+function settleWaiter(id: string, value: BroadcastOutcome): void {
   const w = broadcastWaiters.get(id);
   if (!w) return;
   clearTimeout(w.timer);
@@ -29,7 +35,7 @@ function settleWaiter(id: string, value: BroadcastOutcome | null): void {
   w.resolve(value);
 }
 /** Settle every pending waiter (used on disconnect / HMR dispose so callers never hang). */
-function settleAllWaiters(value: BroadcastOutcome | null): void {
+function settleAllWaiters(value: BroadcastOutcome): void {
   for (const id of [...broadcastWaiters.keys()]) settleWaiter(id, value);
 }
 
@@ -69,7 +75,7 @@ export function useSocket() {
       if (socket !== ws) return; // a newer socket already replaced us
       socket = null;
       conn.setStatus('disconnected');
-      settleAllWaiters(null); // don't leave broadcast() callers hanging across a disconnect
+      settleAllWaiters({ kind: 'disconnected' }); // don't leave broadcast() callers hanging across a disconnect
       scheduleReconnect();
     };
     ws.onerror = () => {
@@ -145,7 +151,7 @@ export function useSocket() {
         const failed = msg.failed ?? [];
         const written = msg.written ?? 0;
         const matched = msg.matched ?? 0;
-        if (msg.id) settleWaiter(msg.id, { matched, written, failed });
+        if (msg.id) settleWaiter(msg.id, { kind: 'ok', matched, written, failed });
         if (failed.length === 0) {
           notices.push(`Sent to ${written} terminal(s)`, 'info');
         } else {
@@ -166,8 +172,13 @@ export function useSocket() {
         break;
       }
       case 'term.error':
-        if (msg.id) settleWaiter(msg.id, null); // server-side broadcast error: settle so the caller doesn't wait 5s
-        if (msg.message) notices.push(msg.message, 'error');
+        if (msg.id) {
+          // Server-side broadcast error: settle so the caller doesn't wait 5s.
+          settleWaiter(msg.id, { kind: 'not_sent', reason: 'server_error', code: msg.code, message: msg.message });
+        }
+        // A broadcast error (carries an id) is surfaced by the awaiting caller via the settled
+        // outcome above; only push here for unsolicited errors that have no caller to own them.
+        if (msg.message && !msg.id) notices.push(msg.message, 'error');
         if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll().catch(() => {});
         break;
       case 'tiger.state':
@@ -197,17 +208,21 @@ export function useSocket() {
   function resize(id: string, cols: number, rows: number): void {
     raw({ type: 'term.resize', termId: id, cols, rows });
   }
-  /** Resolves with the routing outcome, or null if the socket wasn't open / timed out. */
+  /**
+   * Resolves with a discriminated broadcast outcome.
+   * Every waiter is settled: ok from server routing, not_sent if the frame cannot be
+   * sent or is rejected, timeout after 5s, and disconnected if the socket closes first.
+   */
   function broadcast(
     target: CommandTarget,
     data: string,
     appendNewline?: boolean,
-  ): Promise<BroadcastOutcome | null> {
+  ): Promise<BroadcastOutcome> {
     const id = `c${++msgSeq}`;
     const sent = raw({ type: 'term.broadcastInput', id, target, data, appendNewline });
-    if (!sent) return Promise.resolve(null);
+    if (!sent) return Promise.resolve({ kind: 'not_sent', reason: 'socket_not_open' });
     return new Promise((resolve) => {
-      const timer = setTimeout(() => settleWaiter(id, null), 5000);
+      const timer = setTimeout(() => settleWaiter(id, { kind: 'timeout' }), 5000);
       broadcastWaiters.set(id, { resolve, timer });
     });
   }
@@ -244,6 +259,6 @@ if (import.meta.hot) {
     outputListeners.clear();
     snapshotListeners.clear();
     attached.clear();
-    settleAllWaiters(null); // resolve pending broadcasts so awaiting callers don't hang on HMR
+    settleAllWaiters({ kind: 'disconnected' }); // resolve pending broadcasts so awaiting callers don't hang on HMR
   });
 }

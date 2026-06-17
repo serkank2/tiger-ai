@@ -16,6 +16,10 @@ const editing = ref<TerminalDto | null>(null);
 const showGroups = ref(false);
 const showSettings = ref(false);
 const showComposer = ref(false);
+const documentVisible = ref(true);
+const shouldPollPreviews = computed(
+  () => documentVisible.value && view.value === 'terminals' && terminals.items.length > 0,
+);
 
 function openCreate() {
   editing.value = null;
@@ -37,28 +41,50 @@ async function loadAll() {
 }
 
 // Self-scheduling preview refresh: waits for each request before the next, never overlaps,
-// and stops cleanly on unmount. (Live status itself arrives via WebSocket.)
+// and stops cleanly when the terminal panel is not visible. (Live status itself arrives via WebSocket.)
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false;
+function clearPreviewPollTimer() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+function schedulePreviewPoll(delay = 4000) {
+  if (disposed || pollTimer || !shouldPollPreviews.value) return;
+  pollTimer = setTimeout(pollLoop, delay);
+}
 async function pollLoop() {
-  if (disposed) return;
+  pollTimer = null;
+  if (disposed || !shouldPollPreviews.value) return;
   try {
     await terminals.refreshPreviews();
   } catch {
     /* ignore transient errors */
   }
-  if (!disposed) pollTimer = setTimeout(pollLoop, 4000);
+  schedulePreviewPoll();
+}
+function syncPreviewPoll() {
+  if (shouldPollPreviews.value) schedulePreviewPoll(0);
+  else clearPreviewPollTimer();
+}
+function updateDocumentVisibility() {
+  documentVisible.value = document.visibilityState !== 'hidden';
 }
 
 onMounted(async () => {
   socket.connect();
+  updateDocumentVisibility();
+  document.addEventListener('visibilitychange', updateDocumentVisibility);
   await loadAll();
-  if (!disposed) pollTimer = setTimeout(pollLoop, 4000);
+  syncPreviewPoll();
 });
 onBeforeUnmount(() => {
   disposed = true;
-  if (pollTimer) clearTimeout(pollTimer);
+  document.removeEventListener('visibilitychange', updateDocumentVisibility);
+  clearPreviewPollTimer();
 });
+watch(shouldPollPreviews, syncPreviewPoll);
 </script>
 
 <template>

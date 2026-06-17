@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { FindingStatus, FindingsSummary } from './types.js';
+import { acquireLock, isLockStale, releaseLock } from './tasks.js';
 
 export type { FindingStatus, FindingsSummary };
 
@@ -28,6 +29,28 @@ export function findingFileName(id: string, status: FindingStatus): string {
 export function parseFindingFileName(name: string): { id: string; status: FindingStatus } | null {
   const m = FINDING_FILE_RE.exec(name);
   return m ? { id: m[1]!, status: m[2]! as FindingStatus } : null;
+}
+
+function queueLockFile(locksDir: string, id: string): string {
+  return path.join(locksDir, `${id}.lock`);
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  return fs
+    .stat(file)
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function isFileOlderThan(file: string, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+  if (ttlMs <= 0) return false;
+  const st = await fs.stat(file).catch(() => null);
+  return !!st && nowMs - st.mtimeMs > ttlMs;
+}
+
+async function shouldReclaimClaimFile(file: string, lockFile: string | null, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+  if (lockFile && (await pathExists(lockFile))) return isLockStale(lockFile, ttlMs, nowMs);
+  return isFileOlderThan(file, ttlMs, nowMs);
 }
 
 /** Extract `## FINDING…` blocks from a review log. A lone "No findings." yields nothing. */
@@ -106,17 +129,74 @@ export async function readFindingBlock(dir: string, id: string): Promise<string>
   return (await fs.readFile(path.join(dir, name), 'utf8').catch(() => '')).trim() || `(finding ${id})`;
 }
 
+export interface ReclaimStaleFindingsOptions {
+  ttlMs: number;
+  locksDir?: string;
+  nowMs?: number;
+}
+
+/** Reset abandoned fixing findings so the atomic rename queue can claim them again. */
+export async function reclaimStaleFindings(
+  dir: string,
+  opts: ReclaimStaleFindingsOptions,
+): Promise<FindingRecord[]> {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+  const reclaimed: FindingRecord[] = [];
+  for (const name of names) {
+    const p = parseFindingFileName(name);
+    if (!p || p.status !== 'fixing') continue;
+    const file = path.join(dir, name);
+    const lockFile = opts.locksDir ? queueLockFile(opts.locksDir, p.id) : null;
+    if (!(await shouldReclaimClaimFile(file, lockFile, opts.ttlMs, opts.nowMs))) continue;
+
+    const to = path.join(dir, findingFileName(p.id, 'open'));
+    try {
+      await fs.rename(file, to);
+    } catch {
+      continue;
+    }
+    if (lockFile) await releaseLock(lockFile);
+    const content = await fs.readFile(to, 'utf8').catch(() => '');
+    const rel = /related task ([A-Za-z0-9_-]+)/i.exec(content);
+    const titleM = /^#{1,2}\s+(FINDING[^\n]*)/im.exec(content);
+    reclaimed.push({ id: p.id, status: 'open', title: (titleM?.[1] ?? p.id).trim(), relatedTask: rel?.[1] });
+  }
+  return reclaimed;
+}
+
+export interface ClaimFindingLockOptions {
+  locksDir: string;
+  agentId: string;
+  agentType: string;
+  ttlMs: number;
+  nowMs?: number;
+}
+
 /** Atomically claim the next open finding (rename open -> fixing). Returns null when none remain. */
-export async function claimNextFinding(dir: string): Promise<{ id: string; block: string } | null> {
+export async function claimNextFinding(
+  dir: string,
+  lock?: ClaimFindingLockOptions,
+): Promise<{ id: string; block: string } | null> {
   const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
   for (const name of names) {
     const p = parseFindingFileName(name);
     if (!p || p.status !== 'open') continue;
     const from = path.join(dir, name);
     const to = path.join(dir, findingFileName(p.id, 'fixing'));
+    const lockOpts = lock;
+    const lockFile = lockOpts ? queueLockFile(lockOpts.locksDir, p.id) : null;
+    if (lockOpts && lockFile) {
+      const locked = await acquireLock(
+        lockFile,
+        { taskId: p.id, agentId: lockOpts.agentId, agentType: lockOpts.agentType },
+        { ttlMs: lockOpts.ttlMs, nowMs: lockOpts.nowMs },
+      );
+      if (!locked) continue;
+    }
     try {
       await fs.rename(from, to);
     } catch {
+      if (lockFile) await releaseLock(lockFile);
       continue; // claimed by someone else
     }
     const content = await fs.readFile(to, 'utf8').catch(() => '');

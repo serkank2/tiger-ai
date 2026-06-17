@@ -1,33 +1,24 @@
 <script setup lang="ts">
 import type { TigerStageId, TigerStageState } from '~/types';
+import { TIGER_STAGES } from '~/lib/tigerStages';
 
 defineProps<{ stages: Record<TigerStageId, TigerStageState> | null }>();
 const selected = defineModel<TigerStageId>({ required: true });
-
-const STAGES: { id: TigerStageId; num: string; title: string; opt?: boolean }[] = [
-  { id: 'brainstorming', num: '1', title: 'Brainstorming', opt: true },
-  { id: 'writing-plan', num: '2', title: 'Writing Plan' },
-  { id: 'writing-tasks', num: '3', title: 'Writing Tasks' },
-  { id: 'merge-tasks', num: '4', title: 'Merge Tasks' },
-  { id: 'executing-plan', num: '5', title: 'Executing Tasks' },
-  { id: 'task-review', num: '6A', title: 'Task Review' },
-  { id: 'requesting-code-review', num: '6B', title: 'Code Review' },
-];
 </script>
 
 <template>
   <nav class="stepper">
     <button
-      v-for="s in STAGES"
+      v-for="s in TIGER_STAGES"
       :key="s.id"
       type="button"
       class="step"
       :class="[{ on: selected === s.id }, `st-${stages?.[s.id]?.status ?? 'not_started'}`]"
       @click="selected = s.id"
     >
-      <span class="num">{{ s.num }}</span>
+      <span class="num">{{ s.number }}</span>
       <span class="title">{{ s.title }}</span>
-      <span v-if="s.opt" class="opt" title="Optional stage">opt</span>
+      <span v-if="s.optional" class="opt" title="Optional stage">opt</span>
       <span class="dot" />
     </button>
   </nav>
