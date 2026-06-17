@@ -1,5 +1,16 @@
 <script setup lang="ts">
 import type { ShellKind, TerminalDto, TerminalInput } from '~/types';
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseField from '~/components/ui/BaseField.vue';
+import { errText } from '~/lib/apiError';
+import {
+  absoluteLocalPathError,
+  customShellPathError,
+  envTextError,
+  usesWindowsPathSyntax,
+} from '~/lib/formValidation';
+import { INITIAL_COMMAND_MAX_LENGTH } from '~/lib/shellLimits';
 
 const props = defineProps<{ terminal: TerminalDto | null }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
@@ -84,7 +95,10 @@ function buildAiCommand(): string {
   return '';
 }
 function rebuildAi() {
-  if (form.aiTool) form.initialCommand = buildAiCommand();
+  if (form.aiTool) {
+    form.initialCommand = buildAiCommand();
+    clearServerError('initialCommand');
+  }
 }
 function onToolChange() {
   form.aiModel = '';
@@ -96,14 +110,74 @@ const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
 const error = ref('');
 
+type FieldKey = 'name' | 'groupId' | 'cwd' | 'initialCommand' | 'shellPath' | 'env';
+const serverErrors = reactive<Partial<Record<FieldKey, string>>>({});
+function clearServerError(field: FieldKey) {
+  delete serverErrors[field];
+  error.value = '';
+}
+function clearServerErrors() {
+  for (const key of Object.keys(serverErrors) as FieldKey[]) delete serverErrors[key];
+}
+function applyServerError(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes('name')) serverErrors.name = message;
+  else if (lower.includes('groupid')) serverErrors.groupId = message;
+  else if (lower.includes('working directory')) serverErrors.cwd = message;
+  else if (lower.includes('initialcommand')) serverErrors.initialCommand = message;
+  else if (lower.includes('shell')) serverErrors.shellPath = message;
+  else if (lower.includes('env')) serverErrors.env = message;
+  else error.value = message;
+}
+
+const cwdWindowsContext = computed(() => usesWindowsPathSyntax(settings.settings?.defaultCwd, form.cwd));
+const shellWindowsContext = computed(() =>
+  usesWindowsPathSyntax(settings.settings?.defaultCwd, form.cwd, form.shellPath),
+);
+const nameError = computed(() => serverErrors.name ?? (!form.name.trim() ? 'Name is required.' : null));
+const groupError = computed(() =>
+  serverErrors.groupId ?? (form.groupId && !groups.groups.some((g) => g.id === form.groupId) ? 'Choose an existing group.' : null),
+);
+const cwdShapeError = computed(() =>
+  form.cwd.trim() ? absoluteLocalPathError(form.cwd, 'Working directory', cwdWindowsContext.value) : null,
+);
+const cwdError = computed(
+  () => serverErrors.cwd ?? cwdShapeError.value ?? (cwdState.value === 'bad' ? 'Working directory does not exist or is not a folder.' : null),
+);
+const initialCommandLength = computed(() => form.initialCommand.trim().length);
+const initialCommandError = computed(() =>
+  serverErrors.initialCommand ??
+  (initialCommandLength.value > INITIAL_COMMAND_MAX_LENGTH
+    ? `Initial command must be ${INITIAL_COMMAND_MAX_LENGTH} characters or fewer.`
+    : null),
+);
+const shellPathError = computed(() =>
+  serverErrors.shellPath ?? customShellPathError(form.shellKind, form.shellPath, 'Shell path', shellWindowsContext.value),
+);
+const envError = computed(() => serverErrors.env ?? envTextError(form.env));
+const hasFieldError = computed(() =>
+  Boolean(nameError.value || groupError.value || cwdError.value || initialCommandError.value || shellPathError.value || envError.value),
+);
+const canSave = computed(() => !saving.value && !hasFieldError.value && cwdState.value !== 'checking');
+
+watch(() => form.initialCommand, () => clearServerError('initialCommand'));
+watch(() => form.shellPath, () => clearServerError('shellPath'));
+watch(() => form.env, () => clearServerError('env'));
+
 // create-only: make N copies at once, optionally starting them immediately
 const count = ref(1);
 const startNow = ref(false);
 const showPicker = ref(false);
 function onPickFolder(p: string) {
   form.cwd = p;
+  clearServerError('cwd');
   showPicker.value = false;
   void checkCwd();
+}
+
+function onCwdInput() {
+  clearServerError('cwd');
+  cwdState.value = 'idle';
 }
 
 async function checkCwd() {
@@ -123,18 +197,10 @@ async function checkCwd() {
 
 async function save() {
   error.value = '';
-  if (!form.name.trim()) {
-    error.value = 'Name is required.';
-    return;
-  }
-  if (form.shellKind === 'custom' && !form.shellPath.trim()) {
-    error.value = 'A custom shell needs a path.';
-    return;
-  }
-  if (cwdState.value === 'bad') {
-    error.value = 'Working directory does not exist.';
-    return;
-  }
+  clearServerErrors();
+  if (form.cwd.trim() && !cwdShapeError.value) await checkCwd();
+  if (hasFieldError.value || cwdState.value === 'checking') return;
+
   saving.value = true;
   const shell =
     form.shellKind === 'custom'
@@ -169,8 +235,7 @@ async function save() {
     emit('saved');
     emit('close');
   } catch (e) {
-    const err = e as { data?: { error?: { message?: string } }; message?: string };
-    error.value = err?.data?.error?.message ?? err?.message ?? 'Save failed.';
+    applyServerError(errText(e));
   } finally {
     saving.value = false;
   }
@@ -178,33 +243,50 @@ async function save() {
 </script>
 
 <template>
-  <div class="backdrop" @keydown.esc="emit('close')">
-    <div class="modal" role="dialog" aria-modal="true">
-      <h2>{{ isEdit ? 'Edit terminal' : 'New terminal' }}</h2>
+  <BaseModal :title="isEdit ? 'Edit terminal' : 'New terminal'" size="lg" @close="emit('close')">
+      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-name" label="Name" :error="nameError || undefined">
+        <input
+          :id="id"
+          v-model="form.name"
+          placeholder="e.g. Frontend Claude"
+          autofocus
+          :aria-invalid="invalid || undefined"
+          :aria-describedby="describedby"
+          @input="clearServerError('name')"
+        />
+      </BaseField>
 
-      <label class="field">
-        <span>Name</span>
-        <input v-model="form.name" placeholder="e.g. Frontend Claude" autofocus />
-      </label>
-
-      <label class="field">
-        <span>Group</span>
-        <select v-model="form.groupId">
+      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-group" label="Group" :error="groupError || undefined">
+        <select
+          :id="id"
+          v-model="form.groupId"
+          :aria-invalid="invalid || undefined"
+          :aria-describedby="describedby"
+          @change="clearServerError('groupId')"
+        >
           <option :value="null">— none —</option>
           <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
         </select>
-      </label>
+      </BaseField>
 
-      <label class="field">
-        <span>Working directory</span>
+      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-cwd" label="Working directory" :error="cwdError || undefined">
         <span class="cwd-row">
-          <input v-model="form.cwd" placeholder="C:\path\to\project" spellcheck="false" @blur="checkCwd" />
-          <button type="button" class="browse" title="Browse folders" @click="showPicker = true">📁</button>
+          <input
+            :id="id"
+            v-model="form.cwd"
+            placeholder="C:\path\to\project"
+            spellcheck="false"
+            :aria-invalid="invalid || undefined"
+            :aria-describedby="describedby"
+            @input="onCwdInput"
+            @blur="checkCwd"
+          />
+          <button type="button" class="browse" title="Browse folders" aria-label="Browse folders" @click="showPicker = true">📁</button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
         </span>
-      </label>
+      </BaseField>
 
       <div class="ai">
         <div class="ai-head">🤖 AI CLI quick start <i>(fills the initial command — still editable)</i></div>
@@ -234,33 +316,55 @@ async function save() {
         </p>
       </div>
 
-      <label class="field">
-        <span>Initial command <i>(optional)</i></span>
+      <BaseField
+        label="Initial command"
+        :hint="`optional, ${initialCommandLength}/${INITIAL_COMMAND_MAX_LENGTH}`"
+        :error="initialCommandError || undefined"
+      >
         <input v-model="form.initialCommand" placeholder="npm run dev · claude · codex" spellcheck="false" />
-      </label>
+      </BaseField>
 
       <label class="field">
         <span>Shell</span>
-        <select v-model="form.shellKind">
+        <select v-model="form.shellKind" @change="clearServerError('shellPath')">
           <option v-for="s in SHELLS" :key="s.value" :value="s.value">{{ s.label }}</option>
         </select>
       </label>
 
       <template v-if="form.shellKind === 'custom'">
-        <label class="field">
-          <span>Shell path</span>
-          <input v-model="form.shellPath" placeholder="C:\path\to\shell.exe" spellcheck="false" />
-        </label>
+        <BaseField v-slot="{ id, describedby, invalid }" id="terminal-shell-path" label="Shell path" :error="shellPathError || undefined">
+          <input
+            :id="id"
+            v-model="form.shellPath"
+            placeholder="C:\path\to\shell.exe"
+            spellcheck="false"
+            :aria-invalid="invalid || undefined"
+            :aria-describedby="describedby"
+          />
+        </BaseField>
         <label class="field">
           <span>Shell args <i>(space-separated)</i></span>
           <input v-model="form.shellArgs" spellcheck="false" />
         </label>
       </template>
 
-      <label class="field">
-        <span>Environment variables <i>(KEY=VALUE per line, optional)</i></span>
-        <textarea v-model="form.env" rows="3" spellcheck="false" placeholder="NODE_ENV=development" />
-      </label>
+      <BaseField
+        v-slot="{ id, describedby, invalid }"
+        id="terminal-env"
+        label="Environment variables"
+        hint="KEY=VALUE per line, optional"
+        :error="envError || undefined"
+      >
+        <textarea
+          :id="id"
+          v-model="form.env"
+          rows="3"
+          spellcheck="false"
+          placeholder="NODE_ENV=development"
+          :aria-invalid="invalid || undefined"
+          :aria-describedby="describedby"
+        />
+      </BaseField>
 
       <label class="check">
         <input v-model="form.autostart" type="checkbox" />
@@ -284,42 +388,18 @@ async function save() {
 
       <p v-if="error" class="err">{{ error }}</p>
 
-      <div class="foot">
-        <button class="ghost" @click="emit('close')">Cancel</button>
-        <button class="primary" :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : count > 1 ? `Create ${count}` : 'Create' }}
-        </button>
-      </div>
-    </div>
-  </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="emit('close')">Cancel</BaseButton>
+        <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">
+          {{ isEdit ? 'Save changes' : count > 1 ? `Create ${count}` : 'Create' }}
+        </BaseButton>
+      </template>
+  </BaseModal>
 
   <FolderPicker v-if="showPicker" :initial="form.cwd" @select="onPickFolder" @close="showPicker = false" />
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: grid;
-  place-items: center;
-  z-index: 50;
-  backdrop-filter: blur(2px);
-}
-.modal {
-  width: min(720px, 95vw);
-  max-height: 92vh;
-  overflow-y: auto;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
-}
-h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
-}
 .field {
   display: block;
   margin-bottom: 13px;
@@ -420,33 +500,5 @@ h2 {
   color: var(--red);
   font-size: 13px;
   margin: 6px 0 0;
-}
-.foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 18px;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 8px 16px;
-  color: var(--text-dim);
-}
-.ghost:hover {
-  color: var(--text);
-}
-.primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 8px 18px;
-}
-.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

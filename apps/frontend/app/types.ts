@@ -246,12 +246,20 @@ export interface TigerStageDefaults {
   parallel: boolean;
 }
 
+export interface TigerExecutionConfig {
+  parallel: boolean;
+  locking: boolean;
+  maxConcurrent: number;
+  lockTtlMs: number;
+  maxCorrectionCycles: number;
+}
+
 export interface TigerConfig {
   version: number;
   cli: { claude: TigerCliToolConfig; codex: TigerCliToolConfig };
   defaults: TigerStageDefaults;
   timing: Record<string, number>;
-  execution: { parallel: boolean; locking: boolean; maxConcurrent: number };
+  execution: TigerExecutionConfig;
 }
 
 export interface TigerUsageEntry {

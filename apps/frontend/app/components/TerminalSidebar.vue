@@ -57,7 +57,8 @@ function groupSomeSelected(list: TerminalDto[]) {
   <aside class="sidebar">
     <div class="head">
       <span class="title">Terminals<span class="count">{{ terminals.items.length }}</span></span>
-      <button class="new" @click="emit('create')">+ New</button>
+      <Spinner v-if="terminals.loading && !terminals.loaded" small label="Loading" />
+      <button v-else class="new" @click="emit('create')">+ New</button>
     </div>
 
     <div v-if="terminals.items.length" class="selbar" :class="{ active: terminals.someSelected }">
@@ -87,7 +88,12 @@ function groupSomeSelected(list: TerminalDto[]) {
     </div>
 
     <div class="list">
-      <template v-for="[gid, list] in sections" :key="gid ?? '__none__'">
+      <div v-if="terminals.loading && !terminals.loaded" class="loading-list">
+        <Skeleton v-for="i in 5" :key="i" :lines="2" class="skel-item" />
+      </div>
+
+      <template v-else>
+        <template v-for="[gid, list] in sections" :key="gid ?? '__none__'">
         <div class="ghead">
           <input
             class="gchk"
@@ -121,12 +127,12 @@ function groupSomeSelected(list: TerminalDto[]) {
           @edit="emit('edit', t)"
           @remove="terminals.remove(t.id)"
         />
+        </template>
       </template>
 
-      <div v-if="!terminals.items.length" class="empty">
-        <p>No terminals yet.</p>
+      <EmptyState v-if="!terminals.loading && !terminals.items.length" title="No terminals yet.">
         <button class="new" @click="emit('create')">+ Create your first terminal</button>
-      </div>
+      </EmptyState>
     </div>
   </aside>
 </template>
@@ -228,6 +234,18 @@ function groupSomeSelected(list: TerminalDto[]) {
   overflow-y: auto;
   padding-bottom: 16px;
 }
+.loading-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.skel-item {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
 .ghead {
   display: flex;
   align-items: center;
@@ -276,12 +294,7 @@ function groupSomeSelected(list: TerminalDto[]) {
 .gname {
   flex: 1;
 }
-.empty {
-  text-align: center;
-  color: var(--text-faint);
-  padding: 40px 20px;
-}
-.empty .new {
+:deep(.empty-state) .new {
   margin-top: 12px;
 }
 </style>

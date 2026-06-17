@@ -18,7 +18,7 @@ import type {
   StageStatus,
   TigerConfig,
 } from './types.js';
-import { defaultTigerConfig, loadConfig, normalizeConfig, saveConfig } from './config.js';
+import { defaultTigerConfig, loadConfig, normalizeConfig, saveConfig, validateConfigPatch } from './config.js';
 import { ensureScaffold } from './scaffold.js';
 import { buildLaunchCommand } from './launch-command.js';
 import { AgentSession } from './AgentSession.js';
@@ -195,6 +195,8 @@ export class Orchestrator extends EventEmitter {
 
   async updateConfig(partial: unknown): Promise<TigerConfig> {
     if (!this.paths) throw httpError(400, 'no workspace selected');
+    const validationError = validateConfigPatch(partial, this.config);
+    if (validationError) throw httpError(400, validationError);
     const merged = normalizeConfig({ ...this.config, ...(partial && typeof partial === 'object' ? partial : {}) });
     this.config = merged;
     await saveConfig(this.paths.configFile, merged);
@@ -658,9 +660,9 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async reclaimStaleExecutionClaims(): Promise<void> {
-    if (!this.paths || !this.config.execution.locking) return;
+    if (!this.paths) return;
     const reclaimed = await reclaimStaleTaskClaims(this.paths.tasksDir, {
-      locksDir: this.paths.locksDir,
+      locksDir: this.config.execution.locking ? this.paths.locksDir : undefined,
       ttlMs: this.config.execution.lockTtlMs,
     });
     if (reclaimed.length > 0) {
@@ -673,9 +675,9 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async reclaimStaleFindingClaims(): Promise<void> {
-    if (!this.paths || !this.config.execution.locking) return;
+    if (!this.paths) return;
     const reclaimed = await reclaimStaleFindings(this.paths.findingsDir, {
-      locksDir: this.paths.findingLocksDir,
+      locksDir: this.config.execution.locking ? this.paths.findingLocksDir : undefined,
       ttlMs: this.config.execution.lockTtlMs,
     });
     if (reclaimed.length > 0) {
@@ -846,6 +848,16 @@ export class Orchestrator extends EventEmitter {
     );
   }
 
+  private agentTerminalTargets(): TerminalRemovalTarget[] {
+    const out = new Map<string, TerminalRemovalTarget>();
+    for (const s of STAGE_ORDER) {
+      for (const r of this.stages[s].runs) {
+        out.set(r.terminalId, { id: r.terminalId, label: `${s}/${r.label}` });
+      }
+    }
+    return [...out.values()];
+  }
+
   private async removeTerminalsBestEffort(terminals: TerminalRemovalTarget[], context: string): Promise<void> {
     const results = await Promise.allSettled(terminals.map(async (terminal) => this.manager.remove(terminal.id)));
     const runLogFile = this.paths?.runLogFile;
@@ -989,8 +1001,9 @@ export class Orchestrator extends EventEmitter {
   }
 
   /** Close the active project and return to the launcher (no-op if none open). */
-  closeProject(): void {
+  async closeProject(): Promise<void> {
     if (this.busy) throw httpError(409, 'a stage is currently running');
+    await this.removeTerminalsBestEffort(this.agentTerminalTargets(), 'project close');
     this.workspace = null;
     this.paths = null;
     this.initialized = false;
@@ -1023,10 +1036,7 @@ export class Orchestrator extends EventEmitter {
 
   /** Kill any live agent terminals (called on shutdown). */
   async killAgents(): Promise<void> {
-    const terminals = STAGE_ORDER.flatMap((s) =>
-      this.stages[s].runs.map((r) => ({ id: r.terminalId, label: `${s}/${r.label}` })),
-    );
-    await this.removeTerminalsBestEffort(terminals, 'agent shutdown');
+    await this.removeTerminalsBestEffort(this.agentTerminalTargets(), 'agent shutdown');
   }
 }
 

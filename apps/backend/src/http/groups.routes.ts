@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
 import type { TerminalGroup } from '../store/types.js';
 import { isValidColor, nonEmptyString } from './validate.js';
+import { TIGER_GROUP_NAME_MAX_CHARS } from '../orchestrator/config.js';
 
 export function createGroupsRouter(ctx: AppCtx): Router {
   const router = Router();
@@ -16,6 +17,10 @@ export function createGroupsRouter(ctx: AppCtx): Router {
     const name = nonEmptyString(body.name);
     if (!name) {
       res.status(400).json({ error: { message: 'name is required' } });
+      return;
+    }
+    if (name.length > TIGER_GROUP_NAME_MAX_CHARS) {
+      res.status(400).json({ error: { message: `name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer` } });
       return;
     }
     const group: TerminalGroup = {
@@ -36,6 +41,10 @@ export function createGroupsRouter(ctx: AppCtx): Router {
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = nonEmptyString(body.name);
+    if (name && name.length > TIGER_GROUP_NAME_MAX_CHARS) {
+      res.status(400).json({ error: { message: `name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer` } });
+      return;
+    }
     if (name) group.name = name;
     if ('color' in body) group.color = isValidColor(body.color) ? body.color.trim() : undefined;
     await ctx.save();

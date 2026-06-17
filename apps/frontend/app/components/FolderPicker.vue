@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+
 const props = defineProps<{ initial?: string }>();
 const emit = defineEmits<{ select: [path: string]; close: [] }>();
 const api = useApi();
@@ -8,6 +12,8 @@ const parent = ref('');
 const dirs = ref<{ name: string; path: string }[]>([]);
 const loading = ref(false);
 const error = ref('');
+// Editable absolute path the user can type to jump directly to any folder/drive.
+const typedPath = ref('');
 
 async function load(p?: string) {
   loading.value = true;
@@ -17,12 +23,19 @@ async function load(p?: string) {
     path.value = res.path;
     parent.value = res.parent;
     dirs.value = res.directories;
+    typedPath.value = res.path; // keep the editable field in sync with the resolved location
   } catch (e) {
     const err = e as { data?: { error?: { message?: string } }; message?: string };
     error.value = err?.data?.error?.message ?? err?.message ?? 'Cannot read this folder';
   } finally {
     loading.value = false;
   }
+}
+
+// Load the path the user typed directly; invalid/inaccessible paths surface the same error.
+function loadTyped() {
+  const p = typedPath.value.trim();
+  if (p && !loading.value) void load(p);
 }
 
 onMounted(async () => {
@@ -37,55 +50,40 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="backdrop">
-    <div class="picker" role="dialog" aria-modal="true">
-      <h3>Choose a folder</h3>
-      <div class="cur"><code>{{ path || '…' }}</code></div>
+  <BaseModal title="Choose a folder" size="md" @close="emit('close')">
+    <div class="cur"><code>{{ path || '…' }}</code></div>
 
-      <div class="list">
-        <button v-if="parent && parent !== path" type="button" class="row up" @click="load(parent)">↑ ..</button>
-        <button v-for="d in dirs" :key="d.path" type="button" class="row" @click="load(d.path)">
-          <span class="ic">📁</span>{{ d.name }}
-        </button>
-        <div v-if="!loading && !dirs.length" class="empty">No subfolders here</div>
-      </div>
+    <form class="go-row" @submit.prevent="loadTyped">
+      <input
+        v-model="typedPath"
+        class="go-input"
+        spellcheck="false"
+        placeholder="Type an absolute path to jump to another drive…"
+        aria-label="Absolute folder path"
+        :disabled="loading"
+      />
+      <BaseButton type="submit" variant="secondary" :loading="loading" :disabled="!typedPath.trim()">Go</BaseButton>
+    </form>
 
-      <p v-if="error" class="err">{{ error }}</p>
-      <p class="hint">Tip: type a path directly in the field to jump to another drive.</p>
-
-      <div class="foot">
-        <button type="button" class="ghost" @click="emit('close')">Cancel</button>
-        <button type="button" class="primary" :disabled="!path" @click="emit('select', path)">Use this folder</button>
-      </div>
+    <div class="list" :aria-busy="loading || undefined">
+      <button v-if="parent && parent !== path" type="button" class="row up" :disabled="loading" @click="load(parent)">↑ ..</button>
+      <button v-for="d in dirs" :key="d.path" type="button" class="row" :disabled="loading" @click="load(d.path)">
+        <span class="ic">📁</span>{{ d.name }}
+      </button>
+      <div v-if="loading" class="loading-row"><Spinner :size="16" label="" /> Loading…</div>
+      <div v-else-if="!dirs.length" class="empty">No subfolders here</div>
     </div>
-  </div>
+
+    <p v-if="error" class="err">{{ error }}</p>
+
+    <template #footer>
+      <BaseButton variant="ghost" :disabled="loading" @click="emit('close')">Cancel</BaseButton>
+      <BaseButton variant="primary" :disabled="!path || loading" @click="emit('select', path)">Use this folder</BaseButton>
+    </template>
+  </BaseModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: grid;
-  place-items: center;
-  z-index: 60;
-  backdrop-filter: blur(2px);
-}
-.picker {
-  width: min(460px, 92vw);
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 20px 22px;
-}
-h3 {
-  margin: 0 0 10px;
-  font-size: 16px;
-}
 .cur {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -97,8 +95,18 @@ h3 {
   word-break: break-all;
   margin-bottom: 10px;
 }
-.list {
+.go-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.go-input {
   flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.list {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -117,9 +125,13 @@ h3 {
   border-radius: 0;
   border-bottom: 1px solid var(--border);
 }
-.row:hover {
+.row:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.row:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .row.up {
   color: var(--text-dim);
@@ -127,6 +139,15 @@ h3 {
 }
 .ic {
   flex: none;
+}
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 .empty {
   padding: 18px;
@@ -138,32 +159,5 @@ h3 {
   color: var(--red);
   font-size: 13px;
   margin: 8px 0 0;
-}
-.hint {
-  color: var(--text-faint);
-  font-size: 11px;
-  margin: 8px 0 0;
-}
-.foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 8px 16px;
-  color: var(--text-dim);
-}
-.primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 8px 18px;
-}
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

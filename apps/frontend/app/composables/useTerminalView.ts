@@ -1,7 +1,21 @@
-import { Terminal, type IDisposable } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
+import type { IDisposable, Terminal as XTermTerminal } from '@xterm/xterm';
+import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit';
 import type { Ref } from 'vue';
+
+let xtermCorePromise: Promise<
+  readonly [typeof import('@xterm/xterm'), typeof import('@xterm/addon-fit')]
+> | null = null;
+let webLinksAddonPromise: Promise<typeof import('@xterm/addon-web-links')> | null = null;
+
+function loadXtermCore() {
+  xtermCorePromise ??= Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
+  return xtermCorePromise;
+}
+
+function loadWebLinksAddon() {
+  webLinksAddonPromise ??= import('@xterm/addon-web-links');
+  return webLinksAddonPromise;
+}
 
 /**
  * Manages one xterm.js instance bound to a (reactive) terminal id, in the given host
@@ -22,8 +36,8 @@ export function useTerminalView(
   const terminals = useTerminalsStore();
   const theme = useThemeStore();
 
-  let term: Terminal | null = null;
-  let fit: FitAddon | null = null;
+  let term: XTermTerminal | null = null;
+  let fit: XTermFitAddon | null = null;
   let offOutput: (() => void) | null = null;
   let offSnapshot: (() => void) | null = null;
   let onData: IDisposable | null = null;
@@ -90,6 +104,9 @@ export function useTerminalView(
     await nextTick();
     if (token !== mountToken || !host.value) return;
 
+    const [{ Terminal }, { FitAddon }] = await loadXtermCore();
+    if (token !== mountToken || !host.value) return;
+
     const t = new Terminal({
       cursorBlink: true,
       fontFamily: "'Cascadia Code', 'JetBrains Mono', ui-monospace, Consolas, monospace",
@@ -101,7 +118,14 @@ export function useTerminalView(
     });
     const f = new FitAddon();
     t.loadAddon(f);
-    if (!opts.compact) t.loadAddon(new WebLinksAddon());
+    if (!opts.compact) {
+      const { WebLinksAddon } = await loadWebLinksAddon();
+      if (token !== mountToken || !host.value) {
+        t.dispose();
+        return;
+      }
+      t.loadAddon(new WebLinksAddon());
+    }
     t.open(host.value);
 
     term = t;

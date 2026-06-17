@@ -1,4 +1,10 @@
 :root {
+  /* ============================================================
+     COLOR TOKENS — per-theme. Overridden at runtime by themes.ts
+     (applyTheme sets these on <html>). The values below are the
+     default kaplan-dark fallbacks used before a theme is applied.
+     ============================================================ */
+
   /* warm near-black surfaces (tiger-den) */
   --bg: #131110;
   --bg-elev: #1b1815;
@@ -16,6 +22,9 @@
   --accent-strong: #fb923c;
   --accent-soft: rgba(245, 158, 66, 0.14);
 
+  /* overlay */
+  --overlay-backdrop: rgba(0, 0, 0, 0.55);
+
   /* status */
   --green: #6cc56c;
   --amber: #e0b03a;
@@ -23,13 +32,76 @@
   --slate: #7c8390;
   --blue: #5aa9e6;
 
-  --radius: 10px;
-  --radius-sm: 6px;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  /* ============================================================
+     DIMENSION TOKENS — theme-independent. Shared by every theme;
+     themes.ts never overrides these. This is the single source of
+     truth for spacing, type, elevation, radii and motion.
+     ============================================================ */
 
+  /* Spacing scale — token number ≈ value / 4px (Tailwind-style). */
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Type scale. */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  /* Line heights. */
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+
+  /* Font weights. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Radii — --radius / --radius-sm kept for backward compatibility. */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Elevation — --shadow kept as the legacy alias of --shadow-lg. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.16), 0 1px 1px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --shadow: var(--shadow-lg);
+
+  /* Motion — durations + easings. */
+  --dur-instant: 80ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Typography families. */
   --font-ui: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Cascadia Code', 'JetBrains Mono', ui-monospace, 'Consolas', monospace;
 
+  /* Layout. */
   --bar-h: 56px;
   --sidebar-w: 320px;
 }
@@ -47,7 +119,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--text-base);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -58,6 +130,10 @@ button {
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 button:focus-visible,
 input:focus-visible,
@@ -68,7 +144,7 @@ select:focus-visible {
 input,
 select {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border-strong);
@@ -86,7 +162,7 @@ input::placeholder {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 2px solid transparent;
   background-clip: content-box;
 }

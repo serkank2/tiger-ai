@@ -8,6 +8,8 @@ export const SHELL_LIMITS: Record<string, number> = {
   pwsh: 16380,
 };
 
+export const INITIAL_COMMAND_MAX_LENGTH = 8192;
+
 export function limitFor(kind?: string): number {
   return SHELL_LIMITS[kind ?? 'system-default'] ?? Infinity;
 }

@@ -105,6 +105,7 @@ async function shutdown(signal: string): Promise<void> {
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
   manager.beginShutdown();
   await autostartDone.catch(() => {});
+  await orchestrator.killAgents();
   await manager.killAll();
   wss.close();
   server.close(() => process.exit(0));

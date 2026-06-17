@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { AppSettings, ShellKind } from '~/types';
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseField from '~/components/ui/BaseField.vue';
+import { errText } from '~/lib/apiError';
+import { absoluteLocalPathError, customShellPathError, usesWindowsPathSyntax } from '~/lib/formValidation';
 
 const emit = defineEmits<{ close: [] }>();
 const settings = useSettingsStore();
@@ -31,10 +36,52 @@ const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
 const error = ref('');
 const showPicker = ref(false);
+
+type FieldKey = 'defaultCwd' | 'shellPath';
+const serverErrors = reactive<Partial<Record<FieldKey, string>>>({});
+function clearServerError(field: FieldKey) {
+  delete serverErrors[field];
+  error.value = '';
+}
+function clearServerErrors() {
+  for (const key of Object.keys(serverErrors) as FieldKey[]) delete serverErrors[key];
+}
+function applyServerError(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes('defaultcwd') || lower.includes('working directory')) serverErrors.defaultCwd = message;
+  else if (lower.includes('defaultshell') || lower.includes('shell')) serverErrors.shellPath = message;
+  else error.value = message;
+}
+
+const cwdWindowsContext = computed(() => usesWindowsPathSyntax(settings.settings?.defaultCwd, form.defaultCwd));
+const defaultCwdShapeError = computed(() =>
+  form.defaultCwd.trim() ? absoluteLocalPathError(form.defaultCwd, 'Default working directory', cwdWindowsContext.value) : null,
+);
+const defaultCwdError = computed(
+  () =>
+    serverErrors.defaultCwd ??
+    defaultCwdShapeError.value ??
+    (cwdState.value === 'bad' ? 'Default working directory does not exist or is not a folder.' : null),
+);
+const shellWindowsContext = computed(() =>
+  usesWindowsPathSyntax(settings.settings?.defaultCwd, form.defaultCwd, form.shellPath),
+);
+const shellPathError = computed(() =>
+  serverErrors.shellPath ?? customShellPathError(form.shellKind, form.shellPath, 'Default shell path', shellWindowsContext.value),
+);
+const hasFieldError = computed(() => Boolean(defaultCwdError.value || shellPathError.value));
+const canSave = computed(() => !saving.value && !hasFieldError.value && cwdState.value !== 'checking');
+
 function onPickFolder(p: string) {
   form.defaultCwd = p;
+  clearServerError('defaultCwd');
   showPicker.value = false;
   void checkCwd();
+}
+
+function onCwdInput() {
+  clearServerError('defaultCwd');
+  cwdState.value = 'idle';
 }
 
 async function checkCwd() {
@@ -54,10 +101,10 @@ async function checkCwd() {
 
 async function save() {
   error.value = '';
-  if (form.shellKind === 'custom' && !form.shellPath.trim()) {
-    error.value = 'A custom default shell needs a path.';
-    return;
-  }
+  clearServerErrors();
+  if (form.defaultCwd.trim() && !defaultCwdShapeError.value) await checkCwd();
+  if (hasFieldError.value || cwdState.value === 'checking') return;
+
   saving.value = true;
   const defaultShell =
     form.shellKind === 'custom'
@@ -77,8 +124,7 @@ async function save() {
     notices.push('Settings saved');
     emit('close');
   } catch (e) {
-    const err = e as { data?: { error?: { message?: string } }; message?: string };
-    error.value = err?.data?.error?.message ?? err?.message ?? 'Save failed.';
+    applyServerError(errText(e));
   } finally {
     saving.value = false;
   }
@@ -86,10 +132,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="backdrop">
-    <div class="modal" role="dialog" aria-modal="true">
-      <h2>Settings</h2>
-
+  <BaseModal title="Settings" size="md" @close="emit('close')">
       <div class="field">
         <span>Theme <i>(applies instantly)</i></span>
         <div class="themes">
@@ -112,27 +155,54 @@ async function save() {
         </div>
       </div>
 
-      <label class="field">
-        <span>Default working directory <i>(for new terminals)</i></span>
+      <BaseField
+        v-slot="{ id, describedby, invalid }"
+        id="settings-default-cwd"
+        label="Default working directory"
+        hint="for new terminals"
+        :error="defaultCwdError || undefined"
+      >
         <span class="cwd-row">
-          <input v-model="form.defaultCwd" spellcheck="false" placeholder="C:\path" @blur="checkCwd" />
-          <button type="button" class="browse" title="Browse folders" @click="showPicker = true">📁</button>
+          <input
+            :id="id"
+            v-model="form.defaultCwd"
+            spellcheck="false"
+            placeholder="C:\path"
+            :aria-invalid="invalid || undefined"
+            :aria-describedby="describedby"
+            @input="onCwdInput"
+            @blur="checkCwd"
+          />
+          <button type="button" class="browse" title="Browse folders" aria-label="Browse folders" @click="showPicker = true">📁</button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
         </span>
-      </label>
+      </BaseField>
 
       <label class="field">
         <span>Default shell</span>
-        <select v-model="form.shellKind">
+        <select v-model="form.shellKind" @change="clearServerError('shellPath')">
           <option v-for="o in SHELLS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
       </label>
-      <label v-if="form.shellKind === 'custom'" class="field">
-        <span>Default shell path</span>
-        <input v-model="form.shellPath" spellcheck="false" placeholder="C:\path\to\shell.exe" />
-      </label>
+      <BaseField
+        v-if="form.shellKind === 'custom'"
+        v-slot="{ id, describedby, invalid }"
+        id="settings-shell-path"
+        label="Default shell path"
+        :error="shellPathError || undefined"
+      >
+        <input
+          :id="id"
+          v-model="form.shellPath"
+          spellcheck="false"
+          placeholder="C:\path\to\shell.exe"
+          :aria-invalid="invalid || undefined"
+          :aria-describedby="describedby"
+          @input="clearServerError('shellPath')"
+        />
+      </BaseField>
 
       <div class="group">
         <span class="group-title">Command routing</span>
@@ -148,38 +218,16 @@ async function save() {
 
       <p v-if="error" class="err">{{ error }}</p>
 
-      <div class="foot">
-        <button class="ghost" @click="emit('close')">Cancel</button>
-        <button class="primary" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
-      </div>
-    </div>
-  </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="emit('close')">Cancel</BaseButton>
+        <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">Save</BaseButton>
+      </template>
+  </BaseModal>
 
   <FolderPicker v-if="showPicker" :initial="form.defaultCwd" @select="onPickFolder" @close="showPicker = false" />
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: grid;
-  place-items: center;
-  z-index: 50;
-  backdrop-filter: blur(2px);
-}
-.modal {
-  width: min(500px, 92vw);
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
-}
-h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
-}
 .field {
   display: block;
   margin-bottom: 13px;
@@ -280,27 +328,5 @@ h2 {
 .err {
   color: var(--red);
   font-size: 13px;
-}
-.foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 18px;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 8px 16px;
-  color: var(--text-dim);
-}
-.primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 8px 18px;
-}
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

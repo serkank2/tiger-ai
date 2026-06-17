@@ -37,6 +37,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const commandGroupId = ref<string | null>(null);
   const layoutMode = ref<'focus' | 'grid'>('focus');
   const loaded = ref(false);
+  const loading = ref(false);
   const loadError = ref<string | null>(null);
 
   const byId = computed<Record<string, TerminalDto>>(() => Object.fromEntries(items.value.map((t) => [t.id, t])));
@@ -55,6 +56,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   }
 
   async function fetchAll() {
+    loading.value = true;
     try {
       const list = await api.listTerminals();
       items.value = list;
@@ -69,6 +71,8 @@ export const useTerminalsStore = defineStore('terminals', () => {
       const err = e as { data?: { error?: { message?: string } }; message?: string };
       loadError.value = err?.data?.error?.message ?? err?.message ?? 'Cannot reach backend';
       throw e;
+    } finally {
+      loading.value = false;
     }
   }
 
@@ -233,6 +237,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
     commandGroupId,
     layoutMode,
     loaded,
+    loading,
     loadError,
     byId,
     active,

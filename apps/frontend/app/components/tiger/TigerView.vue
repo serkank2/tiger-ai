@@ -9,6 +9,8 @@ import TaskBoard from '~/components/tiger/TaskBoard.vue';
 import RunLogView from '~/components/tiger/RunLogView.vue';
 import ProjectLauncher from '~/components/tiger/ProjectLauncher.vue';
 import RunAllModal from '~/components/tiger/RunAllModal.vue';
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 const emit = defineEmits<{ back: [] }>();
 const tiger = useTigerStore();
@@ -20,9 +22,11 @@ const showRunAll = ref(false);
 const workspacePath = ref('');
 const projectPrompt = ref('');
 const initializing = ref(false);
+const PROJECT_PROMPT_MAX_CHARS = 200_000;
+const promptTooLong = computed(() => projectPrompt.value.length > PROJECT_PROMPT_MAX_CHARS);
 
 async function initialize() {
-  if (!workspacePath.value || !projectPrompt.value.trim()) return;
+  if (!workspacePath.value || !projectPrompt.value.trim() || promptTooLong.value) return;
   initializing.value = true;
   try {
     await tiger.initWorkspace(workspacePath.value, projectPrompt.value);
@@ -123,15 +127,27 @@ const prevIncomplete = computed(() => {
   return null;
 });
 
-async function runStage(auto = false) {
+// Out-of-order run confirmation, surfaced as a non-blocking in-app dialog instead of a native prompt.
+const pendingRun = ref<{ auto: boolean } | null>(null);
+
+function runStage(auto = false) {
   if (tiger.busy) return;
   if (prevIncomplete.value) {
-    const ok = window.confirm(
-      `Stage "${prevIncomplete.value}" is not completed yet. Run "${stageMeta.value.title}" anyway?`,
-    );
-    if (!ok) return;
+    pendingRun.value = { auto };
+    return;
   }
+  void doRunStage(auto);
+}
+async function doRunStage(auto: boolean) {
   await tiger.runStage(selectedStage.value, { ...runCfg }, auto);
+}
+function confirmOutOfOrder() {
+  const pending = pendingRun.value;
+  pendingRun.value = null;
+  if (pending) void doRunStage(pending.auto);
+}
+function cancelOutOfOrder() {
+  pendingRun.value = null;
 }
 
 onMounted(() => {
@@ -154,8 +170,23 @@ onMounted(() => {
       <button class="back" @click="emit('back')">← Terminals</button>
     </header>
 
+    <section v-if="!tiger.loaded" class="loading-shell">
+      <EmptyState
+        v-if="tiger.loadError"
+        title="Tiger is unavailable"
+        :description="tiger.loadError"
+        tone="error"
+      >
+        <button class="back" @click="tiger.load()">Retry</button>
+      </EmptyState>
+      <div v-else class="loading-card">
+        <Spinner label="Loading Tiger workspace" />
+        <Skeleton :lines="4" />
+      </div>
+    </section>
+
     <!-- Launcher: pick an existing project or start a new one -->
-    <ProjectLauncher v-if="!tiger.initialized && mode === 'launcher'" @new="startNew" />
+    <ProjectLauncher v-else-if="!tiger.initialized && mode === 'launcher'" @new="startNew" />
 
     <!-- New-project setup -->
     <section v-else-if="!tiger.initialized" class="setup">
@@ -171,18 +202,31 @@ onMounted(() => {
         <span>Workspace folder</span>
         <div class="wsrow">
           <input v-model="workspacePath" placeholder="Choose or type an absolute folder path…" spellcheck="false" />
-          <button class="ghost" @click="showPicker = true">Browse…</button>
+          <BaseButton variant="secondary" @click="showPicker = true">Browse…</BaseButton>
         </div>
         <small>A <code>.tiger/</code> directory will be created inside this folder.</small>
       </div>
       <div class="field">
         <span>Project prompt</span>
-        <textarea v-model="projectPrompt" rows="10" placeholder="Describe the project you want the AI team to build…" />
-        <small>Stored verbatim in <code>.tiger/project-prompt.md</code> and used as context in every stage.</small>
+        <textarea
+          v-model="projectPrompt"
+          rows="10"
+          :maxlength="PROJECT_PROMPT_MAX_CHARS"
+          placeholder="Describe the project you want the AI team to build…"
+        />
+        <small>
+          Stored verbatim in <code>.tiger/project-prompt.md</code> and used as context in every stage.
+          {{ projectPrompt.length.toLocaleString() }}/{{ PROJECT_PROMPT_MAX_CHARS.toLocaleString() }}
+        </small>
       </div>
-      <button class="primary" :disabled="!workspacePath || !projectPrompt.trim() || initializing" @click="initialize">
+      <BaseButton
+        variant="primary"
+        :loading="initializing"
+        :disabled="!workspacePath || !projectPrompt.trim() || promptTooLong"
+        @click="initialize"
+      >
         {{ initializing ? 'Creating…' : 'Create project' }}
-      </button>
+      </BaseButton>
     </section>
 
     <!-- Workflow -->
@@ -220,7 +264,7 @@ onMounted(() => {
         </div>
 
         <p v-if="stageMeta.optional" class="opt-note">
-          ℹ Optional stage — for a clear prompt you can skip it and start from Writing Plan (or set 0 agents).
+          ℹ Optional stage — for a clear prompt you can skip it and start from Writing Plan.
         </p>
         <p v-if="prevIncomplete" class="warn">⚠ Earlier stage “{{ prevIncomplete }}” is not completed yet.</p>
         <p v-if="stageState?.message" class="msg">{{ stageState.message }}</p>
@@ -264,7 +308,7 @@ onMounted(() => {
 
       <details v-if="selectedStage === 'executing-plan' || selectedStage === 'task-review' || (tiger.state?.tasks?.total ?? 0) > 0" class="panel" open>
         <summary>Tasks</summary>
-        <TaskBoard :tasks="tiger.state?.tasks ?? null" />
+        <TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" />
       </details>
 
       <details class="panel">
@@ -280,6 +324,16 @@ onMounted(() => {
       @close="showPicker = false"
     />
     <RunAllModal v-if="showRunAll" @close="showRunAll = false" />
+
+    <BaseModal v-if="pendingRun" title="Run out of order?" size="sm" @close="cancelOutOfOrder">
+      <p class="confirm-text">
+        Stage “{{ prevIncomplete }}” is not completed yet. Run “{{ stageMeta.title }}” anyway?
+      </p>
+      <template #footer>
+        <BaseButton variant="ghost" @click="cancelOutOfOrder">Cancel</BaseButton>
+        <BaseButton variant="primary" @click="confirmOutOfOrder">Run anyway</BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -351,6 +405,22 @@ onMounted(() => {
   border-color: var(--accent);
   color: var(--accent);
 }
+.loading-shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.loading-card {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+}
 
 .setup {
   max-width: 760px;
@@ -409,27 +479,6 @@ code {
   font-family: var(--font-mono);
   color: var(--accent);
 }
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 8px 14px;
-  color: var(--text-dim);
-}
-.ghost:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 10px 20px;
-}
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .work {
   flex: 1;
   min-height: 0;
@@ -624,6 +673,11 @@ code {
   font-weight: 700;
   font-size: 13px;
   padding: 6px 0;
+  color: var(--text);
+}
+.confirm-text {
+  margin: 0;
+  line-height: 1.5;
   color: var(--text);
 }
 </style>

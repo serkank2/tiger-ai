@@ -10,6 +10,9 @@ export const useTigerStore = defineStore('tiger', () => {
   const config = ref<TigerConfig | null>(null);
   const projects = ref<TigerProjectInfo[]>([]);
   const loaded = ref(false);
+  const loading = ref(false);
+  const loadError = ref<string | null>(null);
+  const projectsLoading = ref(false);
 
   const initialized = computed(() => state.value?.initialized ?? false);
   const busy = computed(() => state.value?.busy ?? false);
@@ -21,21 +24,29 @@ export const useTigerStore = defineStore('tiger', () => {
   }
 
   async function load() {
+    loading.value = true;
     try {
       const [s, c] = await Promise.all([api.getTigerState(), api.getTigerConfig()]);
       state.value = s;
       config.value = c;
       loaded.value = true;
+      loadError.value = null;
     } catch (e) {
-      notices.push(`Tiger: ${errText(e)}`, 'error');
+      loadError.value = errText(e);
+      notices.push(`Tiger: ${loadError.value}`, 'error');
+    } finally {
+      loading.value = false;
     }
   }
 
   async function loadProjects() {
+    projectsLoading.value = true;
     try {
       projects.value = await api.listTigerProjects();
     } catch (e) {
       notices.push(`Projects: ${errText(e)}`, 'error');
+    } finally {
+      projectsLoading.value = false;
     }
   }
 
@@ -146,6 +157,9 @@ export const useTigerStore = defineStore('tiger', () => {
     config,
     projects,
     loaded,
+    loading,
+    loadError,
+    projectsLoading,
     initialized,
     busy,
     workspace,

@@ -24,7 +24,7 @@ onMounted(() => {
     <div class="lhead">
       <h2>Projects</h2>
       <span class="spacer" />
-      <button class="ghost" title="Refresh" @click="tiger.loadProjects()">⟳</button>
+      <button class="ghost" title="Refresh" aria-label="Refresh projects" @click="tiger.loadProjects()">⟳</button>
     </div>
     <p class="lead">Continue a previous project, or create a new one.</p>
 
@@ -35,10 +35,15 @@ onMounted(() => {
         <span class="newhint">Pick a folder &amp; write a prompt</span>
       </button>
 
+      <div v-if="tiger.projectsLoading && !tiger.projects.length" class="card skeleton-card">
+        <Spinner small label="Loading projects" />
+        <Skeleton :lines="4" />
+      </div>
+
       <div v-for="p in tiger.projects" :key="p.path" class="card" :class="{ missing: !p.exists }">
         <div class="ctop">
           <span class="cname" :title="p.path">📁 {{ p.name }}</span>
-          <button class="forget" title="Forget (does not delete files)" @click="tiger.forgetProject(p.path)">✕</button>
+          <button class="forget" title="Forget (does not delete files)" :aria-label="`Forget project ${p.name} (does not delete files)`" @click="tiger.forgetProject(p.path)">✕</button>
         </div>
         <p class="cprompt">{{ p.promptPreview || (p.exists ? '(no prompt yet)' : 'Folder is missing') }}</p>
         <div class="cprog">
@@ -123,6 +128,9 @@ onMounted(() => {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
+}
+.skeleton-card {
+  justify-content: center;
 }
 .plus {
   font-size: 28px;

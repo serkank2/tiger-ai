@@ -12,14 +12,20 @@ const tiles = computed(() => terminals.items);
       <span class="hint">Tiling all {{ tiles.length }} terminal(s) · click a tile to focus it, ⛶ to expand to single view</span>
     </div>
 
-    <div v-if="tiles.length" class="grid">
+    <div v-if="terminals.loading && !terminals.loaded" class="grid loading-grid">
+      <div v-for="i in 4" :key="i" class="loading-tile">
+        <Spinner v-if="i === 1" small label="Loading terminals" />
+        <Skeleton :lines="5" />
+      </div>
+    </div>
+
+    <div v-else-if="tiles.length" class="grid">
       <TerminalTile v-for="t in tiles" :key="t.id" :terminal="t" />
     </div>
 
-    <div v-else class="empty">
-      <p>No terminals yet.</p>
+    <EmptyState v-else title="No terminals yet." class="empty">
       <button class="new" @click="emit('create')">+ Create one</button>
-    </div>
+    </EmptyState>
   </section>
 </template>
 
@@ -50,6 +56,18 @@ const tiles = computed(() => terminals.items);
   grid-auto-rows: minmax(200px, 1fr);
   padding: 8px;
   overflow: auto;
+}
+.loading-grid {
+  align-items: stretch;
+}
+.loading-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
 }
 .empty {
   flex: 1;

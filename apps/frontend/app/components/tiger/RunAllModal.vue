@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import type { TigerRunTemplate, TigerStageId, TigerStageRunConfig } from '~/types';
 import { TIGER_STAGES } from '~/lib/tigerStages';
+import { errText } from '~/lib/apiError';
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const tiger = useTigerStore();
 const api = useApi();
+const notices = useNoticesStore();
+
+const AGENT_COUNT_MIN = 1;
+const AGENT_COUNT_MAX = 8;
+const CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
+const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
 
 function freshCfg(): TigerStageRunConfig {
   const d = tiger.config?.defaults;
@@ -23,8 +32,31 @@ function freshCfg(): TigerStageRunConfig {
   };
 }
 
+function clampAgentCount(value: unknown): number {
+  return Math.min(AGENT_COUNT_MAX, Math.max(AGENT_COUNT_MIN, Number.isInteger(value) ? Number(value) : AGENT_COUNT_MIN));
+}
+
+function sanitizeCfg(input?: Partial<TigerStageRunConfig>): TigerStageRunConfig {
+  const cfg = { ...freshCfg(), ...(input ?? {}) };
+  const claudeModels = ['', ...(tiger.config?.cli.claude.models ?? [])];
+  const codexModels = ['', ...(tiger.config?.cli.codex.models ?? [])];
+  const claudePerms = Object.keys(tiger.config?.cli.claude.permissionModes ?? {});
+  const codexPerms = Object.keys(tiger.config?.cli.codex.permissionModes ?? {});
+
+  cfg.claudeAgents = clampAgentCount(cfg.claudeAgents);
+  cfg.codexAgents = clampAgentCount(cfg.codexAgents);
+  if (!claudeModels.includes(cfg.claudeModel)) cfg.claudeModel = '';
+  if (!codexModels.includes(cfg.codexModel)) cfg.codexModel = '';
+  if (!CLAUDE_EFFORTS.includes(cfg.claudeEffort)) cfg.claudeEffort = '';
+  if (!CODEX_EFFORTS.includes(cfg.codexEffort)) cfg.codexEffort = '';
+  if (!claudePerms.includes(cfg.claudePermission)) cfg.claudePermission = freshCfg().claudePermission;
+  if (!codexPerms.includes(cfg.codexPermission)) cfg.codexPermission = freshCfg().codexPermission;
+  if (cfg.mergeAgent !== 'claude' && cfg.mergeAgent !== 'codex') cfg.mergeAgent = 'claude';
+  return cfg;
+}
+
 const stageConfigs = reactive<Record<string, TigerStageRunConfig>>(
-  Object.fromEntries(TIGER_STAGES.map((s) => [s.id, freshCfg()])),
+  Object.fromEntries(TIGER_STAGES.map((s) => [s.id, sanitizeCfg()])),
 );
 
 function firstIncomplete(): TigerStageId {
@@ -46,42 +78,59 @@ const starting = ref(false);
 async function start() {
   if (starting.value) return;
   starting.value = true;
-  const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
-  for (const s of TIGER_STAGES) if (willRun(s.id)) configs[s.id] = { ...stageConfigs[s.id]! };
-  await tiger.runAll(configs, fromStage.value);
-  starting.value = false;
-  emit('close');
+  try {
+    const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
+    for (const s of TIGER_STAGES) {
+      stageConfigs[s.id] = sanitizeCfg(stageConfigs[s.id]);
+      if (willRun(s.id)) configs[s.id] = { ...stageConfigs[s.id]! };
+    }
+    await tiger.runAll(configs, fromStage.value);
+    emit('close');
+  } finally {
+    starting.value = false;
+  }
 }
 
 // --- templates ---
 const templates = ref<TigerRunTemplate[]>([]);
+const templatesLoading = ref(false);
+const savingTemplate = ref(false);
+const deletingTemplate = ref<string | null>(null);
 const appliedName = ref<string | null>(null);
 const showSave = ref(false);
 const newName = ref('');
 const newDesc = ref('');
 
 onMounted(async () => {
+  templatesLoading.value = true;
   try {
     templates.value = await api.listTigerTemplates();
-  } catch {
-    /* leave empty */
+  } catch (e) {
+    notices.push(`Load templates failed: ${errText(e)}`, 'error');
+  } finally {
+    templatesLoading.value = false;
   }
 });
 
 function applyTemplate(t: TigerRunTemplate) {
   for (const s of TIGER_STAGES) {
     const c = t.configs?.[s.id];
-    if (c) stageConfigs[s.id] = { ...freshCfg(), ...c };
+    if (c) stageConfigs[s.id] = sanitizeCfg(c);
   }
   if (t.fromStage) fromStage.value = t.fromStage;
   appliedName.value = t.name;
 }
 
 async function doSave() {
+  if (savingTemplate.value) return;
   const name = newName.value.trim();
   if (!name) return;
   const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
-  for (const s of TIGER_STAGES) configs[s.id] = { ...stageConfigs[s.id]! };
+  for (const s of TIGER_STAGES) {
+    stageConfigs[s.id] = sanitizeCfg(stageConfigs[s.id]);
+    configs[s.id] = { ...stageConfigs[s.id]! };
+  }
+  savingTemplate.value = true;
   try {
     templates.value = await api.saveTigerTemplate({
       name,
@@ -93,53 +142,68 @@ async function doSave() {
     showSave.value = false;
     newName.value = '';
     newDesc.value = '';
-  } catch {
-    /* ignore */
+  } catch (e) {
+    notices.push(`Save template failed: ${errText(e)}`, 'error');
+  } finally {
+    savingTemplate.value = false;
   }
 }
 
 async function removeTemplate(t: TigerRunTemplate) {
+  if (deletingTemplate.value) return;
+  deletingTemplate.value = t.name;
   try {
     templates.value = await api.deleteTigerTemplate(t.name);
     if (appliedName.value === t.name) appliedName.value = null;
-  } catch {
-    /* ignore */
+  } catch (e) {
+    notices.push(`Delete template failed: ${errText(e)}`, 'error');
+  } finally {
+    deletingTemplate.value = null;
   }
 }
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')">
-    <div class="modal" role="dialog" aria-modal="true">
-      <header class="mhead">
-        <b>Configure &amp; Run All</b>
-        <span class="spacer" />
-        <button class="ic" title="Close" @click="emit('close')">✕</button>
-      </header>
+  <BaseModal title="Configure &amp; Run All" size="lg" @close="emit('close')">
+      <template #header-actions>
+        <BaseButton icon-only variant="ghost" aria-label="Close" @click="emit('close')">✕</BaseButton>
+      </template>
       <p class="lead">Pick a template or tune each stage, then start — the system runs every stage automatically with these settings.</p>
 
       <div class="tpl-bar">
         <span class="tpl-label">Templates</span>
+        <Spinner v-if="templatesLoading && !templates.length" small label="Loading templates" />
         <button
           v-for="t in templates"
           :key="t.name"
           type="button"
           class="tpl"
           :class="{ on: appliedName === t.name }"
+          :disabled="!!deletingTemplate"
           :title="t.description || t.name"
           @click="applyTemplate(t)"
         >
           {{ t.name }}
           <span v-if="t.builtin" class="tag">built-in</span>
-          <span v-else class="del" title="Delete template" @click.stop="removeTemplate(t)">✕</span>
+          <span
+            v-else
+            class="del"
+            :class="{ busy: deletingTemplate === t.name }"
+            :title="deletingTemplate === t.name ? 'Deleting template' : 'Delete template'"
+            @click.stop="removeTemplate(t)"
+          >
+            {{ deletingTemplate === t.name ? '...' : '✕' }}
+          </span>
         </button>
         <button type="button" class="tpl add" @click="showSave = !showSave">＋ Save current…</button>
       </div>
       <div v-if="showSave" class="save-row">
-        <input v-model="newName" placeholder="Template name" />
-        <input v-model="newDesc" placeholder="Description (optional)" />
-        <button type="button" class="mini" :disabled="!newName.trim()" @click="doSave">Save</button>
-        <button type="button" class="mini ghost" @click="showSave = false">Cancel</button>
+        <input v-model="newName" :disabled="savingTemplate" placeholder="Template name" />
+        <input v-model="newDesc" :disabled="savingTemplate" placeholder="Description (optional)" />
+        <button type="button" class="mini" :disabled="savingTemplate || !newName.trim()" @click="doSave">
+          {{ savingTemplate ? 'Saving...' : 'Save' }}
+        </button>
+        <button type="button" class="mini ghost" :disabled="savingTemplate" @click="showSave = false">Cancel</button>
       </div>
 
       <label class="from">
@@ -171,55 +235,14 @@ async function removeTemplate(t: TigerRunTemplate) {
         </details>
       </div>
 
-      <footer class="mfoot">
-        <button class="ghost" @click="emit('close')">Cancel</button>
-        <button class="start" :disabled="starting || tiger.busy" @click="start">
-          {{ starting ? 'Starting…' : '▶▶ Start auto run' }}
-        </button>
-      </footer>
-    </div>
-  </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="emit('close')">Cancel</BaseButton>
+        <BaseButton variant="primary" :loading="starting" :disabled="tiger.busy" @click="start">▶▶ Start auto run</BaseButton>
+      </template>
+  </BaseModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: grid;
-  place-items: center;
-  z-index: 60;
-  backdrop-filter: blur(2px);
-}
-.modal {
-  width: min(760px, 94vw);
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 18px 20px;
-}
-.mhead {
-  display: flex;
-  align-items: center;
-  font-size: 15px;
-}
-.spacer {
-  flex: 1;
-}
-.ic {
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-}
-.ic:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .lead {
   color: var(--text-dim);
   font-size: 13px;
@@ -252,6 +275,10 @@ async function removeTemplate(t: TigerRunTemplate) {
   border-color: var(--accent);
   color: var(--text);
 }
+.tpl:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
 .tpl.on {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -272,6 +299,9 @@ async function removeTemplate(t: TigerRunTemplate) {
 }
 .tpl .del:hover {
   color: var(--red);
+}
+.tpl .del.busy {
+  color: var(--amber);
 }
 .save-row {
   display: flex;
@@ -376,34 +406,5 @@ summary {
 .sbody {
   padding: 4px 12px 12px;
   border-top: 1px solid var(--border);
-}
-.mfoot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 9px 16px;
-  color: var(--text-dim);
-}
-.ghost:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.start {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 9px 18px;
-}
-.start:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.start:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

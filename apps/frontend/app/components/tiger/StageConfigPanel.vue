@@ -10,6 +10,8 @@ const props = defineProps<{
 
 const isMerge = computed(() => props.stage === 'merge-tasks');
 
+const AGENT_COUNT_MIN = 1;
+const AGENT_COUNT_MAX = 8;
 const CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
 
@@ -29,6 +31,59 @@ const codexModels = computed(() => ['', ...(props.config.cli.codex.models ?? ['g
 
 const claudePerms = computed(() => Object.keys(props.config.cli.claude.permissionModes));
 const codexPerms = computed(() => Object.keys(props.config.cli.codex.permissionModes));
+
+function clampAgentCount(value: unknown): number {
+  return Math.min(AGENT_COUNT_MAX, Math.max(AGENT_COUNT_MIN, Number.isInteger(value) ? Number(value) : AGENT_COUNT_MIN));
+}
+
+function setAgentCount(field: 'claudeAgents' | 'codexAgents', value: unknown) {
+  props.cfg[field] = clampAgentCount(value);
+}
+
+watch(
+  () => props.cfg.claudeAgents,
+  (value) => {
+    const next = clampAgentCount(value);
+    if (value !== next) props.cfg.claudeAgents = next;
+  },
+  { immediate: true },
+);
+watch(
+  () => props.cfg.codexAgents,
+  (value) => {
+    const next = clampAgentCount(value);
+    if (value !== next) props.cfg.codexAgents = next;
+  },
+  { immediate: true },
+);
+watch(
+  () => [props.cfg.claudeModel, claudeModels.value.join('\0')],
+  ([model]) => {
+    if (!claudeModels.value.includes(model)) props.cfg.claudeModel = '';
+  },
+  { immediate: true },
+);
+watch(
+  () => [props.cfg.codexModel, codexModels.value.join('\0')],
+  ([model]) => {
+    if (!codexModels.value.includes(model)) props.cfg.codexModel = '';
+  },
+  { immediate: true },
+);
+watch(
+  () => props.cfg.claudeEffort,
+  (effort) => {
+    if (!CLAUDE_EFFORTS.includes(effort)) props.cfg.claudeEffort = '';
+  },
+  { immediate: true },
+);
+watch(
+  () => props.cfg.codexEffort,
+  (effort) => {
+    if (!CODEX_EFFORTS.includes(effort)) props.cfg.codexEffort = '';
+  },
+  { immediate: true },
+);
 
 function isDangerous(type: TigerAgentType, perm: string): boolean {
   const args = props.config.cli[type].permissionModes[perm] ?? [];
@@ -120,14 +175,14 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
             <input
               class="slider"
               type="range"
-              min="0"
-              max="8"
+              :min="AGENT_COUNT_MIN"
+              :max="AGENT_COUNT_MAX"
               step="1"
               :value="cfg.claudeAgents"
               :disabled="disabled"
-              @input="cfg.claudeAgents = Number(($event.target as HTMLInputElement).value)"
+              @input="setAgentCount('claudeAgents', Number(($event.target as HTMLInputElement).value))"
             />
-            <div class="scale"><span>0</span><span>8</span></div>
+            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
           </div>
           <label class="field">
             <span>Model</span>
@@ -157,14 +212,14 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
             <input
               class="slider"
               type="range"
-              min="0"
-              max="8"
+              :min="AGENT_COUNT_MIN"
+              :max="AGENT_COUNT_MAX"
               step="1"
               :value="cfg.codexAgents"
               :disabled="disabled"
-              @input="cfg.codexAgents = Number(($event.target as HTMLInputElement).value)"
+              @input="setAgentCount('codexAgents', Number(($event.target as HTMLInputElement).value))"
             />
-            <div class="scale"><span>0</span><span>8</span></div>
+            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
           </div>
           <label class="field">
             <span>Model</span>

@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 import PromptLibrary from './prompt/PromptLibrary.vue';
 import PromptEditor, { type PromptDraft } from './prompt/PromptEditor.vue';
 import PromptTargetPicker from './prompt/PromptTargetPicker.vue';
 import { serializePrompt } from '~/lib/frontmatter';
 import { render, hasPerTerminalVars, detectVariables } from '~/lib/promptTemplate';
-import type { PromptMeta } from '~/types';
+import { limitFor, strictestLimit } from '~/lib/shellLimits';
+import type { PromptMeta, TerminalDto } from '~/types';
 import type { BroadcastOutcome } from '~/composables/useSocket';
 
 const emit = defineEmits<{ close: [] }>();
@@ -45,6 +48,10 @@ const content = computed(() => serializePrompt(metaFromDraft(), draft.body));
 const dirty = computed(() => content.value !== loadedSnapshot.value);
 
 const selectedTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(Boolean));
+function isSendableTerminal(t: TerminalDto | undefined): t is TerminalDto {
+  return Boolean(t && !t.protected);
+}
+const selectedSendTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(isSendableTerminal));
 const targetShellKinds = computed(() => selectedTerminals.value.map((t) => t.shell?.kind));
 const detectedVars = computed(() => detectVariables(draft.body));
 const unresolved = computed(() => detectedVars.value.filter((v) => !values[v]?.trim()));
@@ -165,6 +172,37 @@ const previewText = computed(() => {
   });
 });
 const perTerminal = computed(() => hasPerTerminalVars(draft.body));
+function summarizeAffectedTargets(names: string[]): string {
+  const visible = names.slice(0, 3).join(', ');
+  const extra = names.length > 3 ? ` and ${names.length - 3} more` : '';
+  return `${visible}${extra}`;
+}
+const promptLengthWarning = computed(() => {
+  const targets = selectedSendTerminals.value;
+  if (!targets.length) return null;
+
+  const date = today();
+  if (perTerminal.value) {
+    const affected = targets
+      .map((t) => {
+        const limit = limitFor(t.shell?.kind);
+        const len = render(draft.body, { values, terminal: { name: t.name, cwd: t.cwd }, date }).length;
+        return Number.isFinite(limit) && len > limit ? { name: t.name, len, limit } : null;
+      })
+      .filter((item): item is { name: string; len: number; limit: number } => Boolean(item));
+
+    if (!affected.length) return null;
+    const worst = affected.reduce((max, item) => (item.len > max.len ? item : max));
+    return `${affected.length} target(s) may exceed shell limits: ${summarizeAffectedTargets(affected.map((item) => item.name))}. Longest prompt is ${worst.len} characters; ${worst.name}'s limit is ${worst.limit}.`;
+  }
+
+  const limit = strictestLimit(targets.map((t) => t.shell?.kind));
+  const len = render(draft.body, { values, date }).length;
+  if (Number.isFinite(limit) && len > limit) {
+    return `${len} characters - one or more target shells may truncate this prompt near the ${limit} character limit.`;
+  }
+  return null;
+});
 
 // Shells/REPLs that honor bracketed-paste mode (2004). cmd.exe does NOT, so wrapping there
 // would inject a literal "[200~" — only wrap when every target shell supports it.
@@ -268,23 +306,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="backdrop" @keydown.esc="tryClose">
-    <div class="modal" role="dialog" aria-modal="true">
-      <header class="head">
-        <h2>Prompt Composer</h2>
-        <div class="head-actions">
-          <button class="ghost" @click="newDraft">+ New</button>
-          <button class="primary" :disabled="!dirty" @click="save">{{ currentPath ? 'Save' : 'Save as…' }}</button>
-          <button class="x" aria-label="Close" @click="tryClose">✕</button>
-        </div>
-      </header>
+  <BaseModal title="Prompt Composer" size="xl" @close="tryClose">
+    <template #header-actions>
+      <BaseButton variant="ghost" @click="newDraft">+ New</BaseButton>
+      <BaseButton variant="primary" :disabled="!dirty" @click="save">{{ currentPath ? 'Save' : 'Save as…' }}</BaseButton>
+      <BaseButton icon-only variant="ghost" aria-label="Close" @click="tryClose">✕</BaseButton>
+    </template>
 
+    <div class="composer">
       <div class="cols">
         <section class="col lib-col">
           <PromptLibrary
             :items="prompts.items"
             :current-path="currentPath"
             :dirty="dirty"
+            :loading="prompts.loading && !prompts.loaded"
+            :error="prompts.loadError"
             @open="openPrompt"
             @create="newDraft"
             @remove="onRemove"
@@ -300,7 +337,7 @@ onMounted(() => {
         </section>
       </div>
 
-      <footer class="foot">
+      <footer class="cfoot">
         <span class="summary">
           <template v-if="selectedTerminals.length">
             Sending to <b>{{ selectedTerminals.length }}</b>:
@@ -309,7 +346,8 @@ onMounted(() => {
           <template v-else>No targets selected</template>
           <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? 'Run ⏎' : 'Paste' }}</span>
         </span>
-        <button class="primary send" :disabled="!canSend" @click="requestSend">Preview &amp; Send</button>
+        <span v-if="promptLengthWarning" class="length-warn">{{ promptLengthWarning }}</span>
+        <BaseButton variant="primary" :disabled="!canSend" @click="requestSend">Preview &amp; Send</BaseButton>
       </footer>
 
       <!-- Preview / confirm overlay -->
@@ -322,10 +360,11 @@ onMounted(() => {
           </div>
           <p v-if="perTerminal" class="note">Built-ins vary per terminal — showing "{{ selectedTerminals[0]?.name }}".</p>
           <p v-if="unresolved.length" class="warn">⚠ Unfilled variables: {{ unresolved.join(', ') }} (will send as-is)</p>
+          <p v-if="promptLengthWarning" class="warn">{{ promptLengthWarning }}</p>
           <pre class="ptext">{{ previewText }}</pre>
           <div class="pfoot">
-            <button class="ghost" @click="showPreview = false">Back</button>
-            <button class="primary" :disabled="!canSend" @click="doSend">{{ sending ? 'Sending…' : `Send to ${selectedTerminals.length}` }}</button>
+            <BaseButton variant="ghost" @click="showPreview = false">Back</BaseButton>
+            <BaseButton variant="primary" :loading="sending" :disabled="!canSend" @click="doSend">{{ sending ? 'Sending…' : `Send to ${selectedTerminals.length}` }}</BaseButton>
           </div>
         </div>
       </div>
@@ -335,35 +374,25 @@ onMounted(() => {
         <div class="preview small">
           <p>Discard unsaved changes?</p>
           <div class="pfoot">
-            <button class="ghost" @click="confirmDiscardNo">Keep editing</button>
-            <button class="primary danger" @click="confirmDiscardYes">Discard</button>
+            <BaseButton variant="ghost" @click="confirmDiscardNo">Keep editing</BaseButton>
+            <BaseButton variant="danger" @click="confirmDiscardYes">Discard</BaseButton>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </BaseModal>
 </template>
 
 <style scoped>
-.backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: grid; place-items: center; z-index: 50; backdrop-filter: blur(2px); }
-.modal { width: min(1180px, 96vw); height: min(780px, 92vh); display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
-.head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-.head h2 { margin: 0; font-size: 17px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.cols { flex: 1; display: grid; grid-template-columns: 280px 1fr 300px; gap: 14px; padding: 14px 18px; min-height: 0; }
+.composer { position: relative; display: flex; flex-direction: column; height: min(660px, 74vh); }
+.cols { flex: 1; display: grid; grid-template-columns: 280px 1fr 300px; gap: 14px; min-height: 0; }
 .col { min-height: 0; display: flex; flex-direction: column; }
-.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--border); }
+.cfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
 .summary { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 10px; }
+.length-warn { flex: 1; min-width: 180px; color: var(--amber); font-size: 12px; line-height: 1.35; }
 .mode-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .mode-tag.paste { background: var(--bg-elev-2); color: var(--text-dim); }
 .mode-tag.run { background: var(--accent-soft); color: var(--accent); }
-.primary { border: 1px solid var(--accent); background: var(--accent); color: #1b1206; font-weight: 700; padding: 7px 16px; }
-.primary:disabled { opacity: 0.45; cursor: not-allowed; }
-.primary.danger { border-color: var(--red); background: var(--red); }
-.send { padding: 9px 20px; }
-.ghost { border: 1px solid var(--border-strong); padding: 7px 14px; color: var(--text-dim); }
-.x { width: 30px; height: 30px; color: var(--text-dim); font-size: 14px; }
-.x:hover { color: var(--text); }
 .preview-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; border-radius: var(--radius); }
 .preview { width: min(680px, 90%); max-height: 86%; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
 .preview.small { width: auto; }

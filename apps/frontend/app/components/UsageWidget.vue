@@ -26,6 +26,9 @@ async function refresh() {
 }
 
 const probes = computed(() => [usage.value?.claude, usage.value?.codex].filter(Boolean) as TigerUsageProbe[]);
+const noProvidersDetected = computed(
+  () => !!usage.value && probes.value.length > 0 && probes.value.every((p) => !p.ok && !p.entries.length),
+);
 
 /** Portion consumed, regardless of whether the CLI reports "used" or "left". */
 function usedPct(e: TigerUsageEntry): number {
@@ -83,7 +86,14 @@ onBeforeUnmount(() => {
           <span class="spin" /> Querying Claude &amp; Codex…
         </div>
 
-        <div v-for="probe in probes" :key="probe.type" class="prov">
+        <EmptyState
+          v-if="noProvidersDetected"
+          title="No providers detected"
+          description="Claude and Codex are unavailable or did not report usage data."
+        />
+
+        <template v-if="!noProvidersDetected">
+          <div v-for="probe in probes" :key="probe.type" class="prov">
           <div class="prov-head">
             <span class="dot" :class="probe.type" />
             <b>{{ probe.type }}</b>
@@ -110,7 +120,8 @@ onBeforeUnmount(() => {
             {{ showRaw[probe.type] ? 'Hide' : 'Show' }} raw panel
           </button>
           <pre v-if="showRaw[probe.type] && probe.raw" class="raw">{{ probe.raw }}</pre>
-        </div>
+          </div>
+        </template>
       </div>
     </transition>
 

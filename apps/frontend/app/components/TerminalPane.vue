@@ -41,7 +41,11 @@ useTerminalView(host, activeId, { focusOnMount: true });
       </div>
     </div>
 
-    <div v-if="!active" class="noactive">
+    <div v-if="terminals.loading && !terminals.loaded" class="noactive">
+      <Spinner label="Loading terminals" />
+    </div>
+
+    <div v-else-if="!active" class="noactive">
       <p>Select a terminal on the left,<br />or create one to begin.</p>
     </div>
   </section>

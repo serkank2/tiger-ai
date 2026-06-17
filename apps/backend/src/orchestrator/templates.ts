@@ -55,10 +55,10 @@ export const BUILTIN_TEMPLATES: RunTemplate[] = [
   },
   {
     name: 'Fast',
-    description: 'Single Claude, cheaper model, low effort, brainstorming skipped.',
+    description: 'Lightest allowed agent mix, cheaper Claude model, low effort, brainstorming skipped.',
     builtin: true,
     fromStage: 'writing-plan',
-    configs: allStages({ claudeAgents: 1, codexAgents: 0, claudeModel: 'sonnet', claudeEffort: 'low' }),
+    configs: allStages({ claudeAgents: 1, codexAgents: 1, claudeModel: 'sonnet', claudeEffort: 'low' }),
   },
   {
     name: 'Thorough',

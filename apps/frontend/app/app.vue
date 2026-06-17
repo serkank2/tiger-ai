@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
-import PromptComposerModal from '~/components/PromptComposerModal.vue';
-import TigerView from '~/components/tiger/TigerView.vue';
 import UsageWidget from '~/components/UsageWidget.vue';
 
 const terminals = useTerminalsStore();
@@ -9,6 +7,8 @@ const groups = useGroupsStore();
 const settings = useSettingsStore();
 const theme = useThemeStore();
 const socket = useSocket();
+const config = useRuntimeConfig();
+const apiBase = computed(() => String(config.public.apiBase));
 
 const view = ref<'terminals' | 'tiger'>('terminals');
 const showEditor = ref(false);
@@ -103,26 +103,28 @@ watch(shouldPollPreviews, syncPreviewPoll);
         <TerminalGrid v-else @create="openCreate" />
       </div>
     </template>
-    <TigerView v-else @back="view = 'terminals'" />
+    <LazyTigerView v-else @back="view = 'terminals'" />
 
-    <div v-if="terminals.loadError && !terminals.loaded" class="backend-down">
-      <div class="card">
-        <p class="big">⚠ Can't reach the backend</p>
-        <p class="dim">http://127.0.0.1:4517 — {{ terminals.loadError }}</p>
+    <BaseModal :open="!!(terminals.loadError && !terminals.loaded)">
+      <EmptyState
+        title="Can't reach the backend"
+        :description="`${apiBase} - ${terminals.loadError}`"
+        tone="error"
+      >
         <p class="dim">Is <code>npm run dev</code> running?</p>
         <button class="retry" @click="loadAll">Retry</button>
-      </div>
-    </div>
+      </EmptyState>
+    </BaseModal>
 
-    <TerminalEditModal
+    <LazyTerminalEditModal
       v-if="showEditor"
       :terminal="editing"
       @close="showEditor = false"
       @saved="() => terminals.fetchAll().catch(() => {})"
     />
-    <GroupsModal v-if="showGroups" @close="showGroups = false" />
-    <PromptComposerModal v-if="showComposer" @close="showComposer = false" />
-    <SettingsModal v-if="showSettings && settings.settings" @close="showSettings = false" />
+    <LazyGroupsModal v-if="showGroups" @close="showGroups = false" />
+    <LazyPromptComposerModal v-if="showComposer" @close="showComposer = false" />
+    <LazySettingsModal v-if="showSettings && settings.settings" @close="showSettings = false" />
     <UsageWidget />
     <NoticeToast />
   </div>
@@ -139,27 +141,6 @@ watch(shouldPollPreviews, syncPreviewPoll);
   flex: 1;
   min-height: 0;
   position: relative;
-}
-.backend-down {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 40;
-}
-.card {
-  text-align: center;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 28px 32px;
-  box-shadow: var(--shadow);
-}
-.big {
-  font-size: 16px;
-  font-weight: 700;
-  margin: 0 0 8px;
 }
 .dim {
   color: var(--text-dim);

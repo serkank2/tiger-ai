@@ -3,6 +3,13 @@ import type { AppCtx } from '../context.js';
 import { resolveExistingDir } from '../util/paths.js';
 import { STAGE_ORDER, type AgentType, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import { probeAllUsage } from '../orchestrator/usage.js';
+import {
+  TIGER_AGENT_COUNT_MAX,
+  TIGER_AGENT_COUNT_MIN,
+  TIGER_CLAUDE_EFFORTS,
+  TIGER_CODEX_EFFORTS,
+  TIGER_PROJECT_PROMPT_MAX_CHARS,
+} from '../orchestrator/config.js';
 
 function badRequest(message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -10,9 +17,6 @@ function badRequest(message: string): Error & { status: number } {
   return e;
 }
 
-function toInt(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : fallback;
-}
 function toStr(v: unknown, fallback: string): string {
   return typeof v === 'string' ? v : fallback;
 }
@@ -22,6 +26,29 @@ function toAgentType(v: unknown): AgentType | undefined {
 
 function isStage(v: string): v is StageId {
   return (STAGE_ORDER as string[]).includes(v);
+}
+
+function toAgentCount(v: unknown, fallback: number, field: string): number {
+  const value = v === undefined ? fallback : v;
+  if (typeof value !== 'number' || !Number.isInteger(value) || !Number.isFinite(value)) {
+    throw badRequest(`${field} must be an integer`);
+  }
+  if (value < TIGER_AGENT_COUNT_MIN || value > TIGER_AGENT_COUNT_MAX) {
+    throw badRequest(`${field} must be between ${TIGER_AGENT_COUNT_MIN} and ${TIGER_AGENT_COUNT_MAX}`);
+  }
+  return value;
+}
+
+function toModel(v: unknown, fallback: string, models: string[] | undefined, field: string): string {
+  const value = toStr(v, fallback).trim();
+  if (value && !models?.includes(value)) throw badRequest(`${field} is not in the configured model list`);
+  return value;
+}
+
+function toEffort(v: unknown, fallback: string, allowed: readonly string[], field: string): string {
+  const value = toStr(v, fallback).trim();
+  if (!allowed.includes(value)) throw badRequest(`${field} is not a known effort`);
+  return value;
 }
 
 /** Record a project workspace in app state (dedup) and mark it as the most recent. */
@@ -37,12 +64,12 @@ function buildStageConfig(ctx: AppCtx, body: Record<string, unknown>): StageRunC
   const d = ctx.orchestrator.getConfig().defaults;
   const cli = ctx.orchestrator.getConfig().cli;
   const cfg: StageRunConfig = {
-    claudeAgents: toInt(body.claudeAgents, d.claudeAgents),
-    codexAgents: toInt(body.codexAgents, d.codexAgents),
-    claudeModel: toStr(body.claudeModel, d.claudeModel),
-    codexModel: toStr(body.codexModel, d.codexModel),
-    claudeEffort: toStr(body.claudeEffort, d.claudeEffort),
-    codexEffort: toStr(body.codexEffort, d.codexEffort),
+    claudeAgents: toAgentCount(body.claudeAgents, d.claudeAgents, 'claudeAgents'),
+    codexAgents: toAgentCount(body.codexAgents, d.codexAgents, 'codexAgents'),
+    claudeModel: toModel(body.claudeModel, d.claudeModel, cli.claude.models, 'claudeModel'),
+    codexModel: toModel(body.codexModel, d.codexModel, cli.codex.models, 'codexModel'),
+    claudeEffort: toEffort(body.claudeEffort, d.claudeEffort, TIGER_CLAUDE_EFFORTS, 'claudeEffort'),
+    codexEffort: toEffort(body.codexEffort, d.codexEffort, TIGER_CODEX_EFFORTS, 'codexEffort'),
     claudePermission: toStr(body.claudePermission, d.claudePermission),
     codexPermission: toStr(body.codexPermission, d.codexPermission),
     parallel: typeof body.parallel === 'boolean' ? body.parallel : d.parallel,
@@ -88,6 +115,12 @@ export function createTigerRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: 'projectPrompt is required' } });
       return;
     }
+    if (prompt.length > TIGER_PROJECT_PROMPT_MAX_CHARS) {
+      res.status(400).json({
+        error: { message: `projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer` },
+      });
+      return;
+    }
     await orch.initialize(dirCheck.path, prompt);
     rememberProject(ctx, dirCheck.path);
     await ctx.save();
@@ -113,8 +146,8 @@ export function createTigerRouter(ctx: AppCtx): Router {
   });
 
   // Close the active project and return to the launcher.
-  router.post('/projects/close', (_req, res) => {
-    orch.closeProject();
+  router.post('/projects/close', async (_req, res) => {
+    await orch.closeProject();
     res.json(orch.getState());
   });
 

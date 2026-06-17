@@ -5,6 +5,7 @@ let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let backoff = 500;
 let msgSeq = 0;
+let disconnectNoticeShown = false;
 const outputListeners = new Map<string, Set<(data: string) => void>>();
 const snapshotListeners = new Map<string, Set<(data: string) => void>>();
 // ref-counted: a terminal may be bound by >1 view briefly (focus<->grid swap)
@@ -63,6 +64,7 @@ export function useSocket() {
       if (socket !== ws) return; // superseded
       conn.setStatus('connected');
       backoff = 500;
+      disconnectNoticeShown = false;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -75,11 +77,19 @@ export function useSocket() {
       if (socket !== ws) return; // a newer socket already replaced us
       socket = null;
       conn.setStatus('disconnected');
+      if (!disconnectNoticeShown) {
+        notices.push('Live connection lost. Reconnecting...', 'error', 6000);
+        disconnectNoticeShown = true;
+      }
       settleAllWaiters({ kind: 'disconnected' }); // don't leave broadcast() callers hanging across a disconnect
       scheduleReconnect();
     };
     ws.onerror = () => {
-      /* a close event follows */
+      if (socket !== ws) return;
+      if (!disconnectNoticeShown) {
+        notices.push('Live connection error. Reconnecting...', 'error', 6000);
+        disconnectNoticeShown = true;
+      }
     };
     ws.onmessage = (ev) => {
       if (socket !== ws) return;
@@ -256,6 +266,7 @@ if (import.meta.hot) {
     if (reconnectTimer) clearTimeout(reconnectTimer);
     socket = null;
     reconnectTimer = null;
+    disconnectNoticeShown = false;
     outputListeners.clear();
     snapshotListeners.clear();
     attached.clear();

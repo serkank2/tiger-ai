@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { TigerTaskSummary } from '~/types';
 
-defineProps<{ tasks: TigerTaskSummary | null }>();
+defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean }>();
 
 const EXEC = [
   { k: 'not_started', label: 'not started' },
@@ -19,7 +19,12 @@ const REVIEW = [
 </script>
 
 <template>
-  <div v-if="tasks && tasks.total" class="board">
+  <div v-if="loading" class="loading-board">
+    <Spinner small label="Loading tasks" />
+    <Skeleton :lines="5" />
+  </div>
+
+  <div v-else-if="tasks && tasks.total" class="board">
     <div class="summary">
       <div class="group">
         <span class="gl">Execution</span>
@@ -45,10 +50,15 @@ const REVIEW = [
       </div>
     </div>
   </div>
-  <p v-else class="empty">No tasks yet. Run the Merge Tasks stage to produce the authoritative task list.</p>
+  <EmptyState v-else title="No tasks yet." description="Run the Merge Tasks stage to produce the authoritative task list." />
 </template>
 
 <style scoped>
+.loading-board {
+  display: grid;
+  gap: 12px;
+  padding: 8px 0;
+}
 .board {
   display: flex;
   flex-direction: column;
@@ -142,10 +152,5 @@ const REVIEW = [
 .rv-needs_fix {
   color: var(--red);
   border-color: var(--red);
-}
-.empty {
-  color: var(--text-faint);
-  font-size: 13px;
-  margin: 0;
 }
 </style>

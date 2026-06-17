@@ -12,9 +12,11 @@ export const usePromptsStore = defineStore('prompts', () => {
 
   const items = ref<PromptSummary[]>([]);
   const loaded = ref(false);
+  const loading = ref(false);
   const loadError = ref<string | null>(null);
 
   async function fetchAll(): Promise<void> {
+    loading.value = true;
     try {
       items.value = (await api.listPrompts()).items;
       loaded.value = true;
@@ -22,6 +24,8 @@ export const usePromptsStore = defineStore('prompts', () => {
     } catch (e) {
       loadError.value = errText(e);
       throw e;
+    } finally {
+      loading.value = false;
     }
   }
 
@@ -79,5 +83,5 @@ export const usePromptsStore = defineStore('prompts', () => {
     }
   }
 
-  return { items, loaded, loadError, fetchAll, open, create, update, remove, rename };
+  return { items, loaded, loading, loadError, fetchAll, open, create, update, remove, rename };
 });

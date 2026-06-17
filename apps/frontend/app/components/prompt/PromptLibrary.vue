@@ -2,7 +2,13 @@
 import type { PromptSummary } from '~/types';
 import IconTrash from '~/components/IconTrash.vue';
 
-const props = defineProps<{ items: PromptSummary[]; currentPath: string | null; dirty: boolean }>();
+const props = defineProps<{
+  items: PromptSummary[];
+  currentPath: string | null;
+  dirty: boolean;
+  loading?: boolean;
+  error?: string | null;
+}>();
 const emit = defineEmits<{
   open: [path: string];
   create: [];
@@ -59,51 +65,62 @@ onBeforeUnmount(() => {
     </div>
     <div class="actions">
       <button class="btn" @click="emit('create')">+ New</button>
-      <button class="btn ghost" title="Reload from disk" @click="emit('refresh')">⟳</button>
+      <button class="btn ghost" :disabled="loading" title="Reload from disk" @click="emit('refresh')">⟳</button>
     </div>
     <div class="list">
-      <div
-        v-for="p in filtered"
-        :key="p.path"
-        class="item"
-        :class="{ active: p.path === currentPath }"
-        tabindex="0"
-        @click="emit('open', p.path)"
-        @keydown.enter="emit('open', p.path)"
-        @keydown.space.prevent="emit('open', p.path)"
-      >
-        <template v-if="renamingPath === p.path">
-          <input
-            v-model="renameValue"
-            class="renameinput"
-            spellcheck="false"
-            @click.stop
-            @keydown.enter.stop="commitRename"
-            @keydown.esc.stop.prevent="renamingPath = null"
-            @blur="commitRename"
-          />
-        </template>
-        <template v-else>
-          <div class="meta">
-            <div class="title">
-              {{ p.title || p.path }}
-              <span v-if="p.path === currentPath && dirty" class="dirty" title="Unsaved changes">●</span>
-            </div>
-            <div class="path">{{ p.path }}</div>
-            <div v-if="p.tags?.length" class="tags">
-              <span v-for="(t, i) in p.tags" :key="`${t}-${i}`" class="tag">{{ t }}</span>
-            </div>
-          </div>
-          <div class="row-actions" @click.stop>
-            <button class="ic" title="Rename" @click="startRename(p.path)">✎</button>
-            <button class="ic danger" :class="{ confirm: confirmingPath === p.path }" :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'" @click="onDelete(p.path)">
-              <template v-if="confirmingPath === p.path">✓?</template>
-              <IconTrash v-else />
-            </button>
-          </div>
-        </template>
+      <div v-if="loading && !items.length" class="loading-list">
+        <Spinner small label="Loading prompts" />
+        <Skeleton v-for="i in 4" :key="i" :lines="2" />
       </div>
-      <div v-if="!filtered.length" class="empty">{{ items.length ? 'No matches.' : 'No prompts yet. Create one →' }}</div>
+
+      <EmptyState v-else-if="error" title="Prompt library unavailable" :description="error" tone="error">
+        <button class="btn" @click="emit('refresh')">Retry</button>
+      </EmptyState>
+
+      <template v-else>
+        <div
+          v-for="p in filtered"
+          :key="p.path"
+          class="item"
+          :class="{ active: p.path === currentPath }"
+          tabindex="0"
+          @click="emit('open', p.path)"
+          @keydown.enter="emit('open', p.path)"
+          @keydown.space.prevent="emit('open', p.path)"
+        >
+          <template v-if="renamingPath === p.path">
+            <input
+              v-model="renameValue"
+              class="renameinput"
+              spellcheck="false"
+              @click.stop
+              @keydown.enter.stop="commitRename"
+              @keydown.esc.stop.prevent="renamingPath = null"
+              @blur="commitRename"
+            />
+          </template>
+          <template v-else>
+            <div class="meta">
+              <div class="title">
+                {{ p.title || p.path }}
+                <span v-if="p.path === currentPath && dirty" class="dirty" title="Unsaved changes">●</span>
+              </div>
+              <div class="path">{{ p.path }}</div>
+              <div v-if="p.tags?.length" class="tags">
+                <span v-for="(t, i) in p.tags" :key="`${t}-${i}`" class="tag">{{ t }}</span>
+              </div>
+            </div>
+            <div class="row-actions" @click.stop>
+              <button class="ic" title="Rename" @click="startRename(p.path)">✎</button>
+              <button class="ic danger" :class="{ confirm: confirmingPath === p.path }" :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'" @click="onDelete(p.path)">
+                <template v-if="confirmingPath === p.path">✓?</template>
+                <IconTrash v-else />
+              </button>
+            </div>
+          </template>
+        </div>
+        <div v-if="!filtered.length" class="empty">{{ items.length ? 'No matches.' : 'No prompts yet. Create one →' }}</div>
+      </template>
     </div>
   </div>
 </template>
@@ -115,8 +132,10 @@ onBeforeUnmount(() => {
 .actions { display: flex; gap: 6px; margin-bottom: 8px; }
 .btn { border: 1px solid var(--border-strong); padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--accent); flex: 1; }
 .btn.ghost { flex: none; color: var(--text-dim); width: 34px; }
-.btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+.btn:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.loading-list { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
 .item { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .item:hover { background: var(--bg-elev-2); }
 .item.active { background: var(--accent-soft); border-left: 2px solid var(--accent); }

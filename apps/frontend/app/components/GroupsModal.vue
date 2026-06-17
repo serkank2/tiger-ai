@@ -1,17 +1,55 @@
 <script setup lang="ts">
 import { errText } from '~/lib/apiError';
+import { hexColorError } from '~/lib/formValidation';
 import IconTrash from '~/components/IconTrash.vue';
+import BaseModal from '~/components/ui/BaseModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseField from '~/components/ui/BaseField.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const groups = useGroupsStore();
 const terminals = useTerminalsStore();
-const notices = useNoticesStore();
 
 const COLORS = ['#f59e42', '#6cc56c', '#5aa9e6', '#c08cd6', '#e5564b', '#e0b03a', '#5bc2b8', '#7c8390'];
+const GROUP_NAME_MAX_CHARS = 80;
 
 const newName = ref('');
 const newColor = ref(COLORS[0]!);
 const busy = ref(false);
+
+type CreateField = 'name' | 'color';
+const createServerErrors = reactive<Partial<Record<CreateField, string>>>({});
+const renameErrors = reactive<Record<string, string>>({});
+
+function clearCreateError(field: CreateField) {
+  delete createServerErrors[field];
+}
+function chooseColor(color: string) {
+  newColor.value = color;
+  clearCreateError('color');
+}
+function clearCreateErrors() {
+  for (const key of Object.keys(createServerErrors) as CreateField[]) delete createServerErrors[key];
+}
+function groupNameError(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Group name is required.';
+  if (trimmed.length > GROUP_NAME_MAX_CHARS) return `Group name must be ${GROUP_NAME_MAX_CHARS} characters or fewer.`;
+  return null;
+}
+function applyCreateServerError(e: unknown) {
+  const message = errText(e);
+  const lower = message.toLowerCase();
+  if (lower.includes('name')) createServerErrors.name = message;
+  else if (lower.includes('color')) createServerErrors.color = message;
+}
+function clearRenameError(id: string) {
+  delete renameErrors[id];
+}
+
+const newNameError = computed(() => createServerErrors.name ?? (newName.value.length ? groupNameError(newName.value) : null));
+const newColorError = computed(() => createServerErrors.color ?? hexColorError(newColor.value, 'Group color'));
+const hasCreateError = computed(() => Boolean(groupNameError(newName.value) || newColorError.value));
 
 // two-step delete confirm (consistent with the terminal list)
 const confirmingId = ref<string | null>(null);
@@ -31,14 +69,16 @@ onBeforeUnmount(() => {
 });
 
 async function create() {
+  clearCreateErrors();
   const name = newName.value.trim();
-  if (!name) return;
+  if (hasCreateError.value) return;
   busy.value = true;
   try {
-    await groups.create({ name, color: newColor.value });
+    await groups.create({ name, color: newColor.value.trim() });
     newName.value = '';
+    newColor.value = COLORS[0]!;
   } catch (e) {
-    notices.push(errText(e), 'error');
+    applyCreateServerError(e);
   } finally {
     busy.value = false;
   }
@@ -46,11 +86,17 @@ async function create() {
 
 async function rename(id: string, name: string) {
   const trimmed = name.trim();
-  if (!trimmed) return;
+  const validationError = groupNameError(name);
+  if (validationError) {
+    renameErrors[id] = validationError;
+    return;
+  }
   try {
     await groups.update(id, { name: trimmed });
+    clearRenameError(id);
   } catch (e) {
-    notices.push(errText(e), 'error');
+    const message = errText(e);
+    if (message.toLowerCase().includes('name')) renameErrors[id] = message;
   }
 }
 
@@ -63,88 +109,116 @@ async function remove(id: string) {
       terminals.commandGroupId = null;
       if (terminals.commandMode === 'group') terminals.commandMode = 'selected';
     }
-  } catch (e) {
-    notices.push(errText(e), 'error');
+  } catch {
+    /* notice shown by the groups/terminals stores */
   }
 }
 </script>
 
 <template>
-  <div class="backdrop">
-    <div class="modal" role="dialog" aria-modal="true">
-      <h2>Groups</h2>
-
+  <BaseModal title="Groups" size="md" @close="emit('close')">
       <form class="create" @submit.prevent="create">
-        <input v-model="newName" placeholder="New group name" />
-        <div class="swatches">
-          <button
-            v-for="c in COLORS"
-            :key="c"
-            type="button"
-            class="swatch"
-            :class="{ on: newColor === c }"
-            :style="{ background: c }"
-            @click="newColor = c"
+        <BaseField v-slot="{ id, describedby, invalid }" class="create-name" id="group-new-name" label="New group name" :error="newNameError || undefined">
+          <input
+            :id="id"
+            v-model="newName"
+            placeholder="New group name"
+            :aria-invalid="invalid || undefined"
+            :aria-describedby="describedby"
+            @input="clearCreateError('name')"
           />
-        </div>
-        <button type="submit" class="primary" :disabled="busy || !newName.trim()">Add</button>
+        </BaseField>
+        <BaseField v-slot="{ id, describedby, invalid }" class="create-color" id="group-new-color" label="Color" :error="newColorError || undefined">
+          <div class="color-row">
+            <div class="swatches">
+              <button
+                v-for="c in COLORS"
+                :key="c"
+                type="button"
+                class="swatch"
+                :class="{ on: newColor === c }"
+                :style="{ background: c }"
+                :title="c"
+                @click="chooseColor(c)"
+              />
+            </div>
+            <input
+              :id="id"
+              v-model="newColor"
+              class="color-value"
+              spellcheck="false"
+              :aria-invalid="invalid || undefined"
+              :aria-describedby="describedby"
+              @input="clearCreateError('color')"
+            />
+          </div>
+        </BaseField>
+        <BaseButton type="submit" class="add-btn" variant="primary" :loading="busy" :disabled="hasCreateError">Add</BaseButton>
       </form>
 
       <ul class="list">
         <li v-for="g in groups.groups" :key="g.id">
+          <div class="group-row">
           <span class="dot" :style="{ background: g.color || 'var(--text-faint)' }" />
-          <input class="gname" :value="g.name" @change="rename(g.id, ($event.target as HTMLInputElement).value)" />
+          <input
+            class="gname"
+            :value="g.name"
+            :aria-invalid="!!renameErrors[g.id] || undefined"
+            :aria-describedby="renameErrors[g.id] ? `group-${g.id}-name-error` : undefined"
+            @input="clearRenameError(g.id)"
+            @change="rename(g.id, ($event.target as HTMLInputElement).value)"
+          />
           <span class="n">{{ terminals.items.filter((t) => t.groupId === g.id).length }}</span>
           <button
             class="del"
             :class="{ confirm: confirmingId === g.id }"
             :title="confirmingId === g.id ? 'Click again to delete' : 'Delete group'"
+            :aria-label="confirmingId === g.id ? `Confirm delete group ${g.name}` : `Delete group ${g.name}`"
             @click="onDelete(g.id)"
           >
             <template v-if="confirmingId === g.id">✓?</template>
             <IconTrash v-else />
           </button>
+          </div>
+          <p v-if="renameErrors[g.id]" :id="`group-${g.id}-name-error`" class="row-error" role="alert">
+            {{ renameErrors[g.id] }}
+          </p>
         </li>
         <li v-if="!groups.groups.length" class="empty">No groups yet.</li>
       </ul>
 
-      <div class="foot">
-        <button class="ghost" @click="emit('close')">Done</button>
-      </div>
-    </div>
-  </div>
+      <template #footer>
+        <BaseButton variant="ghost" @click="emit('close')">Done</BaseButton>
+      </template>
+  </BaseModal>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: grid;
-  place-items: center;
-  z-index: 50;
-  backdrop-filter: blur(2px);
-}
-.modal {
-  width: min(480px, 92vw);
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 22px 24px;
-}
-h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
-}
 .create {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, auto) auto;
+  align-items: start;
   gap: 8px;
   margin-bottom: 14px;
 }
-.create input {
-  flex: 1;
+.create-name {
+  min-width: 0;
+  margin-bottom: 0;
+}
+.create-color {
+  min-width: 190px;
+  margin-bottom: 0;
+}
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.color-row .color-value {
+  width: 86px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 .swatches {
   display: flex;
@@ -159,16 +233,8 @@ h2 {
 .swatch.on {
   border-color: var(--text);
 }
-.primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 7px 14px;
-}
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.add-btn {
+  align-self: end;
 }
 .list {
   list-style: none;
@@ -180,8 +246,14 @@ h2 {
 }
 .list li {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.group-row {
+  display: flex;
   align-items: center;
   gap: 9px;
+  width: 100%;
 }
 .dot {
   width: 10px;
@@ -191,6 +263,16 @@ h2 {
 }
 .gname {
   flex: 1;
+}
+.gname[aria-invalid='true'] {
+  border-color: var(--red);
+}
+.row-error {
+  align-self: stretch;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 0 0 0 19px;
 }
 .n {
   font-size: 11px;
@@ -209,16 +291,6 @@ h2 {
 }
 .empty {
   color: var(--text-faint);
-  justify-content: center;
-}
-.foot {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 8px 16px;
-  color: var(--text-dim);
+  align-items: center;
 }
 </style>
