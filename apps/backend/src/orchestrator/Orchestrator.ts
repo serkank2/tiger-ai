@@ -289,6 +289,7 @@ export class Orchestrator extends EventEmitter {
     if (!next) {
       this.autoAdvance = false; // reached the final stage
       this.emitState();
+      void this.cleanupAfterAutoRun();
       return;
     }
     void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
@@ -299,6 +300,31 @@ export class Orchestrator extends EventEmitter {
       this.stages[next].message = `Auto-advance failed to start: ${err instanceof Error ? err.message : String(err)}`;
       this.emitState();
     }
+  }
+
+  /**
+   * After an auto-run (Run All) completes the final stage, delete the whole .tiger workspace and
+   * return to the launcher (so re-running the same project always starts clean). Gated by
+   * config.execution.deleteTigerOnComplete. Resets state inline (closeProject has a busy guard).
+   */
+  private async cleanupAfterAutoRun(): Promise<void> {
+    if (!this.paths || !this.config.execution.deleteTigerOnComplete) return;
+    const root = this.paths.root;
+    await logNote(this.paths.runLogFile, 'Auto-run complete — deleting the .tiger workspace.').catch(() => {});
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    // Leave the workspace so the UI returns to the launcher.
+    this.workspace = null;
+    this.paths = null;
+    this.initialized = false;
+    this.projectPrompt = '';
+    this.currentStage = null;
+    this.correctionCycles = 0;
+    this.autoAdvance = false;
+    this.busy = false;
+    this.stages = blankStages();
+    this.tasksSummary = null;
+    this.findingsSummary = null;
+    this.emitState();
   }
 
   /** Build a stage run configuration from the saved defaults (used during auto-advance). */

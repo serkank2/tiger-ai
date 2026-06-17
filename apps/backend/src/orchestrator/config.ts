@@ -69,6 +69,7 @@ export function defaultTigerConfig(): TigerConfig {
       maxConcurrent: 4,
       lockTtlMs: 30 * 60 * 1000,
       maxCorrectionCycles: 2,
+      deleteTigerOnComplete: true,
     },
   };
 }
