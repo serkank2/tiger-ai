@@ -109,6 +109,10 @@ export class TigerPaths {
   get tasksDir(): string {
     return path.join(this.root, 'merged-tasks', 'tasks');
   }
+  /** Directory of per-finding files produced by task review (status encoded in the filename). */
+  get findingsDir(): string {
+    return path.join(this.root, 'task-review', 'findings');
+  }
   get locksDir(): string {
     return path.join(this.root, 'executing-plan', 'locks');
   }

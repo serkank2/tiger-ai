@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { StageId } from './types.js';
 import { STAGE_META, TigerPaths } from './paths.js';
-import { SYSTEM_PROMPT_BY_STAGE } from './prompt-files.js';
+import { FIX_FINDING_PROMPT, SYSTEM_PROMPT_BY_STAGE } from './prompt-files.js';
 import { readTaskBlock } from './tasks.js';
 
 const PER_FILE_CAP = 24_000;
@@ -21,6 +21,11 @@ export interface ComposeOptions {
   resultsPath?: string;
   /** task-review only: the task ids assigned to this review agent. */
   reviewTaskIds?: string[];
+  /** task-review only: which phase this run is (find = report findings, fix = resolve one finding). */
+  reviewPhase?: 'find' | 'fix';
+  /** task-review fix phase: the assigned finding. */
+  findingId?: string;
+  findingBlock?: string;
   /** Optional warning injected when an upstream stage was continued despite failures. */
   warning?: string;
   /** requesting-code-review only: a short summary of the pipeline that produced the code. */
@@ -96,7 +101,8 @@ export async function composePrompt(opts: ComposeOptions): Promise<string> {
   const { paths, stage } = opts;
   const meta = STAGE_META[stage];
   const projectPrompt = await fs.readFile(paths.projectPromptFile, 'utf8').catch(() => '');
-  const systemPrompt = SYSTEM_PROMPT_BY_STAGE[stage];
+  const systemPrompt =
+    stage === 'task-review' && opts.reviewPhase === 'fix' ? FIX_FINDING_PROMPT : SYSTEM_PROMPT_BY_STAGE[stage];
 
   const sections: string[] = [preamble(opts)];
 
@@ -152,22 +158,25 @@ export async function composePrompt(opts: ComposeOptions): Promise<string> {
     );
   }
 
-  if (stage === 'task-review') {
+  if (stage === 'task-review' && opts.reviewPhase === 'fix') {
+    sections.push(
+      `---\n\n# YOUR ASSIGNED FINDING\n\nFix EXACTLY this one finding in the project under the .tiger/ ` +
+        `root (${paths.root}). Do not touch other findings.\n\n${opts.findingBlock ?? '(your assigned finding)'}\n\n` +
+        `As the final line of your output write \`FIX_RESULT: fixed\` (or \`FIX_RESULT: wontfix: <reason>\`).`,
+    );
+  } else if (stage === 'task-review') {
     const ids = opts.reviewTaskIds ?? [];
     const blocks: string[] = [];
     for (const id of ids) blocks.push(await readTaskBlock(paths.tasksDir, id));
-    const resultsPath = opts.resultsPath ?? path.join(paths.runtimeDir(stage), `${opts.label}.results`);
     const assignedText = ids.length
       ? `You are assigned these completed tasks to review: ${ids.join(', ')}. Review ONLY these.\n\n` +
         `Their definitions (acceptance criteria included):\n\n${blocks.join('\n\n---\n\n')}\n\n`
       : `Review the completed tasks.\n\n`;
     sections.push(
-      `---\n\n# TASKS TO REVIEW\n\n${assignedText}The implemented project lives under the .tiger/ root ` +
-        `(${paths.root}); inspect the relevant files there to verify each task against its acceptance ` +
-        `criteria.\n\n# RESULT REPORTING\nIn addition to your review log, write a plain-text results ` +
-        `file at this absolute path:\n    ${resultsPath}\n` +
-        `For each task you reviewed, add exactly one line:\n    <TASK-ID> <approved|needs_fix|fixed>\n` +
-        `The orchestrator reads this file to update each task's Review Status — do not edit the task files yourself.`,
+      `---\n\n# TASKS TO REVIEW (FIND PHASE)\n\n${assignedText}The implemented project lives under the ` +
+        `.tiger/ root (${paths.root}); inspect the relevant files there and verify each task against its ` +
+        `acceptance criteria. Report every problem as a \`## FINDING\` block in your review log (do NOT ` +
+        `fix anything in this phase). If there are no problems, write exactly: No findings.`,
     );
   }
 

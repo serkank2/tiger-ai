@@ -180,6 +180,14 @@ export interface TigerTaskSummary {
   items: TigerTaskItem[];
 }
 
+export interface TigerFindingsSummary {
+  total: number;
+  open: number;
+  fixing: number;
+  fixed: number;
+  wontfix: number;
+}
+
 export interface TigerProjectInfo {
   path: string;
   tigerRoot: string;
@@ -202,6 +210,7 @@ export interface TigerState {
   busy: boolean;
   stages: Record<TigerStageId, TigerStageState>;
   tasks: TigerTaskSummary | null;
+  findings: TigerFindingsSummary | null;
   correctionCycles: number;
   maxCorrectionCycles: number;
   autoAdvance: boolean;

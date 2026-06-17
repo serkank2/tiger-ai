@@ -10,6 +10,7 @@ import type {
   AgentType,
   OrchestratorState,
   ProjectInfo,
+  ReviewStatus,
   StageId,
   StageRunConfig,
   StageState,
@@ -34,6 +35,17 @@ import {
   splitTasksToFiles,
   summarizeTasks,
 } from './tasks.js';
+import {
+  claimNextFinding,
+  finishFinding,
+  hasFindings,
+  listFindings,
+  parseFixResult,
+  readFindingBlock,
+  splitFindingsToFiles,
+  summarizeFindings,
+  type FindingsSummary,
+} from './findings.js';
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -95,6 +107,7 @@ export class Orchestrator extends EventEmitter {
       busy: this.busy,
       stages: this.stages,
       tasks: this.tasksSummary,
+      findings: this.findingsSummary,
       correctionCycles: this.correctionCycles,
       maxCorrectionCycles: this.config.execution.maxCorrectionCycles,
       autoAdvance: this.autoAdvance,
@@ -102,6 +115,7 @@ export class Orchestrator extends EventEmitter {
   }
 
   private tasksSummary: OrchestratorState['tasks'] = null;
+  private findingsSummary: FindingsSummary | null = null;
 
   private emitState(): void {
     this.emit('state', this.getState());
@@ -266,7 +280,7 @@ export class Orchestrator extends EventEmitter {
       await logNote(this.paths!.runLogFile, `Retrying ${failed.length} failed agent(s) in stage ${stageId}.`);
       await runPool(failed, this.concurrency(stageId, failed.length), async (run) => {
         if (signal.aborted) return;
-        await this.executeAgentRun(run, this.composeExtrasFor(run), signal);
+        await this.executeAgentRun(run, await this.composeExtrasFor(run), signal);
       });
       this.finalizeStage(stageId);
     })()
@@ -380,7 +394,7 @@ export class Orchestrator extends EventEmitter {
     }
     await runPool(runs, this.concurrency(stageId, runs.length, cfg.parallel), async (run) => {
       if (signal.aborted) return;
-      await this.executeAgentRun(run, this.composeExtrasFor(run), signal);
+      await this.executeAgentRun(run, await this.composeExtrasFor(run), signal);
     });
   }
 
@@ -460,60 +474,125 @@ export class Orchestrator extends EventEmitter {
     await this.refreshTasks();
   }
 
-  /** Stage 6A: partition done tasks across review agents; apply reported review statuses. */
+  /**
+   * Stage 6A — two phases:
+   *  FIND: review agents (partitioned over done tasks) report problems as findings.
+   *  FIX:  the orchestrator splits findings into a per-finding queue; fix agents claim findings by
+   *        atomic rename and resolve them one at a time (so two agents never fix the same finding).
+   * A clean review (no findings) skips the FIX phase entirely and approves all tasks.
+   */
   private async executeTaskReviewStage(cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
     const paths = this.paths!;
     const stage = this.stages['task-review'];
     await this.ensureTaskFiles();
     const done = (await listTaskRecords(paths.tasksDir)).filter((t) => t.executionStatus === 'done');
 
-    const runs: AgentRun[] = [];
-    for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) runs.push(this.makeRun('task-review', 'claude', i, cfg));
-    for (let i = 1; i <= clampCount(cfg.codexAgents); i++) runs.push(this.makeRun('task-review', 'codex', i, cfg));
-    stage.runs = runs;
-    runs.forEach((r) => this.registerRun(r));
+    // --- Phase 1: FIND (review + report findings, no fixing) ---
+    const findRuns: AgentRun[] = [];
+    for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) findRuns.push(this.makeRun('task-review', 'claude', i, cfg));
+    for (let i = 1; i <= clampCount(cfg.codexAgents); i++) findRuns.push(this.makeRun('task-review', 'codex', i, cfg));
+    stage.runs = findRuns;
+    findRuns.forEach((r) => this.registerRun(r));
     this.emitState();
-    if (runs.length === 0) {
+    if (findRuns.length === 0) {
       stage.message = 'No agents were configured for this stage.';
       return;
     }
 
-    // Partition the done-task ids across review agents to reduce concurrent edit conflicts.
     const partitions = new Map<string, string[]>();
-    runs.forEach((r) => partitions.set(r.id, []));
-    done.forEach((t, i) => partitions.get(runs[i % runs.length]!.id)!.push(t.id));
-
-    // Mark assigned tasks as reviewing up front.
+    findRuns.forEach((r) => partitions.set(r.id, []));
+    done.forEach((t, i) => partitions.get(findRuns[i % findRuns.length]!.id)!.push(t.id));
     for (const t of done) await reviewTaskFile(paths.tasksDir, t.id, 'reviewing');
     await this.refreshTasks();
 
-    await runPool(runs, this.concurrency('task-review', runs.length, cfg.parallel), async (run) => {
+    await runPool(findRuns, this.concurrency('task-review', findRuns.length, cfg.parallel), async (run) => {
       if (signal.aborted) return;
-      const ids = partitions.get(run.id) ?? [];
-      const resultsPath = paths.promptFileFor('task-review', run.id).replace(/\.prompt\.md$/, '.results');
-      await this.executeAgentRun(run, { reviewTaskIds: ids, resultsPath }, signal);
-      await this.applyReviewResults(resultsPath);
+      await this.executeAgentRun(run, { reviewTaskIds: partitions.get(run.id) ?? [], reviewPhase: 'find' }, signal);
     });
+
+    // Collect findings from the review logs into a per-finding work queue.
+    const logs = await Promise.all(
+      findRuns.map(async (r) => ({ label: r.label, content: await fs.readFile(r.outputPath, 'utf8').catch(() => '') })),
+    );
+    const found = await splitFindingsToFiles(logs, paths.findingsDir);
+    await logNote(paths.runLogFile, `Task review reported ${found.length} finding(s).`);
+    await this.refreshFindings();
+
+    // --- Phase 2: FIX (only if there are findings; clean review skips this entirely) ---
+    if (!signal.aborted && (await hasFindings(paths.findingsDir))) {
+      const types: AgentType[] = [];
+      for (let i = 0; i < clampCount(cfg.claudeAgents); i++) types.push('claude');
+      for (let i = 0; i < clampCount(cfg.codexAgents); i++) types.push('codex');
+      let counter = findRuns.length; // keep run labels/output files unique within this stage
+      const processFinding = async (type: AgentType): Promise<boolean> => {
+        const claimed = await claimNextFinding(paths.findingsDir);
+        if (!claimed) return false;
+        const index = ++counter;
+        const run = this.makeRun('task-review', type, index, cfg, claimed.id);
+        stage.runs.push(run);
+        this.registerRun(run);
+        void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`);
+        this.emitState();
+        await this.executeAgentRun(run, { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block }, signal);
+        const reported =
+          run.state === 'completed' ? parseFixResult(await fs.readFile(run.outputPath, 'utf8').catch(() => '')) : null;
+        await finishFinding(paths.findingsDir, claimed.id, reported?.status === 'fixed' ? 'fixed' : 'wontfix');
+        await this.refreshFindings();
+        return true;
+      };
+      if (cfg.parallel) {
+        const worker = async (type: AgentType): Promise<void> => {
+          while (!signal.aborted && (await processFinding(type))) {
+            /* drain the finding queue */
+          }
+        };
+        await Promise.all(types.map(worker));
+      } else {
+        let ti = 0;
+        while (!signal.aborted) {
+          const did = await processFinding(types[ti % types.length]!);
+          if (!did) break;
+          ti++;
+        }
+      }
+    }
+
+    // Roll findings up into each task's review status.
+    const finalFindings = await listFindings(paths.findingsDir);
+    for (const t of done) {
+      const own = finalFindings.filter((f) => f.relatedTask === t.id);
+      const rs: ReviewStatus =
+        own.length === 0 ? 'approved' : own.every((f) => f.status === 'fixed') ? 'fixed' : 'needs_fix';
+      await reviewTaskFile(paths.tasksDir, t.id, rs);
+    }
     await this.refreshTasks();
+    await this.refreshFindings();
   }
 
-  /** Read a review agent's results file and update each task's Review Status. */
-  private async applyReviewResults(resultsPath: string): Promise<void> {
-    const text = await fs.readFile(resultsPath, 'utf8').catch(() => '');
-    if (!text.trim()) return;
-    const re = /^\s*(TASK-[A-Za-z0-9_-]+)\s+(approved|needs_fix|fixed)\s*$/gim;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      await reviewTaskFile(this.paths!.tasksDir, m[1]!, m[2]!.toLowerCase() as 'approved' | 'needs_fix' | 'fixed');
+  private async refreshFindings(): Promise<void> {
+    if (!this.paths) {
+      this.findingsSummary = null;
+      return;
     }
+    this.findingsSummary = (await hasFindings(this.paths.findingsDir))
+      ? summarizeFindings(await listFindings(this.paths.findingsDir))
+      : null;
+    this.emitState();
   }
 
   // --- single agent run ---
 
-  private composeExtrasFor(run: AgentRun): Partial<ComposeOptions> {
+  private async composeExtrasFor(run: AgentRun): Promise<Partial<ComposeOptions>> {
     if (run.stage === 'task-review') {
-      const resultsPath = this.paths!.promptFileFor('task-review', run.id).replace(/\.prompt\.md$/, '.results');
-      return { resultsPath };
+      // A fix run carries the finding id in run.taskId; otherwise it's a find run.
+      if (run.taskId && run.taskId.startsWith('FINDING')) {
+        return {
+          reviewPhase: 'fix',
+          findingId: run.taskId,
+          findingBlock: await readFindingBlock(this.paths!.findingsDir, run.taskId),
+        };
+      }
+      return { reviewPhase: 'find' };
     }
     if (run.stage === 'requesting-code-review') {
       return { summary: this.pipelineSummary() };

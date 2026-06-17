@@ -233,6 +233,16 @@ onMounted(() => {
         </p>
         <p v-if="prevIncomplete" class="warn">⚠ Earlier stage “{{ prevIncomplete }}” is not completed yet.</p>
         <p v-if="stageState?.message" class="msg">{{ stageState.message }}</p>
+        <p v-if="selectedStage === 'task-review' && tiger.state?.findings" class="findings-line">
+          Findings: {{ tiger.state.findings.fixed }} fixed · {{ tiger.state.findings.wontfix }} won't fix ·
+          {{ tiger.state.findings.open + tiger.state.findings.fixing }} open · {{ tiger.state.findings.total }} total
+        </p>
+        <p
+          v-else-if="selectedStage === 'task-review' && stageState?.status === 'completed'"
+          class="findings-line ok"
+        >
+          ✓ Review found no problems — reviewed tasks approved.
+        </p>
 
         <p v-if="ranWithConfig" class="cfg-note">Showing the configuration this stage ran with.</p>
         <StageConfigPanel
@@ -586,6 +596,16 @@ code {
   margin: 0 0 8px;
   color: var(--text-faint);
   font-size: 11px;
+}
+.findings-line {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.findings-line.ok {
+  color: var(--green);
+  font-family: inherit;
 }
 .msg {
   margin: 0 0 10px;

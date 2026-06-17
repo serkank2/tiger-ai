@@ -236,6 +236,17 @@ export interface TaskSummary {
   items: TaskSummaryItem[];
 }
 
+/** Review finding lifecycle (status encoded in the finding's filename). */
+export type FindingStatus = 'open' | 'fixing' | 'fixed' | 'wontfix';
+
+export interface FindingsSummary {
+  total: number;
+  open: number;
+  fixing: number;
+  fixed: number;
+  wontfix: number;
+}
+
 // ---------------------------------------------------------------------------
 // The full serializable orchestrator state sent to the UI.
 // ---------------------------------------------------------------------------
@@ -270,6 +281,8 @@ export interface OrchestratorState {
   busy: boolean;
   stages: Record<StageId, StageState>;
   tasks: TaskSummary | null;
+  /** Review findings queue summary (null when review has not produced findings). */
+  findings: FindingsSummary | null;
   /** How many correction cycles (Stage 6B → 5/6A re-routes) have been used. */
   correctionCycles: number;
   /** Configured ceiling on correction cycles. */
