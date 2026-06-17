@@ -7,6 +7,7 @@ import type {
   TerminalInput,
   TerminalStatus,
   TigerConfig,
+  TigerProjectInfo,
   TigerStageId,
   TigerStageRunConfig,
   TigerState,
@@ -69,6 +70,12 @@ export function useApi() {
     // --- Tiger orchestrator ---
     getTigerState: () => req<TigerState>('/api/tiger/state'),
     getTigerConfig: () => req<TigerConfig>('/api/tiger/config'),
+    listTigerProjects: () => req<TigerProjectInfo[]>('/api/tiger/projects'),
+    openTigerProject: (path: string) =>
+      req<TigerState>('/api/tiger/projects/open', { method: 'POST', body: { path } }),
+    closeTigerProject: () => req<TigerState>('/api/tiger/projects/close', { method: 'POST' }),
+    forgetTigerProject: (path: string) =>
+      req<TigerProjectInfo[]>('/api/tiger/projects', { method: 'DELETE', body: { path } }),
     updateTigerConfig: (body: Partial<TigerConfig>) =>
       req<TigerConfig>('/api/tiger/config', { method: 'PUT', body }),
     initTigerWorkspace: (path: string, projectPrompt: string) =>

@@ -179,6 +179,19 @@ export interface TigerTaskSummary {
   items: TigerTaskItem[];
 }
 
+export interface TigerProjectInfo {
+  path: string;
+  tigerRoot: string;
+  name: string;
+  promptPreview: string;
+  initialized: boolean;
+  exists: boolean;
+  completedStages: number;
+  totalStages: number;
+  active: boolean;
+  updatedAt?: string;
+}
+
 export interface TigerState {
   workspace: string | null;
   tigerRoot: string | null;

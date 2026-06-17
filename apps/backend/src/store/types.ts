@@ -61,6 +61,8 @@ export interface AppSettings {
 export interface TigerPersisted {
   /** Last workspace directory selected for the Tiger orchestrator. */
   lastWorkspace?: string;
+  /** Known project workspace directories (the launcher lists these). */
+  projects?: string[];
 }
 
 export interface PersistedState {

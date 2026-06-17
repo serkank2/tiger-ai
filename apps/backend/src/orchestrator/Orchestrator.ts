@@ -9,6 +9,7 @@ import type {
   AgentRun,
   AgentType,
   OrchestratorState,
+  ProjectInfo,
   StageId,
   StageRunConfig,
   StageState,
@@ -693,18 +694,18 @@ export class Orchestrator extends EventEmitter {
   private async deriveStagesFromDisk(): Promise<void> {
     if (!this.paths) return;
     for (const stageId of STAGE_ORDER) {
-      const has = await this.stageHasOutput(stageId);
+      const has = await this.stageHasOutput(this.paths, stageId);
       this.stages[stageId] = { id: stageId, status: has ? 'completed' : 'not_started', runs: [] };
     }
   }
 
-  private async stageHasOutput(stageId: StageId): Promise<boolean> {
+  private async stageHasOutput(paths: TigerPaths, stageId: StageId): Promise<boolean> {
     const meta = STAGE_META[stageId];
     if (meta.singleAgent) {
-      const chk = await checkOutputFile(this.paths!.mergedTasksFile);
+      const chk = await checkOutputFile(paths.mergedTasksFile);
       return chk.ok;
     }
-    const dir = this.paths!.stageDir(stageId);
+    const dir = paths.stageDir(stageId);
     const entries = await fs.readdir(dir).catch(() => [] as string[]);
     for (const name of entries) {
       if (name.startsWith('.')) continue;
@@ -714,6 +715,59 @@ export class Orchestrator extends EventEmitter {
       }
     }
     return false;
+  }
+
+  /** Summaries of all known project workspaces (for the launcher). Never makes one active. */
+  async listProjects(paths: string[]): Promise<ProjectInfo[]> {
+    const seen = new Set<string>();
+    const out: ProjectInfo[] = [];
+    for (const p of paths) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      const tp = new TigerPaths(p);
+      const exists = await fs
+        .stat(tp.root)
+        .then((s) => s.isDirectory())
+        .catch(() => false);
+      const prompt = exists ? await fs.readFile(tp.projectPromptFile, 'utf8').catch(() => '') : '';
+      let completed = 0;
+      if (prompt.trim()) {
+        for (const s of STAGE_ORDER) if (await this.stageHasOutput(tp, s)) completed++;
+      }
+      const updatedAt = await fs
+        .stat(tp.runLogFile)
+        .then((s) => s.mtime.toISOString())
+        .catch(() => undefined);
+      out.push({
+        path: p,
+        tigerRoot: tp.root,
+        name: path.basename(p) || p,
+        promptPreview: prompt.slice(0, 220),
+        initialized: prompt.trim().length > 0,
+        exists,
+        completedStages: completed,
+        totalStages: STAGE_ORDER.length,
+        active: this.workspace === p,
+        updatedAt,
+      });
+    }
+    out.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+    return out;
+  }
+
+  /** Close the active project and return to the launcher (no-op if none open). */
+  closeProject(): void {
+    if (this.busy) throw httpError(409, 'a stage is currently running');
+    this.workspace = null;
+    this.paths = null;
+    this.initialized = false;
+    this.projectPrompt = '';
+    this.currentStage = null;
+    this.correctionCycles = 0;
+    this.autoAdvance = false;
+    this.stages = blankStages();
+    this.tasksSummary = null;
+    this.emitState();
   }
 
   /** Read an artifact file from within the tiger root (path-guarded), for the UI. */

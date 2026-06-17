@@ -28,11 +28,14 @@ const ctx: AppCtx = {
   save: () => saveState(state),
 };
 
-// Restore the last Tiger workspace (idempotent scaffold + derive stage status from disk).
+// Tiger opens to a project launcher (no auto-attach). Migrate a legacy lastWorkspace into the
+// projects list so existing projects still appear in the launcher.
 if (state.tiger?.lastWorkspace) {
-  orchestrator
-    .attachWorkspace(state.tiger.lastWorkspace)
-    .catch((err) => console.error('[tiger] failed to restore workspace:', err));
+  state.tiger.projects ??= [];
+  if (!state.tiger.projects.includes(state.tiger.lastWorkspace)) {
+    state.tiger.projects.push(state.tiger.lastWorkspace);
+    void saveState(state);
+  }
 }
 
 const app = express();

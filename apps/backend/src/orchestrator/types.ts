@@ -238,6 +238,24 @@ export interface TaskSummary {
 // The full serializable orchestrator state sent to the UI.
 // ---------------------------------------------------------------------------
 
+/** Summary of a known project workspace, shown in the launcher. */
+export interface ProjectInfo {
+  /** Workspace directory the user selected (tiger/ lives inside it). */
+  path: string;
+  tigerRoot: string;
+  /** Display name (workspace folder name). */
+  name: string;
+  /** First lines of the project prompt (preview). */
+  promptPreview: string;
+  initialized: boolean;
+  exists: boolean;
+  completedStages: number;
+  totalStages: number;
+  /** Whether this is the currently-open project. */
+  active: boolean;
+  updatedAt?: string;
+}
+
 export interface OrchestratorState {
   /** Directory the user selected; tiger/ is created inside it. */
   workspace: string | null;

@@ -1,4 +1,4 @@
-import type { TigerConfig, TigerStageId, TigerStageRunConfig, TigerState } from '~/types';
+import type { TigerConfig, TigerProjectInfo, TigerStageId, TigerStageRunConfig, TigerState } from '~/types';
 import { errText } from '~/lib/apiError';
 
 /** Client store for the Tiger orchestrator. State is kept live by the tiger.state WS push. */
@@ -8,6 +8,7 @@ export const useTigerStore = defineStore('tiger', () => {
 
   const state = ref<TigerState | null>(null);
   const config = ref<TigerConfig | null>(null);
+  const projects = ref<TigerProjectInfo[]>([]);
   const loaded = ref(false);
 
   const initialized = computed(() => state.value?.initialized ?? false);
@@ -30,14 +31,49 @@ export const useTigerStore = defineStore('tiger', () => {
     }
   }
 
+  async function loadProjects() {
+    try {
+      projects.value = await api.listTigerProjects();
+    } catch (e) {
+      notices.push(`Projects: ${errText(e)}`, 'error');
+    }
+  }
+
   async function initWorkspace(path: string, projectPrompt: string) {
     try {
       state.value = await api.initTigerWorkspace(path, projectPrompt);
       config.value = await api.getTigerConfig();
-      notices.push('Tiger workspace initialized', 'info');
+      await loadProjects();
+      notices.push('Project created', 'info');
     } catch (e) {
       notices.push(`Initialize failed: ${errText(e)}`, 'error');
       throw e;
+    }
+  }
+
+  async function openProject(path: string) {
+    try {
+      state.value = await api.openTigerProject(path);
+      config.value = await api.getTigerConfig();
+    } catch (e) {
+      notices.push(`Open failed: ${errText(e)}`, 'error');
+    }
+  }
+
+  async function closeProject() {
+    try {
+      state.value = await api.closeTigerProject();
+      await loadProjects();
+    } catch (e) {
+      notices.push(`Close failed: ${errText(e)}`, 'error');
+    }
+  }
+
+  async function forgetProject(path: string) {
+    try {
+      projects.value = await api.forgetTigerProject(path);
+    } catch (e) {
+      notices.push(`Forget failed: ${errText(e)}`, 'error');
     }
   }
 
@@ -100,12 +136,17 @@ export const useTigerStore = defineStore('tiger', () => {
   return {
     state,
     config,
+    projects,
     loaded,
     initialized,
     busy,
     workspace,
     applyState,
     load,
+    loadProjects,
+    openProject,
+    closeProject,
+    forgetProject,
     initWorkspace,
     saveConfig,
     runStage,

@@ -63,9 +63,15 @@ function normalize(parsed: unknown): PersistedState {
   if (!parsed || typeof parsed !== 'object') return base;
   const p = parsed as Partial<PersistedState> & { settings?: Partial<AppSettings> };
   const settings: Partial<AppSettings> = p.settings ?? {};
-  const tigerWorkspace =
-    p.tiger && typeof p.tiger === 'object' && typeof p.tiger.lastWorkspace === 'string'
-      ? p.tiger.lastWorkspace
+  const tigerRaw = p.tiger && typeof p.tiger === 'object' ? p.tiger : undefined;
+  const tigerWorkspace = tigerRaw && typeof tigerRaw.lastWorkspace === 'string' ? tigerRaw.lastWorkspace : undefined;
+  const tigerProjects =
+    tigerRaw && Array.isArray(tigerRaw.projects)
+      ? tigerRaw.projects.filter((x): x is string => typeof x === 'string')
+      : undefined;
+  const tiger =
+    tigerWorkspace || (tigerProjects && tigerProjects.length)
+      ? { ...(tigerWorkspace ? { lastWorkspace: tigerWorkspace } : {}), ...(tigerProjects ? { projects: tigerProjects } : {}) }
       : undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -80,7 +86,7 @@ function normalize(parsed: unknown): PersistedState {
         ...(settings.commandRouting ?? {}),
       },
     },
-    ...(tigerWorkspace ? { tiger: { lastWorkspace: tigerWorkspace } } : {}),
+    ...(tiger ? { tiger } : {}),
     updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : base.updatedAt,
   };
 }

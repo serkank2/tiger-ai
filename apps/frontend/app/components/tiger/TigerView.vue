@@ -6,6 +6,7 @@ import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 import AgentTile from '~/components/tiger/AgentTile.vue';
 import TaskBoard from '~/components/tiger/TaskBoard.vue';
 import RunLogView from '~/components/tiger/RunLogView.vue';
+import ProjectLauncher from '~/components/tiger/ProjectLauncher.vue';
 
 const emit = defineEmits<{ back: [] }>();
 const tiger = useTigerStore();
@@ -39,9 +40,20 @@ async function initialize() {
   }
 }
 
+// --- launcher / setup / workflow mode (when no project is open) ---
+const mode = ref<'launcher' | 'setup'>('launcher');
+function startNew() {
+  workspacePath.value = '';
+  projectPrompt.value = '';
+  mode.value = 'setup';
+}
+async function backToProjects() {
+  await tiger.closeProject();
+  mode.value = 'launcher';
+}
+
 // --- selected stage + run config ---
 const selectedStage = ref<TigerStageId>('brainstorming');
-let pickedDefault = false;
 
 function freshCfg(): TigerStageRunConfig {
   const d = tiger.config?.defaults;
@@ -65,16 +77,22 @@ function reseed() {
 // Reseed defaults when config arrives or the selected stage changes.
 watch([() => tiger.config, selectedStage], reseed);
 
-// Once state is known, jump to the current/most relevant stage (once).
+// When a project opens (workspace changes), jump to its current / first-incomplete stage.
 watch(
-  () => tiger.state,
-  (s) => {
-    if (s && !pickedDefault) {
-      pickedDefault = true;
-      selectedStage.value = s.currentStage ?? firstIncompleteStage() ?? 'brainstorming';
-    }
+  () => tiger.state?.workspace,
+  (ws) => {
+    if (ws) selectedStage.value = tiger.state?.currentStage ?? firstIncompleteStage() ?? 'brainstorming';
   },
   { immediate: true },
+);
+
+// While auto-advancing, follow the stage the orchestrator is currently processing so the live
+// tiles/config track the active stage without the user having to click each tab.
+watch(
+  () => tiger.state?.currentStage,
+  (cur) => {
+    if (cur && tiger.state?.autoAdvance) selectedStage.value = cur;
+  },
 );
 
 function firstIncompleteStage(): TigerStageId | null {
@@ -131,12 +149,19 @@ onMounted(() => {
       </div>
       <span class="spacer" />
       <code v-if="tiger.workspace" class="ws" :title="tiger.state?.tigerRoot ?? ''">{{ tiger.state?.tigerRoot }}</code>
+      <button v-if="tiger.initialized" class="back" @click="backToProjects">← Projects</button>
       <button class="back" @click="emit('back')">← Terminals</button>
     </header>
 
-    <!-- Setup -->
-    <section v-if="!tiger.initialized" class="setup">
-      <h2>Start a new orchestration</h2>
+    <!-- Launcher: pick an existing project or start a new one -->
+    <ProjectLauncher v-if="!tiger.initialized && mode === 'launcher'" @new="startNew" />
+
+    <!-- New-project setup -->
+    <section v-else-if="!tiger.initialized" class="setup">
+      <div class="setup-head">
+        <button class="back" @click="mode = 'launcher'">← Projects</button>
+        <h2>New project</h2>
+      </div>
       <p class="lead">
         Pick a workspace folder and provide your project prompt. Tiger creates a <code>tiger/</code> workspace
         there (system prompts, config, logs) and drives Claude &amp; Codex CLI agents through the full workflow.
@@ -155,7 +180,7 @@ onMounted(() => {
         <small>Stored verbatim in <code>tiger/project-prompt.md</code> and used as context in every stage.</small>
       </div>
       <button class="primary" :disabled="!workspacePath || !projectPrompt.trim() || initializing" @click="initialize">
-        {{ initializing ? 'Initializing…' : 'Initialize workspace' }}
+        {{ initializing ? 'Creating…' : 'Create project' }}
       </button>
     </section>
 
@@ -318,7 +343,13 @@ onMounted(() => {
   overflow-y: auto;
 }
 .setup h2 {
-  margin: 0 0 8px;
+  margin: 0;
+}
+.setup-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 .lead {
   color: var(--text-dim);

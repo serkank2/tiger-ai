@@ -24,6 +24,14 @@ function isStage(v: string): v is StageId {
   return (STAGE_ORDER as string[]).includes(v);
 }
 
+/** Record a project workspace in app state (dedup) and mark it as the most recent. */
+function rememberProject(ctx: AppCtx, dir: string): void {
+  const tiger = (ctx.state.tiger ??= {});
+  tiger.projects ??= [];
+  if (!tiger.projects.includes(dir)) tiger.projects.push(dir);
+  tiger.lastWorkspace = dir;
+}
+
 /** Build a StageRunConfig from request body, defaulting from config; validate permission keys. */
 function buildStageConfig(ctx: AppCtx, body: Record<string, unknown>): StageRunConfig {
   const d = ctx.orchestrator.getConfig().defaults;
@@ -81,9 +89,47 @@ export function createTigerRouter(ctx: AppCtx): Router {
       return;
     }
     await orch.initialize(dirCheck.path, prompt);
-    ctx.state.tiger = { lastWorkspace: dirCheck.path };
+    rememberProject(ctx, dirCheck.path);
     await ctx.save();
     res.json(orch.getState());
+  });
+
+  // List known projects for the launcher.
+  router.get('/projects', async (_req, res) => {
+    res.json(await orch.listProjects(ctx.state.tiger?.projects ?? []));
+  });
+
+  // Open (continue) an existing project.
+  router.post('/projects/open', async (req, res) => {
+    const dirCheck = await resolveExistingDir((req.body as { path?: unknown })?.path);
+    if (!dirCheck.ok) {
+      res.status(400).json({ error: { message: `invalid project directory: ${dirCheck.reason}` } });
+      return;
+    }
+    await orch.attachWorkspace(dirCheck.path);
+    rememberProject(ctx, dirCheck.path);
+    await ctx.save();
+    res.json(orch.getState());
+  });
+
+  // Close the active project and return to the launcher.
+  router.post('/projects/close', (_req, res) => {
+    orch.closeProject();
+    res.json(orch.getState());
+  });
+
+  // Forget a project (remove from the list; does NOT delete files).
+  router.delete('/projects', async (req, res) => {
+    const dir = (req.body as { path?: unknown })?.path;
+    if (typeof dir !== 'string' || !dir.trim()) {
+      res.status(400).json({ error: { message: 'path is required' } });
+      return;
+    }
+    if (ctx.state.tiger?.projects) {
+      ctx.state.tiger.projects = ctx.state.tiger.projects.filter((p) => p !== dir);
+      await ctx.save();
+    }
+    res.json(await orch.listProjects(ctx.state.tiger?.projects ?? []));
   });
 
   router.post('/stages/:stage/run', (req, res) => {
