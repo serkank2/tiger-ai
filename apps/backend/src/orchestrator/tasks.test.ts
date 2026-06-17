@@ -5,11 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   acquireLock,
+  claimNextTaskFile,
+  finishTaskFile,
+  hasTaskFiles,
   isLockStale,
+  listTaskRecords,
   parseExecutionResult,
+  parseTaskFileName,
   parseTasks,
   releaseLock,
+  reviewTaskFile,
+  splitTasksToFiles,
   summarizeTasks,
+  taskFileName,
   updateTaskFields,
 } from './tasks.js';
 
@@ -172,6 +180,47 @@ test('a live owner lock is not reclaimed, but a dead-PID lock is', async () => {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('per-task files: split, list, claim-by-rename, finish, review', () => {
+  return (async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-taskfiles-'));
+    try {
+      // Split the merged file into per-task files; status comes from the filename.
+      const n = await splitTasksToFiles(SAMPLE, dir);
+      assert.equal(n, 2);
+      assert.equal(taskFileName('TASK-001', 'not_started'), 'TASK-001__not_started.md');
+      assert.deepEqual(parseTaskFileName('TASK-001__not_started.md'), { id: 'TASK-001', status: 'not_started' });
+      assert.equal(await hasTaskFiles(dir), true);
+
+      let recs = await listTaskRecords(dir);
+      assert.equal(recs.length, 2);
+      assert.equal(recs.find((r) => r.id === 'TASK-001')!.executionStatus, 'not_started');
+      assert.equal(recs.find((r) => r.id === 'TASK-002')!.executionStatus, 'done'); // SAMPLE marks it done
+
+      // Splitting again is idempotent (no clobber).
+      assert.equal(await splitTasksToFiles(SAMPLE, dir), 0);
+
+      // Claim renames the only not_started task to in_progress and records the assignee.
+      const claimed = await claimNextTaskFile(dir, 'claude-01', '2026-02-02T00:00:00.000Z');
+      assert.equal(claimed?.record.id, 'TASK-001');
+      assert.match(claimed!.block, /Set up the backend/);
+      assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), true);
+
+      // No not_started left → next claim returns null.
+      assert.equal(await claimNextTaskFile(dir, 'codex-01', '2026-02-02T00:00:00.000Z'), null);
+
+      // Finish + review update filename + content.
+      await finishTaskFile(dir, 'TASK-001', 'done', '2026-02-02T01:00:00.000Z');
+      await reviewTaskFile(dir, 'TASK-001', 'approved');
+      recs = await listTaskRecords(dir);
+      const t1 = recs.find((r) => r.id === 'TASK-001')!;
+      assert.equal(t1.executionStatus, 'done');
+      assert.equal(t1.reviewStatus, 'approved');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  })();
 });
 
 test('a lock older than the TTL is stale', async () => {

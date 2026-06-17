@@ -163,7 +163,7 @@ onMounted(() => {
         <h2>New project</h2>
       </div>
       <p class="lead">
-        Pick a workspace folder and provide your project prompt. Tiger creates a <code>tiger/</code> workspace
+        Pick a workspace folder and provide your project prompt. Tiger creates a <code>.tiger/</code> workspace
         there (system prompts, config, logs) and drives Claude &amp; Codex CLI agents through the full workflow.
       </p>
       <div class="field">
@@ -172,12 +172,12 @@ onMounted(() => {
           <input v-model="workspacePath" placeholder="Choose or type an absolute folder path…" spellcheck="false" />
           <button class="ghost" @click="showPicker = true">Browse…</button>
         </div>
-        <small>A <code>tiger/</code> directory will be created inside this folder.</small>
+        <small>A <code>.tiger/</code> directory will be created inside this folder.</small>
       </div>
       <div class="field">
         <span>Project prompt</span>
         <textarea v-model="projectPrompt" rows="10" placeholder="Describe the project you want the AI team to build…" />
-        <small>Stored verbatim in <code>tiger/project-prompt.md</code> and used as context in every stage.</small>
+        <small>Stored verbatim in <code>.tiger/project-prompt.md</code> and used as context in every stage.</small>
       </div>
       <button class="primary" :disabled="!workspacePath || !projectPrompt.trim() || initializing" @click="initialize">
         {{ initializing ? 'Creating…' : 'Create project' }}

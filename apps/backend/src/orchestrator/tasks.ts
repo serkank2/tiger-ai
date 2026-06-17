@@ -282,6 +282,149 @@ export async function releaseLock(lockFile: string): Promise<void> {
   await fs.unlink(lockFile).catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// Per-task files: each task is its own file `<TASK-ID>__<execStatus>.md` under merged-tasks/tasks/.
+// The execution status lives in the FILENAME (so it's visible at a glance and claimable by an atomic
+// rename), while review status + the task spec live in the file content. This lets the executor
+// claim/track one task without loading the whole list.
+// ---------------------------------------------------------------------------
+
+const TASK_FILE_RE = /^(TASK-[A-Za-z0-9_-]+)__(not_started|in_progress|done|blocked)\.md$/;
+
+export function taskFileName(id: string, status: ExecutionStatus): string {
+  return `${id}__${status}.md`;
+}
+export function parseTaskFileName(name: string): { id: string; status: ExecutionStatus } | null {
+  const m = TASK_FILE_RE.exec(name);
+  return m ? { id: m[1]!, status: m[2]! as ExecutionStatus } : null;
+}
+
+function recordFromFile(id: string, status: ExecutionStatus, content: string): TaskRecord {
+  const b = parseTasks(content)[0];
+  return {
+    id,
+    title: b?.title ?? id,
+    executionStatus: status,
+    assignedAgent: b?.assignedAgent ?? '-',
+    startedAt: b?.startedAt ?? '-',
+    completedAt: b?.completedAt ?? '-',
+    reviewStatus: b?.reviewStatus ?? 'pending',
+    reviewNotes: b?.reviewNotes ?? '-',
+    start: 0,
+    end: content.length,
+  };
+}
+
+/** True if the per-task directory already holds at least one task file. */
+export async function hasTaskFiles(dir: string): Promise<boolean> {
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+  return names.some((n) => TASK_FILE_RE.test(n));
+}
+
+/** List all per-task records (execution status from filename, the rest from content). */
+export async function listTaskRecords(dir: string): Promise<TaskRecord[]> {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+  const out: TaskRecord[] = [];
+  for (const name of names) {
+    const p = parseTaskFileName(name);
+    if (!p) continue;
+    const content = await fs.readFile(path.join(dir, name), 'utf8').catch(() => '');
+    out.push(recordFromFile(p.id, p.status, content));
+  }
+  return out;
+}
+
+/** Split a merged tasks.md into per-task files (idempotent — never clobbers an existing task file). */
+export async function splitTasksToFiles(content: string, dir: string): Promise<number> {
+  await fs.mkdir(dir, { recursive: true });
+  const existing = await fs.readdir(dir).catch(() => [] as string[]);
+  const haveIds = new Set(existing.map((n) => parseTaskFileName(n)?.id).filter(Boolean));
+  let written = 0;
+  for (const r of parseTasks(content)) {
+    if (haveIds.has(r.id)) continue;
+    const block = content.slice(r.start, r.end).trim() + '\n';
+    await fs.writeFile(path.join(dir, taskFileName(r.id, r.executionStatus)), block, 'utf8');
+    written++;
+  }
+  return written;
+}
+
+/** Find the file currently representing a task id (any status). */
+async function findTaskFile(dir: string, id: string): Promise<string | null> {
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+  return names.find((n) => parseTaskFileName(n)?.id === id) ?? null;
+}
+
+/** Read a task's full block content (for composing the agent prompt). */
+export async function readTaskBlock(dir: string, id: string): Promise<string> {
+  const name = await findTaskFile(dir, id);
+  if (!name) return `(task ${id})`;
+  return (await fs.readFile(path.join(dir, name), 'utf8').catch(() => '')).trim() || `(task ${id})`;
+}
+
+/** Read-modify-write a task file's content fields (by id). */
+async function patchTaskFileContent(dir: string, id: string, fields: TaskFieldUpdate): Promise<void> {
+  const name = await findTaskFile(dir, id);
+  if (!name) return;
+  const fp = path.join(dir, name);
+  const content = await fs.readFile(fp, 'utf8').catch(() => null);
+  if (content == null) return;
+  await fs.writeFile(fp, updateTaskFields(content, id, fields), 'utf8');
+}
+
+/** Rename a task file to a new execution status (the atomic status transition). */
+export async function setTaskFileStatus(dir: string, id: string, status: ExecutionStatus): Promise<void> {
+  const name = await findTaskFile(dir, id);
+  if (!name) return;
+  const to = taskFileName(id, status);
+  if (name === to) return;
+  await fs.rename(path.join(dir, name), path.join(dir, to)).catch(() => {});
+}
+
+/**
+ * Atomically claim the next not_started task: rename it to in_progress (the rename is the lock — if
+ * another claimer won, the rename fails and we try the next). Records the assignee + start time in
+ * the file content. Returns the claimed task record + its block, or null when none remain.
+ */
+export async function claimNextTaskFile(
+  dir: string,
+  agentLabel: string,
+  nowIso: string,
+): Promise<{ record: TaskRecord; block: string } | null> {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+  for (const name of names) {
+    const p = parseTaskFileName(name);
+    if (!p || p.status !== 'not_started') continue;
+    const from = path.join(dir, name);
+    const to = path.join(dir, taskFileName(p.id, 'in_progress'));
+    try {
+      await fs.rename(from, to);
+    } catch {
+      continue; // already claimed by someone else
+    }
+    await patchTaskFileContent(dir, p.id, { executionStatus: 'in_progress', assignedAgent: agentLabel, startedAt: nowIso });
+    const content = await fs.readFile(to, 'utf8').catch(() => '');
+    return { record: recordFromFile(p.id, 'in_progress', content), block: content.trim() };
+  }
+  return null;
+}
+
+/** Finalize a task: rename to done/blocked and stamp the completion time in the content. */
+export async function finishTaskFile(
+  dir: string,
+  id: string,
+  status: ExecutionStatus,
+  nowIso: string,
+): Promise<void> {
+  await setTaskFileStatus(dir, id, status);
+  await patchTaskFileContent(dir, id, { executionStatus: status, completedAt: nowIso });
+}
+
+/** Update a task's review status in its file content. */
+export async function reviewTaskFile(dir: string, id: string, reviewStatus: ReviewStatus): Promise<void> {
+  await patchTaskFileContent(dir, id, { reviewStatus });
+}
+
 /** Parse an agent's self-reported execution result (`EXECUTION_RESULT: done|blocked: reason`). */
 export function parseExecutionResult(text: string): { status: 'done' | 'blocked'; reason: string } | null {
   const re = /EXECUTION_RESULT\s*:\s*(done|blocked)\b[ \t]*[:-]?[ \t]*(.*)/gi;

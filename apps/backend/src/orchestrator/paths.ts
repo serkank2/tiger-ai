@@ -26,7 +26,8 @@ export const STAGE_META: Record<StageId, StageMeta> = {
     promptFile: '03-writing-tasks.md',
     outputSuffix: 'tasks.md',
     title: 'Writing Tasks',
-    contextDirs: ['brainstorming', 'writing-plan'],
+    // Takes only its predecessor (the plan). The deep project inspection supplies the rest.
+    contextDirs: ['writing-plan'],
   },
   'merge-tasks': {
     id: 'merge-tasks',
@@ -43,7 +44,8 @@ export const STAGE_META: Record<StageId, StageMeta> = {
     promptFile: '05-executing-plan.md',
     outputSuffix: 'execution-log.md',
     title: 'Executing Plan',
-    contextDirs: ['merged-tasks'],
+    // The single assigned task block is supplied via the run assignment; no bulk context.
+    contextDirs: [],
   },
   'task-review': {
     id: 'task-review',
@@ -51,7 +53,8 @@ export const STAGE_META: Record<StageId, StageMeta> = {
     promptFile: '06-task-review.md',
     outputSuffix: 'review-log.md',
     title: 'Task Review',
-    contextDirs: ['merged-tasks'],
+    // The assigned task files are inlined in the run assignment; no bulk context.
+    contextDirs: [],
   },
   'requesting-code-review': {
     id: 'requesting-code-review',
@@ -59,7 +62,8 @@ export const STAGE_META: Record<StageId, StageMeta> = {
     promptFile: '07-requesting-code-review.md',
     outputSuffix: 'code-review.md',
     title: 'Requesting Code Review',
-    contextDirs: ['merged-tasks', 'executing-plan', 'task-review'],
+    // Lean: original prompt + a generated pipeline summary; the agent inspects/builds the project.
+    contextDirs: [],
   },
 };
 
@@ -83,7 +87,7 @@ export class TigerPaths {
 
   constructor(workspace: string) {
     this.workspace = workspace;
-    this.root = path.join(workspace, 'tiger');
+    this.root = path.join(workspace, '.tiger');
   }
 
   get systemPromptsDir(): string {
@@ -100,6 +104,10 @@ export class TigerPaths {
   }
   get mergedTasksFile(): string {
     return path.join(this.root, 'merged-tasks', 'tasks.md');
+  }
+  /** Directory of per-task files (one .md per task, execution status encoded in the filename). */
+  get tasksDir(): string {
+    return path.join(this.root, 'merged-tasks', 'tasks');
   }
   get locksDir(): string {
     return path.join(this.root, 'executing-plan', 'locks');

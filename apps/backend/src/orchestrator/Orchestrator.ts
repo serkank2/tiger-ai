@@ -14,7 +14,6 @@ import type {
   StageRunConfig,
   StageState,
   StageStatus,
-  TaskRecord,
   TigerConfig,
 } from './types.js';
 import { defaultTigerConfig, loadConfig, normalizeConfig, saveConfig } from './config.js';
@@ -25,12 +24,15 @@ import { composePrompt, type ComposeOptions } from './compose.js';
 import { checkOutputFile } from './validate.js';
 import { logAgentResult, logNote, logStageEnd, logStageStart } from './runlog.js';
 import {
-  acquireLock,
+  claimNextTaskFile,
+  finishTaskFile,
+  hasTaskFiles,
+  listTaskRecords,
   parseExecutionResult,
   parseTasks,
-  releaseLock,
+  reviewTaskFile,
+  splitTasksToFiles,
   summarizeTasks,
-  updateTaskFields,
 } from './tasks.js';
 
 const nowIso = (): string => new Date().toISOString();
@@ -70,8 +72,6 @@ export class Orchestrator extends EventEmitter {
   private correctionCycles = 0;
   /** When true, the next stage starts automatically after the current one completes successfully. */
   private autoAdvance = false;
-  /** Serializes read-modify-write of merged-tasks/tasks.md across parallel workers. */
-  private tasksWrite: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly manager: TerminalManager) {
     super();
@@ -367,23 +367,22 @@ export class Orchestrator extends EventEmitter {
     });
   }
 
-  /** Stage 5: claim not_started tasks under locks and implement one task per agent run. */
+  /** Stage 5: split tasks into per-task files, then claim/implement them one task per agent run. */
   private async executeExecutionStage(cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
     const paths = this.paths!;
     const stage = this.stages['executing-plan'];
-    const content = await fs.readFile(paths.mergedTasksFile, 'utf8').catch(() => null);
-    if (content == null) {
+    await this.ensureTaskFiles();
+    if (!(await hasTaskFiles(paths.tasksDir))) {
       stage.message = 'No merged task file found. Run the Merge Tasks stage first.';
       stage.runs = [];
       return;
     }
-    const tasks = parseTasks(content);
-    if (tasks.length === 0) {
+    const all = await listTaskRecords(paths.tasksDir);
+    if (all.length === 0) {
       stage.message = 'The merged task file contains no tasks.';
       return;
     }
-    const pending = tasks.filter((t) => t.executionStatus === 'not_started');
-    if (pending.length === 0) {
+    if (!all.some((t) => t.executionStatus === 'not_started')) {
       stage.message = 'No tasks are in not_started state; nothing to execute.';
       return;
     }
@@ -399,35 +398,19 @@ export class Orchestrator extends EventEmitter {
     }
 
     let counter = 0;
-    const claimNext = (): TaskRecord | null => {
-      const t = tasks.find((x) => x.executionStatus === 'not_started');
-      if (!t) return null;
-      t.executionStatus = 'in_progress'; // synchronous claim — guards against double-pick
-      return t;
-    };
-
-    // Claim + implement exactly one task with the given agent type. Returns false when no
-    // not_started task remains (the queue is drained). Shared by parallel + sequential paths.
+    // Claim + implement exactly one task with the given agent type. The claim is an atomic file
+    // rename (not_started -> in_progress); the filename is the lock. Returns false when none remain.
     const processTask = async (type: AgentType): Promise<boolean> => {
-      const task = claimNext();
-      if (!task) return false;
-      const index = ++counter;
-      const run = this.makeRun('executing-plan', type, index, cfg, task.id);
+      const index = counter + 1;
+      const claimed = await claimNextTaskFile(paths.tasksDir, agentLabel(type, index), nowIso());
+      if (!claimed) return false;
+      counter = index;
+      const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
       stage.runs.push(run);
       this.registerRun(run);
       this.emitState();
-      await acquireLock(
-        paths.lockFile(task.id),
-        { taskId: task.id, agentId: run.label, agentType: type, pid: process.pid },
-        { ttlMs: this.config.execution.lockTtlMs },
-      ).catch(() => false);
-      await this.patchTask(task.id, {
-        executionStatus: 'in_progress',
-        assignedAgent: run.label,
-        startedAt: nowIso(),
-      });
-      const block = await this.extractTaskBlock(task.id);
-      await this.executeAgentRun(run, { taskId: task.id, taskBlock: block }, signal);
+
+      await this.executeAgentRun(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
 
       // Resolve final task status from the agent's self-report, falling back to the run state.
       let finalStatus: 'done' | 'blocked' = run.state === 'completed' ? 'done' : 'blocked';
@@ -436,8 +419,7 @@ export class Orchestrator extends EventEmitter {
         .then((t) => parseExecutionResult(t))
         .catch(() => null);
       if (reported && run.state === 'completed') finalStatus = reported.status;
-      await this.patchTask(task.id, { executionStatus: finalStatus, completedAt: nowIso() });
-      await releaseLock(paths.lockFile(task.id));
+      await finishTaskFile(paths.tasksDir, claimed.record.id, finalStatus, nowIso());
       await this.refreshTasks();
       return true;
     };
@@ -464,8 +446,8 @@ export class Orchestrator extends EventEmitter {
   private async executeTaskReviewStage(cfg: StageRunConfig, signal: AbortSignal): Promise<void> {
     const paths = this.paths!;
     const stage = this.stages['task-review'];
-    const content = await fs.readFile(paths.mergedTasksFile, 'utf8').catch(() => null);
-    const done = content ? parseTasks(content).filter((t) => t.executionStatus === 'done') : [];
+    await this.ensureTaskFiles();
+    const done = (await listTaskRecords(paths.tasksDir)).filter((t) => t.executionStatus === 'done');
 
     const runs: AgentRun[] = [];
     for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) runs.push(this.makeRun('task-review', 'claude', i, cfg));
@@ -484,7 +466,7 @@ export class Orchestrator extends EventEmitter {
     done.forEach((t, i) => partitions.get(runs[i % runs.length]!.id)!.push(t.id));
 
     // Mark assigned tasks as reviewing up front.
-    for (const t of done) await this.patchTask(t.id, { reviewStatus: 'reviewing' });
+    for (const t of done) await reviewTaskFile(paths.tasksDir, t.id, 'reviewing');
     await this.refreshTasks();
 
     await runPool(runs, this.concurrency('task-review', runs.length, cfg.parallel), async (run) => {
@@ -504,7 +486,7 @@ export class Orchestrator extends EventEmitter {
     const re = /^\s*(TASK-[A-Za-z0-9_-]+)\s+(approved|needs_fix|fixed)\s*$/gim;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
-      await this.patchTask(m[1]!, { reviewStatus: m[2]!.toLowerCase() as 'approved' | 'needs_fix' | 'fixed' });
+      await reviewTaskFile(this.paths!.tasksDir, m[1]!, m[2]!.toLowerCase() as 'approved' | 'needs_fix' | 'fixed');
     }
   }
 
@@ -515,7 +497,23 @@ export class Orchestrator extends EventEmitter {
       const resultsPath = this.paths!.promptFileFor('task-review', run.id).replace(/\.prompt\.md$/, '.results');
       return { resultsPath };
     }
+    if (run.stage === 'requesting-code-review') {
+      return { summary: this.pipelineSummary() };
+    }
     return {};
+  }
+
+  /** A concise journey summary handed to the final-review stage instead of bulk logs. */
+  private pipelineSummary(): string {
+    const lines = STAGE_ORDER.filter((s) => s !== 'requesting-code-review').map((s) => {
+      const st = this.stages[s];
+      return `- ${STAGE_META[s].title}: ${st.status}${st.message ? ` — ${st.message}` : ''}`;
+    });
+    const t = this.tasksSummary;
+    const tasksLine = t
+      ? `\nTasks: ${t.byExecution.done} done, ${t.byExecution.blocked} blocked, ${t.total} total.`
+      : '';
+    return `The project was produced by the Tiger pipeline. Stage outcomes:\n${lines.join('\n')}${tasksLine}`;
   }
 
   private async executeAgentRun(run: AgentRun, extras: Partial<ComposeOptions>, signal: AbortSignal): Promise<void> {
@@ -647,27 +645,27 @@ export class Orchestrator extends EventEmitter {
     });
   }
 
-  /** Serialized read-modify-write of the merged tasks file. */
-  private patchTask(taskId: string, fields: Parameters<typeof updateTaskFields>[2]): Promise<void> {
-    const file = this.paths!.mergedTasksFile;
-    const next = this.tasksWrite.then(async () => {
-      const content = await fs.readFile(file, 'utf8').catch(() => null);
-      if (content == null) return;
-      await fs.writeFile(file, updateTaskFields(content, taskId, fields), 'utf8');
-    });
-    this.tasksWrite = next.catch(() => {});
-    return next;
-  }
-
-  private async extractTaskBlock(taskId: string): Promise<string> {
-    const content = await fs.readFile(this.paths!.mergedTasksFile, 'utf8').catch(() => '');
-    const rec = parseTasks(content).find((t) => t.id === taskId);
-    return rec ? content.slice(rec.start, rec.end).trim() : `(task ${taskId})`;
+  /** Split the merged tasks.md into per-task files once (idempotent). */
+  private async ensureTaskFiles(): Promise<void> {
+    if (!this.paths) return;
+    if (await hasTaskFiles(this.paths.tasksDir)) return;
+    const content = await fs.readFile(this.paths.mergedTasksFile, 'utf8').catch(() => null);
+    if (content) await splitTasksToFiles(content, this.paths.tasksDir);
   }
 
   private async refreshTasks(): Promise<void> {
-    const content = await fs.readFile(this.paths!.mergedTasksFile, 'utf8').catch(() => null);
-    this.tasksSummary = content ? summarizeTasks(parseTasks(content)) : null;
+    if (!this.paths) {
+      this.tasksSummary = null;
+      this.emitState();
+      return;
+    }
+    await this.ensureTaskFiles();
+    if (await hasTaskFiles(this.paths.tasksDir)) {
+      this.tasksSummary = summarizeTasks(await listTaskRecords(this.paths.tasksDir));
+    } else {
+      const content = await fs.readFile(this.paths.mergedTasksFile, 'utf8').catch(() => null);
+      this.tasksSummary = content ? summarizeTasks(parseTasks(content)) : null;
+    }
     this.emitState();
   }
 
