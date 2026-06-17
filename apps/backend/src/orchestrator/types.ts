@@ -107,6 +107,8 @@ export interface TigerConfig {
     lockTtlMs: number;
     /** Maximum number of correction cycles (routing Stage 6B issues back) before routing stops. */
     maxCorrectionCycles: number;
+    /** Delete the whole .tiger workspace after an auto-run (Run All) completes the final stage. */
+    deleteTigerOnComplete: boolean;
   };
 }
 

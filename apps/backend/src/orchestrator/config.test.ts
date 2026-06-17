@@ -2,15 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaultTigerConfig, normalizeConfig } from './config.js';
 
-test('defaultTigerConfig uses the cost-aware autonomous profile', () => {
+test('defaultTigerConfig uses the high-capability default profile', () => {
   const defaults = defaultTigerConfig().defaults;
 
   assert.equal(defaults.claudeAgents, 1);
   assert.equal(defaults.codexAgents, 1);
-  assert.equal(defaults.claudeModel, 'sonnet');
-  assert.equal(defaults.codexModel, 'gpt-5');
-  assert.equal(defaults.claudeEffort, 'medium');
-  assert.equal(defaults.codexEffort, 'medium');
+  assert.equal(defaults.claudeModel, 'opus');
+  assert.equal(defaults.codexModel, 'gpt-5.5');
+  assert.equal(defaults.claudeEffort, 'xhigh');
+  assert.equal(defaults.codexEffort, 'xhigh');
   assert.equal(defaults.claudePermission, 'dangerous');
   assert.equal(defaults.codexPermission, 'yolo');
 });

@@ -17,7 +17,7 @@ const BASE: StageRunConfig = {
   claudeModel: 'opus',
   codexModel: 'gpt-5.5',
   claudeEffort: 'xhigh',
-  codexEffort: 'high',
+  codexEffort: 'xhigh',
   claudePermission: 'dangerous',
   codexPermission: 'yolo',
   parallel: true,

@@ -77,10 +77,10 @@ export function defaultTigerConfig(): TigerConfig {
     defaults: {
       claudeAgents: 1,
       codexAgents: 1,
-      claudeModel: 'sonnet',
-      codexModel: 'gpt-5',
-      claudeEffort: 'medium',
-      codexEffort: 'medium',
+      claudeModel: 'opus',
+      codexModel: 'gpt-5.5',
+      claudeEffort: 'xhigh',
+      codexEffort: 'xhigh',
       claudePermission: 'dangerous',
       codexPermission: 'yolo',
       parallel: true,
@@ -100,6 +100,7 @@ export function defaultTigerConfig(): TigerConfig {
       maxConcurrent: 4,
       lockTtlMs: 30 * 60 * 1000,
       maxCorrectionCycles: 2,
+      deleteTigerOnComplete: true,
     },
   };
 }

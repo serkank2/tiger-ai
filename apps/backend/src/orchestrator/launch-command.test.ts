@@ -33,7 +33,7 @@ test('codex with no model omits the model flag', () => {
   assert.equal(cmd, 'codex --ask-for-approval never --sandbox read-only --no-alt-screen');
 });
 
-test('default launch commands use the cost-aware autonomous profile', () => {
+test('default launch commands use the high-capability default profile', () => {
   const d = cfg.defaults;
   assert.equal(
     buildLaunchCommand(cfg, 'claude', {
@@ -41,7 +41,7 @@ test('default launch commands use the cost-aware autonomous profile', () => {
       effort: d.claudeEffort,
       permission: d.claudePermission,
     }),
-    'claude --model sonnet --effort medium --dangerously-skip-permissions',
+    'claude --model opus --effort xhigh --dangerously-skip-permissions',
   );
   assert.equal(
     buildLaunchCommand(cfg, 'codex', {
@@ -49,7 +49,7 @@ test('default launch commands use the cost-aware autonomous profile', () => {
       effort: d.codexEffort,
       permission: d.codexPermission,
     }),
-    'codex -m gpt-5 -c model_reasoning_effort=medium --dangerously-bypass-approvals-and-sandbox --no-alt-screen',
+    'codex -m gpt-5.5 -c model_reasoning_effort=xhigh --dangerously-bypass-approvals-and-sandbox --no-alt-screen',
   );
 });
 
