@@ -51,6 +51,8 @@ export interface StageMeta {
 export interface CliToolConfig {
   /** Executable name or absolute path (e.g. "claude" / "codex"). */
   executable: string;
+  /** Selectable model identifiers offered in the UI dropdown (empty = use the CLI default). */
+  models?: string[];
   /** Flag that selects the model (e.g. "--model" / "-m"); empty string to skip. */
   modelFlag: string;
   /** Claude effort flag (e.g. "--effort"); empty to skip. */
@@ -87,6 +89,10 @@ export interface TigerTiming {
   markerPollMs: number;
   /** Hard ceiling for a single agent run before it is failed. */
   agentTimeoutMs: number;
+  /** Max wait for the TUI to settle after the priming Enter (accepting the trust dialog). */
+  settleMaxWaitMs: number;
+  /** Pause between typing the instruction and pressing Enter to submit it. */
+  submitDelayMs: number;
 }
 
 export interface TigerConfig {
@@ -94,7 +100,14 @@ export interface TigerConfig {
   cli: { claude: CliToolConfig; codex: CliToolConfig };
   defaults: StageDefaults;
   timing: TigerTiming;
-  execution: { parallel: boolean; locking: boolean; maxConcurrent: number };
+  execution: {
+    parallel: boolean;
+    locking: boolean;
+    maxConcurrent: number;
+    lockTtlMs: number;
+    /** Maximum number of correction cycles (routing Stage 6B issues back) before routing stops. */
+    maxCorrectionCycles: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +182,8 @@ export interface StageState {
   endedAt?: string;
   /** Human-readable English summary of the last outcome. */
   message?: string;
+  /** User explicitly chose to continue past this stage's failures. */
+  continued?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +193,17 @@ export interface StageState {
 export type ExecutionStatus = 'not_started' | 'in_progress' | 'done' | 'blocked';
 export type ReviewStatus = 'pending' | 'reviewing' | 'approved' | 'needs_fix' | 'fixed';
 
+/** Stage 6B final-decision vocabulary (exactly the four values mandated by the prompt). */
+export type FinalDecision = 'approved' | 'minor_fixes_required' | 'major_fixes_required' | 'rejected';
+
 export const EXECUTION_STATUSES: ExecutionStatus[] = ['not_started', 'in_progress', 'done', 'blocked'];
 export const REVIEW_STATUSES: ReviewStatus[] = ['pending', 'reviewing', 'approved', 'needs_fix', 'fixed'];
+export const FINAL_DECISIONS: FinalDecision[] = [
+  'approved',
+  'minor_fixes_required',
+  'major_fixes_required',
+  'rejected',
+];
 
 export interface TaskRecord {
   id: string;
@@ -226,4 +250,10 @@ export interface OrchestratorState {
   busy: boolean;
   stages: Record<StageId, StageState>;
   tasks: TaskSummary | null;
+  /** How many correction cycles (Stage 6B → 5/6A re-routes) have been used. */
+  correctionCycles: number;
+  /** Configured ceiling on correction cycles. */
+  maxCorrectionCycles: number;
+  /** Whether the workflow is currently auto-advancing through stages. */
+  autoAdvance: boolean;
 }

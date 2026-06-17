@@ -48,12 +48,12 @@ function freshCfg(): TigerStageRunConfig {
   return {
     claudeAgents: d?.claudeAgents ?? 1,
     codexAgents: d?.codexAgents ?? 1,
-    claudeModel: d?.claudeModel ?? 'sonnet',
-    codexModel: d?.codexModel ?? '',
-    claudeEffort: d?.claudeEffort ?? 'medium',
-    codexEffort: d?.codexEffort ?? 'medium',
-    claudePermission: d?.claudePermission ?? 'acceptEdits',
-    codexPermission: d?.codexPermission ?? 'workspace-write',
+    claudeModel: d?.claudeModel ?? 'opus',
+    codexModel: d?.codexModel ?? 'gpt-5.5',
+    claudeEffort: d?.claudeEffort ?? 'xhigh',
+    codexEffort: d?.codexEffort ?? 'high',
+    claudePermission: d?.claudePermission ?? 'dangerous',
+    codexPermission: d?.codexPermission ?? 'yolo',
     parallel: d?.parallel ?? true,
     mergeAgent: 'claude',
   };
@@ -89,6 +89,10 @@ const stageState = computed(() => tiger.state?.stages?.[selectedStage.value] ?? 
 const runs = computed(() => stageState.value?.runs ?? []);
 const hasFailed = computed(() => runs.value.some((r) => r.state === 'failed' || r.state === 'stopped'));
 
+const atCycleLimit = computed(
+  () => (tiger.state?.correctionCycles ?? 0) >= (tiger.state?.maxCorrectionCycles ?? 0),
+);
+
 const prevIncomplete = computed(() => {
   const idx = STAGES.findIndex((s) => s.id === selectedStage.value);
   const stages = tiger.state?.stages;
@@ -100,7 +104,7 @@ const prevIncomplete = computed(() => {
   return null;
 });
 
-async function runStage() {
+async function runStage(auto = false) {
   if (tiger.busy) return;
   if (prevIncomplete.value) {
     const ok = window.confirm(
@@ -108,7 +112,7 @@ async function runStage() {
     );
     if (!ok) return;
   }
-  await tiger.runStage(selectedStage.value, { ...runCfg });
+  await tiger.runStage(selectedStage.value, { ...runCfg }, auto);
 }
 
 onMounted(() => {
@@ -166,10 +170,27 @@ onMounted(() => {
           <span class="status" :class="`st-${stageState?.status ?? 'not_started'}`">
             {{ (stageState?.status ?? 'not_started').replace('_', ' ') }}
           </span>
+          <span v-if="stageState?.continued" class="continued-badge">continued ✓</span>
+          <span v-if="tiger.state?.autoAdvance" class="auto-badge">auto-advancing ▸</span>
           <span class="spacer" />
           <button v-if="tiger.busy" class="stop" @click="tiger.stop()">■ Stop</button>
           <button v-if="hasFailed && !tiger.busy" class="retry" @click="tiger.retryStage(selectedStage)">⟳ Retry failed</button>
-          <button class="run" :disabled="tiger.busy" @click="runStage">▶ Run stage</button>
+          <button
+            v-if="stageState?.status === 'failed' && !stageState?.continued && !tiger.busy"
+            class="continue"
+            @click="tiger.continueStage(selectedStage)"
+          >
+            → Continue despite failures
+          </button>
+          <button class="run" :disabled="tiger.busy" @click="runStage(false)">▶ Run stage</button>
+          <button
+            class="run-all"
+            :disabled="tiger.busy"
+            title="Run this stage and automatically advance through the remaining stages"
+            @click="runStage(true)"
+          >
+            ▶▶ Run all
+          </button>
         </div>
 
         <p v-if="prevIncomplete" class="warn">⚠ Earlier stage “{{ prevIncomplete }}” is not completed yet.</p>
@@ -182,6 +203,14 @@ onMounted(() => {
           :cfg="runCfg"
           :disabled="tiger.busy"
         />
+
+        <div v-if="selectedStage === 'requesting-code-review'" class="route">
+          <span class="rl">Correction routing</span>
+          <span class="cycles">cycles {{ tiger.state?.correctionCycles ?? 0 }}/{{ tiger.state?.maxCorrectionCycles ?? 0 }}</span>
+          <span class="spacer" />
+          <button :disabled="tiger.busy || atCycleLimit" @click="tiger.routeCorrection('executing-plan')">↩ Back to Execution</button>
+          <button :disabled="tiger.busy || atCycleLimit" @click="tiger.routeCorrection('task-review')">↩ Back to Task Review</button>
+        </div>
       </div>
 
       <div v-if="runs.length" class="tiles">
@@ -414,6 +443,26 @@ code {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.run-all {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+  padding: 8px 14px;
+}
+.run-all:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.run-all:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.auto-badge {
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
 .stop {
   border: 1px solid var(--red);
   color: var(--red);
@@ -428,6 +477,54 @@ code {
 .retry:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.continue {
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  padding: 8px 14px;
+  font-weight: 600;
+}
+.continue:hover {
+  background: rgba(224, 176, 58, 0.12);
+}
+.continued-badge {
+  font-size: 11px;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.route {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.rl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.cycles {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.route button {
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.route button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.route button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .warn {
   margin: 0 0 10px;

@@ -60,7 +60,7 @@ app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, terminals: state.terminals.length, dataDir: config.dataDir });
+  res.json({ status: 'ok', ok: true, terminals: state.terminals.length, dataDir: config.dataDir });
 });
 
 app.use('/api/terminals', createTerminalsRouter(ctx));

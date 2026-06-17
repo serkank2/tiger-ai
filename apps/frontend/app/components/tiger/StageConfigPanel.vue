@@ -10,9 +10,22 @@ const props = defineProps<{
 
 const isMerge = computed(() => props.stage === 'merge-tasks');
 
-const CLAUDE_MODELS = ['', 'opus', 'sonnet', 'haiku', 'fable'];
 const CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
-const CODEX_EFFORTS = ['', 'low', 'medium', 'high'];
+const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
+
+const EFFORT_LABEL: Record<string, string> = {
+  '': 'Default',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
+const effortLabel = (e: string) => EFFORT_LABEL[e] ?? e;
+
+// Model dropdown options come from config (editable in tiger/config.json), with '' = CLI default.
+const claudeModels = computed(() => ['', ...(props.config.cli.claude.models ?? ['opus', 'sonnet', 'haiku', 'fable'])]);
+const codexModels = computed(() => ['', ...(props.config.cli.codex.models ?? ['gpt-5.5', 'gpt-5-codex', 'gpt-5', 'o3', 'o4-mini'])]);
 
 const claudePerms = computed(() => Object.keys(props.config.cli.claude.permissionModes));
 const codexPerms = computed(() => Object.keys(props.config.cli.codex.permissionModes));
@@ -54,12 +67,14 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
         <template v-if="cfg.mergeAgent === 'codex'">
           <label class="field">
             <span>Codex model</span>
-            <input v-model="cfg.codexModel" placeholder="default" :disabled="disabled" spellcheck="false" />
+            <select v-model="cfg.codexModel" :disabled="disabled">
+              <option v-for="m in codexModels" :key="m" :value="m">{{ m || 'default' }}</option>
+            </select>
           </label>
           <label class="field">
             <span>Codex effort</span>
             <select v-model="cfg.codexEffort" :disabled="disabled">
-              <option v-for="e in CODEX_EFFORTS" :key="e" :value="e">{{ e || 'default' }}</option>
+              <option v-for="e in CODEX_EFFORTS" :key="e" :value="e">{{ effortLabel(e) }}</option>
             </select>
           </label>
           <label class="field">
@@ -73,13 +88,13 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
           <label class="field">
             <span>Claude model</span>
             <select v-model="cfg.claudeModel" :disabled="disabled">
-              <option v-for="m in CLAUDE_MODELS" :key="m" :value="m">{{ m || 'default' }}</option>
+              <option v-for="m in claudeModels" :key="m" :value="m">{{ m || 'default' }}</option>
             </select>
           </label>
           <label class="field">
             <span>Claude effort</span>
             <select v-model="cfg.claudeEffort" :disabled="disabled">
-              <option v-for="e in CLAUDE_EFFORTS" :key="e" :value="e">{{ e || 'default' }}</option>
+              <option v-for="e in CLAUDE_EFFORTS" :key="e" :value="e">{{ effortLabel(e) }}</option>
             </select>
           </label>
           <label class="field">
@@ -100,20 +115,30 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
       <div class="cols">
         <fieldset>
           <legend>Claude agents</legend>
-          <label class="field">
-            <span>Count</span>
-            <input v-model.number="cfg.claudeAgents" type="number" min="0" max="8" :disabled="disabled" />
-          </label>
+          <div class="field count-field">
+            <span>Count <b class="count-badge">{{ cfg.claudeAgents }}</b></span>
+            <input
+              class="slider"
+              type="range"
+              min="0"
+              max="8"
+              step="1"
+              :value="cfg.claudeAgents"
+              :disabled="disabled"
+              @input="cfg.claudeAgents = Number(($event.target as HTMLInputElement).value)"
+            />
+            <div class="scale"><span>0</span><span>8</span></div>
+          </div>
           <label class="field">
             <span>Model</span>
             <select v-model="cfg.claudeModel" :disabled="disabled">
-              <option v-for="m in CLAUDE_MODELS" :key="m" :value="m">{{ m || 'default' }}</option>
+              <option v-for="m in claudeModels" :key="m" :value="m">{{ m || 'default' }}</option>
             </select>
           </label>
           <label class="field">
             <span>Effort</span>
             <select v-model="cfg.claudeEffort" :disabled="disabled">
-              <option v-for="e in CLAUDE_EFFORTS" :key="e" :value="e">{{ e || 'default' }}</option>
+              <option v-for="e in CLAUDE_EFFORTS" :key="e" :value="e">{{ effortLabel(e) }}</option>
             </select>
           </label>
           <label class="field">
@@ -127,18 +152,30 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
 
         <fieldset>
           <legend>Codex agents</legend>
-          <label class="field">
-            <span>Count</span>
-            <input v-model.number="cfg.codexAgents" type="number" min="0" max="8" :disabled="disabled" />
-          </label>
+          <div class="field count-field">
+            <span>Count <b class="count-badge">{{ cfg.codexAgents }}</b></span>
+            <input
+              class="slider"
+              type="range"
+              min="0"
+              max="8"
+              step="1"
+              :value="cfg.codexAgents"
+              :disabled="disabled"
+              @input="cfg.codexAgents = Number(($event.target as HTMLInputElement).value)"
+            />
+            <div class="scale"><span>0</span><span>8</span></div>
+          </div>
           <label class="field">
             <span>Model</span>
-            <input v-model="cfg.codexModel" placeholder="default" :disabled="disabled" spellcheck="false" />
+            <select v-model="cfg.codexModel" :disabled="disabled">
+              <option v-for="m in codexModels" :key="m" :value="m">{{ m || 'default' }}</option>
+            </select>
           </label>
           <label class="field">
             <span>Effort</span>
             <select v-model="cfg.codexEffort" :disabled="disabled">
-              <option v-for="e in CODEX_EFFORTS" :key="e" :value="e">{{ e || 'default' }}</option>
+              <option v-for="e in CODEX_EFFORTS" :key="e" :value="e">{{ effortLabel(e) }}</option>
             </select>
           </label>
           <label class="field">
@@ -216,5 +253,46 @@ legend {
   margin: 6px 0 0;
   font-size: 11px;
   color: var(--amber);
+}
+.count-field {
+  gap: 2px;
+}
+.count-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.slider {
+  width: 100%;
+  height: 22px;
+  margin: 2px 0 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin-top: -2px;
 }
 </style>

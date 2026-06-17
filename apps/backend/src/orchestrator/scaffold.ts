@@ -59,8 +59,11 @@ export async function ensureScaffold(workspace: string, projectPrompt: string): 
     await fs.writeFile(path.join(paths.systemPromptsDir, filename), content, 'utf8');
   }
 
-  // Original project prompt, preserved exactly as provided (may be any language).
-  await fs.writeFile(paths.projectPromptFile, projectPrompt, 'utf8');
+  // Original project prompt, preserved verbatim — written ONLY if absent so a re-scaffold
+  // never clobbers the user's original prompt (the sole file allowed to be non-English).
+  if (!(await fileExists(paths.projectPromptFile))) {
+    await fs.writeFile(paths.projectPromptFile, projectPrompt, 'utf8');
+  }
 
   // Seed config only if missing, so user customizations survive re-initialization.
   if (!(await fileExists(paths.configFile))) {

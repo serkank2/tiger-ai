@@ -19,6 +19,7 @@ export function defaultTigerConfig(): TigerConfig {
     cli: {
       claude: {
         executable: 'claude',
+        models: ['opus', 'sonnet', 'haiku', 'fable'],
         modelFlag: '--model',
         effortFlag: '--effort',
         extraArgs: [],
@@ -31,6 +32,7 @@ export function defaultTigerConfig(): TigerConfig {
       },
       codex: {
         executable: 'codex',
+        models: ['gpt-5.5', 'gpt-5-codex', 'gpt-5', 'gpt-5-mini', 'o3', 'o4-mini'],
         modelFlag: '-m',
         effortConfigKey: 'model_reasoning_effort',
         extraArgs: ['--no-alt-screen'],
@@ -44,12 +46,12 @@ export function defaultTigerConfig(): TigerConfig {
     defaults: {
       claudeAgents: 1,
       codexAgents: 1,
-      claudeModel: 'sonnet',
-      codexModel: '',
-      claudeEffort: 'medium',
-      codexEffort: 'medium',
-      claudePermission: 'acceptEdits',
-      codexPermission: 'workspace-write',
+      claudeModel: 'opus',
+      codexModel: 'gpt-5.5',
+      claudeEffort: 'xhigh',
+      codexEffort: 'high',
+      claudePermission: 'dangerous',
+      codexPermission: 'yolo',
       parallel: true,
     },
     timing: {
@@ -58,8 +60,16 @@ export function defaultTigerConfig(): TigerConfig {
       doneIdleMs: 60000,
       markerPollMs: 1500,
       agentTimeoutMs: 30 * 60 * 1000,
+      settleMaxWaitMs: 8000,
+      submitDelayMs: 800,
     },
-    execution: { parallel: true, locking: true, maxConcurrent: 4 },
+    execution: {
+      parallel: true,
+      locking: true,
+      maxConcurrent: 4,
+      lockTtlMs: 30 * 60 * 1000,
+      maxCorrectionCycles: 2,
+    },
   };
 }
 
@@ -75,7 +85,9 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
       claude: { ...def.cli.claude, ...(pcli.claude ?? {}) },
       codex: { ...def.cli.codex, ...(pcli.codex ?? {}) },
     },
-    defaults: { ...def.defaults, ...(p.defaults ?? {}) },
+    // Defaults are the seed values for the per-stage run config; keep them source-authoritative
+    // so changing them in code applies immediately, without a stale on-disk config.json overriding.
+    defaults: { ...def.defaults },
     timing: { ...def.timing, ...(p.timing ?? {}) },
     execution: { ...def.execution, ...(p.execution ?? {}) },
   };

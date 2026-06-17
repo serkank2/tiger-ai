@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   acquireLock,
+  isLockStale,
   parseExecutionResult,
   parseTasks,
   releaseLock,
@@ -135,6 +136,60 @@ test('acquireLock is exclusive and releasable', async () => {
     assert.match(body, /Agent ID: claude-01/);
     await releaseLock(lock);
     assert.equal(await acquireLock(lock, { taskId: 'TASK-001', agentId: 'codex-01', agentType: 'codex' }), true);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a live owner lock is not reclaimed, but a dead-PID lock is', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-stale-'));
+  try {
+    const lock = path.join(dir, 'TASK-002.lock');
+    // Lock owned by THIS (alive) process — not stale, cannot be reclaimed.
+    await acquireLock(lock, { taskId: 'TASK-002', agentId: 'claude-01', agentType: 'claude' });
+    assert.equal(await isLockStale(lock, 0), false);
+    assert.equal(
+      await acquireLock(lock, { taskId: 'TASK-002', agentId: 'codex-01', agentType: 'codex' }, { ttlMs: 60_000 }),
+      false,
+    );
+
+    // Overwrite with a dead PID → stale → reclaimable.
+    const dead = [
+      'Task ID: TASK-002',
+      'Agent ID: ghost',
+      'Agent Type: claude',
+      `Created: ${new Date().toISOString()}`,
+      'Process ID: 2147483646',
+      '',
+    ].join('\n');
+    await fs.writeFile(lock, dead, 'utf8');
+    assert.equal(await isLockStale(lock, 0), true);
+    assert.equal(
+      await acquireLock(lock, { taskId: 'TASK-002', agentId: 'codex-02', agentType: 'codex' }, { ttlMs: 60_000 }),
+      true,
+    );
+    assert.match(await fs.readFile(lock, 'utf8'), /Agent ID: codex-02/);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lock older than the TTL is stale', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-ttl-'));
+  try {
+    const lock = path.join(dir, 'TASK-003.lock');
+    const old = [
+      'Task ID: TASK-003',
+      'Agent ID: claude-01',
+      'Agent Type: claude',
+      'Created: 2020-01-01T00:00:00.000Z',
+      `Process ID: ${process.pid}`,
+      '',
+    ].join('\n');
+    await fs.writeFile(lock, old, 'utf8');
+    // Even though the PID is alive, the age exceeds the TTL.
+    assert.equal(await isLockStale(lock, 1000, Date.parse('2026-01-01T00:00:00.000Z')), true);
+    assert.equal(await isLockStale(lock, 0, Date.parse('2026-01-01T00:00:00.000Z')), false); // TTL disabled
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

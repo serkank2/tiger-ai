@@ -20,6 +20,8 @@ export interface ComposeOptions {
   resultsPath?: string;
   /** task-review only: the task ids assigned to this review agent. */
   reviewTaskIds?: string[];
+  /** Optional warning injected when an upstream stage was continued despite failures. */
+  warning?: string;
 }
 
 /** Background-agent preamble prepended to every composed prompt. */
@@ -94,6 +96,10 @@ export async function composePrompt(opts: ComposeOptions): Promise<string> {
   const systemPrompt = SYSTEM_PROMPT_BY_STAGE[stage];
 
   const sections: string[] = [preamble(opts)];
+
+  if (opts.warning) {
+    sections.push(`> ⚠ ${opts.warning}`);
+  }
 
   sections.push(`---\n\n# STAGE INSTRUCTIONS\n\n${systemPrompt}`);
 

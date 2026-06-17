@@ -66,6 +66,9 @@ export class Orchestrator extends EventEmitter {
   private currentStage: StageId | null = null;
   private stages: Record<StageId, StageState> = blankStages();
   private abort: AbortController | null = null;
+  private correctionCycles = 0;
+  /** When true, the next stage starts automatically after the current one completes successfully. */
+  private autoAdvance = false;
   /** Serializes read-modify-write of merged-tasks/tasks.md across parallel workers. */
   private tasksWrite: Promise<unknown> = Promise.resolve();
 
@@ -89,6 +92,9 @@ export class Orchestrator extends EventEmitter {
       busy: this.busy,
       stages: this.stages,
       tasks: this.tasksSummary,
+      correctionCycles: this.correctionCycles,
+      maxCorrectionCycles: this.config.execution.maxCorrectionCycles,
+      autoAdvance: this.autoAdvance,
     };
   }
 
@@ -105,9 +111,11 @@ export class Orchestrator extends EventEmitter {
     if (this.busy) throw httpError(409, 'a stage is currently running');
     this.paths = await ensureScaffold(workspace, projectPrompt);
     this.workspace = workspace;
-    this.projectPrompt = projectPrompt;
+    // The on-disk project-prompt.md is the source of truth (scaffold preserves an existing one).
+    this.projectPrompt = await fs.readFile(this.paths.projectPromptFile, 'utf8').catch(() => projectPrompt);
     this.config = await loadConfig(this.paths.configFile);
     this.initialized = true;
+    this.correctionCycles = 0;
     this.stages = blankStages();
     await this.deriveStagesFromDisk();
     await this.refreshTasks();
@@ -139,12 +147,16 @@ export class Orchestrator extends EventEmitter {
 
   // --- stage control ---
 
-  /** Validate + kick off a stage (non-blocking). Progress arrives via 'state' events. */
-  startStage(stageId: StageId, cfg: StageRunConfig): void {
+  /**
+   * Validate + kick off a stage (non-blocking). Progress arrives via 'state' events.
+   * When `auto` is true, the workflow auto-advances to the next stage on success.
+   */
+  startStage(stageId: StageId, cfg: StageRunConfig, auto = false): void {
     if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
     if (this.busy) throw httpError(409, 'a stage is already running');
     if (!STAGE_ORDER.includes(stageId)) throw httpError(400, 'unknown stage');
 
+    this.autoAdvance = auto;
     this.busy = true;
     this.currentStage = stageId;
     this.abort = new AbortController();
@@ -168,7 +180,52 @@ export class Orchestrator extends EventEmitter {
         this.abort = null;
         stage.endedAt = nowIso();
         this.emitState();
+        this.maybeAutoAdvance(stageId);
       });
+  }
+
+  /** After a stage finishes: if auto-advancing and it succeeded, start the next stage. */
+  private maybeAutoAdvance(stageId: StageId): void {
+    if (!this.autoAdvance) return;
+    const stage = this.stages[stageId];
+    if (stage.status !== 'completed') {
+      this.autoAdvance = false; // stop the chain on failure/stop
+      void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`);
+      this.emitState();
+      return;
+    }
+    const idx = STAGE_ORDER.indexOf(stageId);
+    const next = STAGE_ORDER[idx + 1];
+    if (!next) {
+      this.autoAdvance = false; // reached the final stage
+      this.emitState();
+      return;
+    }
+    void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
+    try {
+      this.startStage(next, this.defaultStageConfig(next), true);
+    } catch (err) {
+      this.autoAdvance = false;
+      this.stages[next].message = `Auto-advance failed to start: ${err instanceof Error ? err.message : String(err)}`;
+      this.emitState();
+    }
+  }
+
+  /** Build a stage run configuration from the saved defaults (used during auto-advance). */
+  private defaultStageConfig(_stageId: StageId): StageRunConfig {
+    const d = this.config.defaults;
+    return {
+      claudeAgents: d.claudeAgents,
+      codexAgents: d.codexAgents,
+      claudeModel: d.claudeModel,
+      codexModel: d.codexModel,
+      claudeEffort: d.claudeEffort,
+      codexEffort: d.codexEffort,
+      claudePermission: d.claudePermission,
+      codexPermission: d.codexPermission,
+      parallel: d.parallel,
+      mergeAgent: 'claude',
+    };
   }
 
   /** Re-run only the failed agents of a stage. */
@@ -179,6 +236,7 @@ export class Orchestrator extends EventEmitter {
     const failed = stage.runs.filter((r) => r.state === 'failed' || r.state === 'stopped');
     if (failed.length === 0) throw httpError(400, 'no failed agents to retry');
 
+    this.autoAdvance = false; // a manual retry never auto-advances
     this.busy = true;
     this.currentStage = stageId;
     this.abort = new AbortController();
@@ -207,8 +265,56 @@ export class Orchestrator extends EventEmitter {
   }
 
   stopStage(): void {
+    this.autoAdvance = false;
     this.abort?.abort();
     if (this.currentStage) this.stages[this.currentStage].message = 'Stopped by user.';
+  }
+
+  /** Explicit user decision to accept a stage's failures and let the workflow proceed. */
+  continueStage(stageId: StageId): void {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (!STAGE_ORDER.includes(stageId)) throw httpError(400, 'unknown stage');
+    this.stages[stageId].continued = true;
+    void logNote(
+      this.paths.runLogFile,
+      `User chose to CONTINUE DESPITE FAILURES at stage ${stageId} (${STAGE_META[stageId].title}).`,
+    );
+    this.emitState();
+  }
+
+  /** Route unresolved final-review issues back to Stage 5 or 6A, bounded by maxCorrectionCycles. */
+  routeCorrection(target: StageId): void {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (this.busy) throw httpError(409, 'a stage is currently running');
+    if (target !== 'executing-plan' && target !== 'task-review') {
+      throw httpError(400, 'correction can only be routed to executing-plan or task-review');
+    }
+    const max = this.config.execution.maxCorrectionCycles;
+    if (this.correctionCycles >= max) {
+      throw httpError(409, `correction cycle limit reached (${max}); resolve the remaining issues manually`);
+    }
+    this.correctionCycles += 1;
+    // Reset the target stage and everything downstream so the corrected work re-runs and re-validates.
+    const from = STAGE_ORDER.indexOf(target);
+    for (let i = from; i < STAGE_ORDER.length; i++) {
+      const s = STAGE_ORDER[i]!;
+      this.stages[s] = { id: s, status: 'not_started', runs: [] };
+    }
+    this.currentStage = target;
+    void logNote(
+      this.paths.runLogFile,
+      `Correction cycle ${this.correctionCycles}/${max}: routed unresolved issues back to ${STAGE_META[target].title}; downstream stages were reset.`,
+    );
+    this.emitState();
+  }
+
+  /** A warning to inject into downstream agent prompts when an upstream stage was continued. */
+  private upstreamContinuedWarning(stage: StageId): string | undefined {
+    const idx = STAGE_ORDER.indexOf(stage);
+    const continued = STAGE_ORDER.slice(0, idx).filter((s) => this.stages[s].continued);
+    if (!continued.length) return undefined;
+    const names = continued.map((s) => STAGE_META[s].title).join(', ');
+    return `Upstream stage(s) were continued despite failures: ${names}. Their outputs may be incomplete — proceed carefully and note any gaps you find.`;
   }
 
   // --- stage execution ---
@@ -309,12 +415,11 @@ export class Orchestrator extends EventEmitter {
       stage.runs.push(run);
       this.registerRun(run);
       this.emitState();
-      await acquireLock(paths.lockFile(task.id), {
-        taskId: task.id,
-        agentId: run.label,
-        agentType: type,
-        pid: process.pid,
-      }).catch(() => false);
+      await acquireLock(
+        paths.lockFile(task.id),
+        { taskId: task.id, agentId: run.label, agentType: type, pid: process.pid },
+        { ttlMs: this.config.execution.lockTtlMs },
+      ).catch(() => false);
       await this.patchTask(task.id, {
         executionStatus: 'in_progress',
         assignedAgent: run.label,
@@ -432,6 +537,7 @@ export class Orchestrator extends EventEmitter {
       markerPath: run.markerPath,
       taskId: run.taskId,
       ...extras,
+      warning: this.upstreamContinuedWarning(run.stage),
     });
     await fs.writeFile(run.promptPath, promptText, 'utf8');
     // Clear any stale marker so detection reflects this run only.

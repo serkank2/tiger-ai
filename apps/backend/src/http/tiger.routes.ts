@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { resolveExistingDir } from '../util/paths.js';
 import { STAGE_ORDER, type AgentType, type StageId, type StageRunConfig } from '../orchestrator/types.js';
+import { probeAllUsage } from '../orchestrator/usage.js';
 
 function badRequest(message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -92,7 +93,8 @@ export function createTigerRouter(ctx: AppCtx): Router {
       return;
     }
     const cfg = buildStageConfig(ctx, (req.body ?? {}) as Record<string, unknown>);
-    orch.startStage(stage, cfg);
+    const auto = (req.body as { auto?: unknown })?.auto === true;
+    orch.startStage(stage, cfg, auto);
     res.status(202).json(orch.getState());
   });
 
@@ -111,6 +113,28 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.json(orch.getState());
   });
 
+  // Explicitly accept a stage's failures and allow the workflow to proceed.
+  router.post('/stages/:stage/continue', (req, res) => {
+    const stage = req.params.stage;
+    if (!isStage(stage)) {
+      res.status(404).json({ error: { message: 'unknown stage' } });
+      return;
+    }
+    orch.continueStage(stage);
+    res.json(orch.getState());
+  });
+
+  // Route unresolved final-review issues back to Stage 5 (executing-plan) or 6A (task-review).
+  router.post('/route', (req, res) => {
+    const target = (req.body ?? {}) as { target?: unknown };
+    if (target.target !== 'executing-plan' && target.target !== 'task-review') {
+      res.status(400).json({ error: { message: 'target must be "executing-plan" or "task-review"' } });
+      return;
+    }
+    orch.routeCorrection(target.target);
+    res.status(202).json(orch.getState());
+  });
+
   router.get('/tasks', (_req, res) => {
     res.json(orch.getState().tasks ?? { total: 0, items: [] });
   });
@@ -118,6 +142,12 @@ export function createTigerRouter(ctx: AppCtx): Router {
   // Read any artifact within the tiger root (run-log.md, tasks.md, agent outputs, ...).
   router.get('/file', async (req, res) => {
     const result = await orch.readArtifact(String(req.query.path ?? ''));
+    res.json(result);
+  });
+
+  // Probe Claude/Codex usage panels (best-effort interactive scrape). Used by the limit widget.
+  router.get('/usage', async (_req, res) => {
+    const result = await probeAllUsage(ctx.manager);
     res.json(result);
   });
 

@@ -9,7 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/orchestrator/tasks.test.ts src/orchestrator/launch-command.test.ts src/orchestrator/compose.test.ts"
+    "test": "tsx --test --test-force-exit \"src/**/*.test.ts\""
   },
   "dependencies": {
     "cors": "^2.8.6",

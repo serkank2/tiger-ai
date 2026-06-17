@@ -161,6 +161,7 @@ export interface TigerStageState {
   startedAt?: string;
   endedAt?: string;
   message?: string;
+  continued?: boolean;
 }
 
 export interface TigerTaskItem {
@@ -187,10 +188,14 @@ export interface TigerState {
   busy: boolean;
   stages: Record<TigerStageId, TigerStageState>;
   tasks: TigerTaskSummary | null;
+  correctionCycles: number;
+  maxCorrectionCycles: number;
+  autoAdvance: boolean;
 }
 
 export interface TigerCliToolConfig {
   executable: string;
+  models?: string[];
   modelFlag: string;
   effortFlag?: string;
   effortConfigKey?: string;
@@ -216,6 +221,28 @@ export interface TigerConfig {
   defaults: TigerStageDefaults;
   timing: Record<string, number>;
   execution: { parallel: boolean; locking: boolean; maxConcurrent: number };
+}
+
+export interface TigerUsageEntry {
+  label: string;
+  percent: number;
+  metric: 'used' | 'left';
+  reset: string | null;
+}
+
+export interface TigerUsageProbe {
+  type: TigerAgentType;
+  ok: boolean;
+  entries: TigerUsageEntry[];
+  raw: string;
+  highlights: string[];
+  error?: string;
+  checkedAt: string;
+}
+
+export interface TigerUsage {
+  claude: TigerUsageProbe;
+  codex: TigerUsageProbe;
 }
 
 export interface TigerStageRunConfig {

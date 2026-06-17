@@ -50,9 +50,9 @@ export const useTigerStore = defineStore('tiger', () => {
     }
   }
 
-  async function runStage(stage: TigerStageId, cfg: TigerStageRunConfig) {
+  async function runStage(stage: TigerStageId, cfg: TigerStageRunConfig, auto = false) {
     try {
-      state.value = await api.runTigerStage(stage, cfg);
+      state.value = await api.runTigerStage(stage, cfg, auto);
     } catch (e) {
       notices.push(`Run failed: ${errText(e)}`, 'error');
     }
@@ -63,6 +63,24 @@ export const useTigerStore = defineStore('tiger', () => {
       state.value = await api.retryTigerStage(stage);
     } catch (e) {
       notices.push(`Retry failed: ${errText(e)}`, 'error');
+    }
+  }
+
+  async function continueStage(stage: TigerStageId) {
+    try {
+      state.value = await api.continueTigerStage(stage);
+      notices.push('Continuing despite failures', 'info');
+    } catch (e) {
+      notices.push(`Continue failed: ${errText(e)}`, 'error');
+    }
+  }
+
+  async function routeCorrection(target: 'executing-plan' | 'task-review') {
+    try {
+      state.value = await api.routeTigerCorrection(target);
+      notices.push(`Routed correction back to ${target}`, 'info');
+    } catch (e) {
+      notices.push(`Route failed: ${errText(e)}`, 'error');
     }
   }
 
@@ -92,6 +110,8 @@ export const useTigerStore = defineStore('tiger', () => {
     saveConfig,
     runStage,
     retryStage,
+    continueStage,
+    routeCorrection,
     stop,
     readFile,
   };

@@ -2,6 +2,7 @@
 import type { TerminalDto } from '~/types';
 import PromptComposerModal from '~/components/PromptComposerModal.vue';
 import TigerView from '~/components/tiger/TigerView.vue';
+import UsageWidget from '~/components/UsageWidget.vue';
 
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
@@ -96,6 +97,7 @@ onBeforeUnmount(() => {
     <GroupsModal v-if="showGroups" @close="showGroups = false" />
     <PromptComposerModal v-if="showComposer" @close="showComposer = false" />
     <SettingsModal v-if="showSettings && settings.settings" @close="showSettings = false" />
+    <UsageWidget />
     <NoticeToast />
   </div>
 </template>

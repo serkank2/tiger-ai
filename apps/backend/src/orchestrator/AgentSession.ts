@@ -64,22 +64,43 @@ export class AgentSession {
     );
   }
 
+  /** Wait until the PTY output goes idle (UI settled), or the CLI exits, or we abort. */
+  private async awaitIdle(
+    st: { lastOutputTs: number; sawOutput: boolean; exit: TerminalRuntimeStatus | null },
+    idleMs: number,
+    minWaitMs: number,
+    maxWaitMs: number,
+    signal: AbortSignal,
+  ): Promise<'idle' | 'exited' | 'aborted'> {
+    const start = Date.now();
+    while (true) {
+      if (signal.aborted) return 'aborted';
+      if (st.exit) return 'exited';
+      const idle = Date.now() - st.lastOutputTs;
+      const waited = Date.now() - start;
+      if ((st.sawOutput && idle >= idleMs && waited >= minWaitMs) || waited >= maxWaitMs) return 'idle';
+      await sleep(150, signal);
+    }
+  }
+
   async run(signal: AbortSignal): Promise<AgentRunResult> {
     const { manager, termId, timing } = this.o;
-    let lastOutputTs = Date.now();
-    let sawOutput = false;
-    // Held on an object: a `let` reassigned only inside a closure gets narrowed by TS to its
-    // initializer type (null), which then breaks property access at the read sites.
-    const exitBox: { value: TerminalRuntimeStatus | null } = { value: null };
+    // Shared mutable state updated from the manager event callbacks (held on one object so TS
+    // keeps the union types across the closures).
+    const st = {
+      lastOutputTs: Date.now(),
+      sawOutput: false,
+      exit: null as TerminalRuntimeStatus | null,
+    };
 
     const onOutput = (e: ManagerOutputEvent) => {
       if (e.termId === termId) {
-        lastOutputTs = Date.now();
-        sawOutput = true;
+        st.lastOutputTs = Date.now();
+        st.sawOutput = true;
       }
     };
     const onExit = (s: TerminalRuntimeStatus) => {
-      if (s.id === termId) exitBox.value = s;
+      if (s.id === termId) st.exit = s;
     };
     manager.on('output', onOutput);
     manager.on('exit', onExit);
@@ -101,30 +122,39 @@ export class AgentSession {
         return await finish({ state: 'failed', error: `failed to launch CLI: ${msg(err)}` });
       }
 
-      // --- wait for the CLI to be ready for input ---
+      // --- wait for the CLI to finish booting (its banner/trust dialog has rendered) ---
       this.o.onState?.('waiting_ready');
-      const readyStart = Date.now();
-      while (true) {
-        if (signal.aborted) return await finish({ state: 'stopped' });
-        const exReady = exitBox.value;
-        if (exReady) {
-          return await finish({
-            state: 'failed',
-            exitCode: exReady.exitCode,
-            error: 'the CLI exited before it was ready for input',
-          });
-        }
-        const idle = Date.now() - lastOutputTs;
-        const waited = Date.now() - readyStart;
-        if ((sawOutput && idle >= timing.readyIdleMs && waited >= 800) || waited >= timing.readyMaxWaitMs) break;
-        await sleep(200, signal);
+      const ready = await this.awaitIdle(st, timing.readyIdleMs, 800, timing.readyMaxWaitMs, signal);
+      if (ready === 'aborted') return await finish({ state: 'stopped' });
+      if (ready === 'exited') {
+        return await finish({
+          state: 'failed',
+          exitCode: st.exit?.exitCode ?? null,
+          error: 'the CLI exited before it was ready for input',
+        });
       }
 
-      // --- send the instruction ---
+      // --- deliver the instruction ---
+      // Real CLIs (Claude/Codex) pop a one-time "Do you trust this folder?" dialog on first launch
+      // and need their TUI input focused. So: (1) press Enter once — this accepts the trust dialog
+      // (its default option) and primes the input; (2) wait for the UI to settle; (3) type the
+      // instruction WITHOUT a newline; (4) brief pause so the box registers the text; (5) press
+      // Enter to submit. Sending text+Enter in one burst (the old behavior) was dropped by the TUI.
       if (signal.aborted) return await finish({ state: 'stopped' });
-      manager.write(termId, this.instruction() + '\r');
+      manager.write(termId, '\r'); // 1. accept trust dialog / focus input
+      const settled = await this.awaitIdle(st, timing.readyIdleMs, 300, timing.settleMaxWaitMs, signal);
+      if (settled === 'aborted') return await finish({ state: 'stopped' });
+      // (if it 'exited' here, the completion loop below will detect the exit and validate output)
+
+      if (!st.exit) {
+        manager.write(termId, this.instruction()); // 2. + 3. type the instruction
+        await sleep(timing.submitDelayMs, signal); // 4. let the input register the text
+        if (signal.aborted) return await finish({ state: 'stopped' });
+        manager.write(termId, '\r'); // 5. submit
+      }
+
       this.o.onState?.('running');
-      lastOutputTs = Date.now();
+      st.lastOutputTs = Date.now();
       const runStart = Date.now();
 
       // --- detect completion ---
@@ -142,7 +172,7 @@ export class AgentSession {
           );
         }
 
-        const exPoll = exitBox.value;
+        const exPoll = st.exit;
         if (exPoll) {
           const chk = await checkOutputFile(this.o.outputPath);
           return await finish(
@@ -157,7 +187,7 @@ export class AgentSession {
           );
         }
 
-        const idle = Date.now() - lastOutputTs;
+        const idle = Date.now() - st.lastOutputTs;
         if (timing.doneIdleMs > 0 && idle >= timing.doneIdleMs) {
           const chk = await checkOutputFile(this.o.outputPath);
           if (chk.ok) return await finish({ state: 'completed', completion: 'idle' });

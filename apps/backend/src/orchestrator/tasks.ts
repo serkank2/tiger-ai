@@ -193,33 +193,91 @@ export interface LockInfo {
   pid?: number;
 }
 
-/** Try to claim a task lock. Returns true if acquired, false if already held. */
-export async function acquireLock(lockFile: string, info: LockInfo): Promise<boolean> {
-  await fs.mkdir(path.dirname(lockFile), { recursive: true });
-  let fh;
+export interface AcquireLockOptions {
+  /** If a lock is held but stale (owner PID dead or older than this), reclaim it. 0 disables TTL. */
+  ttlMs?: number;
+  /** Injectable clock for tests. */
+  nowMs?: number;
+}
+
+function lockBody(info: LockInfo): string {
+  return [
+    `Task ID: ${info.taskId}`,
+    `Agent ID: ${info.agentId}`,
+    `Agent Type: ${info.agentType}`,
+    `Created: ${new Date().toISOString()}`,
+    `Process ID: ${info.pid ?? process.pid}`,
+    '',
+  ].join('\n');
+}
+
+function parseLockMeta(body: string): { pid?: number; createdMs?: number } {
+  const pidM = /Process ID:\s*(\d+)/.exec(body);
+  const createdM = /Created:\s*(.+)/.exec(body);
+  const pid = pidM && pidM[1] ? Number(pidM[1]) : undefined;
+  const createdMs = createdM && createdM[1] ? Date.parse(createdM[1].trim()) : NaN;
+  return { pid, createdMs: Number.isNaN(createdMs) ? undefined : createdMs };
+}
+
+/** Is a PID currently alive? (signal 0 probes existence; EPERM means it exists but is not ours.) */
+function pidAlive(pid?: number): boolean {
+  if (pid === undefined || !Number.isFinite(pid) || pid <= 0) return false;
   try {
-    fh = await fs.open(lockFile, 'wx');
+    process.kill(pid, 0);
+    return true;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') return false;
-    throw err;
+    return (err as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
+
+/** A lock is stale if it is gone, its owner process is dead, or it exceeds the TTL. */
+export async function isLockStale(lockFile: string, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+  const body = await fs.readFile(lockFile, 'utf8').catch(() => null);
+  if (body == null) return true; // already gone — effectively free
+  const { pid, createdMs } = parseLockMeta(body);
+  if (pid !== undefined && !pidAlive(pid)) return true; // crashed owner
+  if (ttlMs > 0 && createdMs !== undefined && nowMs - createdMs > ttlMs) return true; // expired
+  return false;
+}
+
+/**
+ * Try to claim a task lock via atomic exclusive create. Returns true if acquired, false if held
+ * by a live owner. A stale lock (dead owner PID or older than ttlMs) is reclaimed and re-acquired.
+ */
+export async function acquireLock(
+  lockFile: string,
+  info: LockInfo,
+  opts: AcquireLockOptions = {},
+): Promise<boolean> {
+  await fs.mkdir(path.dirname(lockFile), { recursive: true });
+
+  const tryCreate = async (): Promise<import('node:fs/promises').FileHandle | null> => {
+    try {
+      return await fs.open(lockFile, 'wx');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') return null;
+      throw err;
+    }
+  };
+
+  let fh = await tryCreate();
+  if (!fh) {
+    const ttl = opts.ttlMs ?? 0;
+    if (await isLockStale(lockFile, ttl, opts.nowMs)) {
+      await fs.unlink(lockFile).catch(() => {}); // reclaim
+      fh = await tryCreate();
+    }
+    if (!fh) return false; // held by a live owner
   }
   try {
-    const body = [
-      `Task ID: ${info.taskId}`,
-      `Agent ID: ${info.agentId}`,
-      `Agent Type: ${info.agentType}`,
-      `Created: ${new Date().toISOString()}`,
-      `Process ID: ${info.pid ?? process.pid}`,
-      '',
-    ].join('\n');
-    await fh.writeFile(body, 'utf8');
+    await fh.writeFile(lockBody(info), 'utf8');
   } finally {
     await fh.close();
   }
   return true;
 }
 
-/** Release a task lock (best-effort; missing lock is fine). */
+/** Release a task lock (best-effort; missing lock / double-release is fine). */
 export async function releaseLock(lockFile: string): Promise<void> {
   await fs.unlink(lockFile).catch(() => {});
 }

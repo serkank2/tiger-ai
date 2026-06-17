@@ -10,6 +10,7 @@ import type {
   TigerStageId,
   TigerStageRunConfig,
   TigerState,
+  TigerUsage,
 } from '~/types';
 
 interface Size {
@@ -72,12 +73,17 @@ export function useApi() {
       req<TigerConfig>('/api/tiger/config', { method: 'PUT', body }),
     initTigerWorkspace: (path: string, projectPrompt: string) =>
       req<TigerState>('/api/tiger/workspace', { method: 'POST', body: { path, projectPrompt } }),
-    runTigerStage: (stage: TigerStageId, cfg: TigerStageRunConfig) =>
-      req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: cfg }),
+    runTigerStage: (stage: TigerStageId, cfg: TigerStageRunConfig, auto = false) =>
+      req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: { ...cfg, auto } }),
     retryTigerStage: (stage: TigerStageId) =>
       req<TigerState>(`/api/tiger/stages/${stage}/retry`, { method: 'POST' }),
+    continueTigerStage: (stage: TigerStageId) =>
+      req<TigerState>(`/api/tiger/stages/${stage}/continue`, { method: 'POST' }),
+    routeTigerCorrection: (target: 'executing-plan' | 'task-review') =>
+      req<TigerState>('/api/tiger/route', { method: 'POST', body: { target } }),
     stopTiger: () => req<TigerState>('/api/tiger/stop', { method: 'POST' }),
     readTigerFile: (path: string) =>
       req<{ path: string; content: string }>(`/api/tiger/file?path=${encodeURIComponent(path)}`),
+    getTigerUsage: () => req<TigerUsage>('/api/tiger/usage'),
   };
 }
