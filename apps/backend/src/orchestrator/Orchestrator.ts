@@ -136,6 +136,23 @@ export class Orchestrator extends EventEmitter {
 
   private tasksSummary: OrchestratorState['tasks'] = null;
   private findingsSummary: FindingsSummary | null = null;
+  /** Serializes task/finding claims so concurrent workers never select the same item. */
+  private claimGate: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Run a claim strictly after any in-flight claim completes (a single-process mutex). File-level
+   * atomicity (O_EXCL locks + atomic rename) is kept as a backstop, but serializing here removes the
+   * race entirely: each claim's readdir sees the previous claim's rename, so every agent gets a
+   * distinct task/finding and the status updates stick.
+   */
+  private serializeClaim<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.claimGate.then(fn, fn);
+    this.claimGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   private emitState(): void {
     this.emit('state', this.getState());
@@ -480,13 +497,15 @@ export class Orchestrator extends EventEmitter {
     // (queue drained) simply never creates a run, so extra agents beyond the task count never start.
     const processTask = async (type: AgentType): Promise<boolean> => {
       const index = ++counter;
-      const claimed = await claimNextTaskFile(
-        paths.tasksDir,
-        agentLabel(type, index),
-        nowIso(),
-        this.config.execution.locking
-          ? { locksDir: paths.locksDir, agentType: type, ttlMs: this.config.execution.lockTtlMs }
-          : undefined,
+      const claimed = await this.serializeClaim(() =>
+        claimNextTaskFile(
+          paths.tasksDir,
+          agentLabel(type, index),
+          nowIso(),
+          this.config.execution.locking
+            ? { locksDir: paths.locksDir, agentType: type, ttlMs: this.config.execution.lockTtlMs }
+            : undefined,
+        ),
       );
       if (!claimed) return false;
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
@@ -582,11 +601,13 @@ export class Orchestrator extends EventEmitter {
       const processFinding = async (type: AgentType): Promise<boolean> => {
         const index = ++counter;
         const label = agentLabel(type, index);
-        const claimed = await claimNextFinding(
-          paths.findingsDir,
-          this.config.execution.locking
-            ? { locksDir: paths.findingLocksDir, agentId: label, agentType: type, ttlMs: this.config.execution.lockTtlMs }
-            : undefined,
+        const claimed = await this.serializeClaim(() =>
+          claimNextFinding(
+            paths.findingsDir,
+            this.config.execution.locking
+              ? { locksDir: paths.findingLocksDir, agentId: label, agentType: type, ttlMs: this.config.execution.lockTtlMs }
+              : undefined,
+          ),
         );
         if (!claimed) return false;
         const run = this.makeRun('task-review', type, index, cfg, claimed.id);
