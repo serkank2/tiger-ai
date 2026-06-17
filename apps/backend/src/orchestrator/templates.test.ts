@@ -18,7 +18,7 @@ test('built-in templates are present, uniquely named, and cover stages', () => {
   assert.equal(thorough.configs['executing-plan']?.claudeModel, 'opus');
   assert.equal(thorough.configs['executing-plan']?.codexModel, 'gpt-5.5');
   assert.equal(thorough.configs['executing-plan']?.claudeEffort, 'xhigh');
-  assert.equal(thorough.configs['executing-plan']?.codexEffort, 'high');
+  assert.equal(thorough.configs['executing-plan']?.codexEffort, 'xhigh');
   assert.equal(thorough.configs['executing-plan']?.claudeAgents, 3);
   assert.equal(thorough.configs['executing-plan']?.codexAgents, 2);
 });
