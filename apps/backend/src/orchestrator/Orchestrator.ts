@@ -431,11 +431,13 @@ export class Orchestrator extends EventEmitter {
     let counter = 0;
     // Claim + implement exactly one task with the given agent type. The claim is an atomic file
     // rename (not_started -> in_progress); the filename is the lock. Returns false when none remain.
+    // `++counter` is synchronous (runs before the first await), so concurrent workers always get a
+    // UNIQUE index — and therefore a unique label and output-log file. A worker that claims nothing
+    // (queue drained) simply never creates a run, so extra agents beyond the task count never start.
     const processTask = async (type: AgentType): Promise<boolean> => {
-      const index = counter + 1;
+      const index = ++counter;
       const claimed = await claimNextTaskFile(paths.tasksDir, agentLabel(type, index), nowIso());
       if (!claimed) return false;
-      counter = index;
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
       stage.runs.push(run);
       this.registerRun(run);
