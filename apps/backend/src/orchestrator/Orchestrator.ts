@@ -72,6 +72,8 @@ export class Orchestrator extends EventEmitter {
   private correctionCycles = 0;
   /** When true, the next stage starts automatically after the current one completes successfully. */
   private autoAdvance = false;
+  /** Per-stage configs used during an auto run (Run All). Falls back to defaults when a stage is absent. */
+  private autoConfigs: Partial<Record<StageId, StageRunConfig>> = {};
 
   constructor(private readonly manager: TerminalManager) {
     super();
@@ -185,6 +187,20 @@ export class Orchestrator extends EventEmitter {
       });
   }
 
+  /** Configure-all-then-run: auto-advance from `fromStage` using a per-stage config map. */
+  startAll(configs: Partial<Record<StageId, StageRunConfig>>, fromStage?: StageId): void {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (this.busy) throw httpError(409, 'a stage is already running');
+    this.autoConfigs = configs;
+    const start =
+      fromStage && STAGE_ORDER.includes(fromStage) ? fromStage : this.firstIncompleteStage();
+    this.startStage(start, configs[start] ?? this.defaultStageConfig(start), true);
+  }
+
+  private firstIncompleteStage(): StageId {
+    return STAGE_ORDER.find((s) => this.stages[s].status !== 'completed') ?? 'brainstorming';
+  }
+
   /** After a stage finishes: if auto-advancing and it succeeded, start the next stage. */
   private maybeAutoAdvance(stageId: StageId): void {
     if (!this.autoAdvance) return;
@@ -204,7 +220,7 @@ export class Orchestrator extends EventEmitter {
     }
     void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
     try {
-      this.startStage(next, this.defaultStageConfig(next), true);
+      this.startStage(next, this.autoConfigs[next] ?? this.defaultStageConfig(next), true);
     } catch (err) {
       this.autoAdvance = false;
       this.stages[next].message = `Auto-advance failed to start: ${err instanceof Error ? err.message : String(err)}`;

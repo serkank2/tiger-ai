@@ -144,6 +144,20 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.status(202).json(orch.getState());
   });
 
+  // Configure every stage, then auto-run them all using each stage's own config.
+  router.post('/run-all', (req, res) => {
+    const body = (req.body ?? {}) as { configs?: Record<string, unknown>; fromStage?: unknown };
+    const raw = body.configs && typeof body.configs === 'object' ? (body.configs as Record<string, unknown>) : {};
+    const configs: Partial<Record<StageId, StageRunConfig>> = {};
+    for (const stage of STAGE_ORDER) {
+      const entry = raw[stage];
+      if (entry && typeof entry === 'object') configs[stage] = buildStageConfig(ctx, entry as Record<string, unknown>);
+    }
+    const fromStage = typeof body.fromStage === 'string' && isStage(body.fromStage) ? body.fromStage : undefined;
+    orch.startAll(configs, fromStage);
+    res.status(202).json(orch.getState());
+  });
+
   router.post('/stages/:stage/retry', (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {

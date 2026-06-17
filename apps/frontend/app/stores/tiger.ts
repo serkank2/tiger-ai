@@ -94,6 +94,14 @@ export const useTigerStore = defineStore('tiger', () => {
     }
   }
 
+  async function runAll(configs: Partial<Record<TigerStageId, TigerStageRunConfig>>, fromStage?: TigerStageId) {
+    try {
+      state.value = await api.runAllTiger(configs, fromStage);
+    } catch (e) {
+      notices.push(`Run all failed: ${errText(e)}`, 'error');
+    }
+  }
+
   async function retryStage(stage: TigerStageId) {
     try {
       state.value = await api.retryTigerStage(stage);
@@ -150,6 +158,7 @@ export const useTigerStore = defineStore('tiger', () => {
     initWorkspace,
     saveConfig,
     runStage,
+    runAll,
     retryStage,
     continueStage,
     routeCorrection,

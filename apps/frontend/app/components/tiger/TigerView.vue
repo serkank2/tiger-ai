@@ -7,6 +7,7 @@ import AgentTile from '~/components/tiger/AgentTile.vue';
 import TaskBoard from '~/components/tiger/TaskBoard.vue';
 import RunLogView from '~/components/tiger/RunLogView.vue';
 import ProjectLauncher from '~/components/tiger/ProjectLauncher.vue';
+import RunAllModal from '~/components/tiger/RunAllModal.vue';
 
 const emit = defineEmits<{ back: [] }>();
 const tiger = useTigerStore();
@@ -24,6 +25,7 @@ const STAGES: { id: TigerStageId; num: string; title: string }[] = [
 
 // --- setup (uninitialized) ---
 const showPicker = ref(false);
+const showRunAll = ref(false);
 const workspacePath = ref('');
 const projectPrompt = ref('');
 const initializing = ref(false);
@@ -211,10 +213,10 @@ onMounted(() => {
           <button
             class="run-all"
             :disabled="tiger.busy"
-            title="Run this stage and automatically advance through the remaining stages"
-            @click="runStage(true)"
+            title="Configure every stage, then run them all automatically"
+            @click="showRunAll = true"
           >
-            ▶▶ Run all
+            ▶▶ Run all…
           </button>
         </div>
 
@@ -264,6 +266,7 @@ onMounted(() => {
       @select="(p) => { workspacePath = p; showPicker = false; }"
       @close="showPicker = false"
     />
+    <RunAllModal v-if="showRunAll" @close="showRunAll = false" />
   </div>
 </template>
 
