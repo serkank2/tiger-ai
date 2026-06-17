@@ -8,6 +8,7 @@ import type {
   TerminalStatus,
   TigerConfig,
   TigerProjectInfo,
+  TigerRunTemplate,
   TigerStageId,
   TigerStageRunConfig,
   TigerState,
@@ -84,6 +85,11 @@ export function useApi() {
       req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: { ...cfg, auto } }),
     runAllTiger: (configs: Partial<Record<TigerStageId, TigerStageRunConfig>>, fromStage?: TigerStageId) =>
       req<TigerState>('/api/tiger/run-all', { method: 'POST', body: { configs, fromStage } }),
+    listTigerTemplates: () => req<TigerRunTemplate[]>('/api/tiger/templates'),
+    saveTigerTemplate: (t: TigerRunTemplate) =>
+      req<TigerRunTemplate[]>('/api/tiger/templates', { method: 'POST', body: t }),
+    deleteTigerTemplate: (name: string) =>
+      req<TigerRunTemplate[]>(`/api/tiger/templates?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
     retryTigerStage: (stage: TigerStageId) =>
       req<TigerState>(`/api/tiger/stages/${stage}/retry`, { method: 'POST' }),
     continueTigerStage: (stage: TigerStageId) =>

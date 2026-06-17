@@ -188,6 +188,14 @@ export interface TigerFindingsSummary {
   wontfix: number;
 }
 
+export interface TigerRunTemplate {
+  name: string;
+  description?: string;
+  fromStage?: TigerStageId;
+  builtin?: boolean;
+  configs: Partial<Record<TigerStageId, TigerStageRunConfig>>;
+}
+
 export interface TigerProjectInfo {
   path: string;
   tigerRoot: string;

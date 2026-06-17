@@ -113,6 +113,10 @@ export class TigerPaths {
   get findingsDir(): string {
     return path.join(this.root, 'task-review', 'findings');
   }
+  /** Directory of saved Run All templates (one .md file per template). */
+  get runTemplatesDir(): string {
+    return path.join(this.root, 'run-templates');
+  }
   get locksDir(): string {
     return path.join(this.root, 'executing-plan', 'locks');
   }

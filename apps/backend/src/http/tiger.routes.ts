@@ -158,6 +158,35 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.status(202).json(orch.getState());
   });
 
+  // --- Run All templates (built-in + the project's custom .md templates) ---
+  router.get('/templates', async (_req, res) => {
+    res.json(await orch.listRunTemplates());
+  });
+  router.post('/templates', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      name?: unknown;
+      description?: unknown;
+      fromStage?: unknown;
+      configs?: Record<string, unknown>;
+    };
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) throw badRequest('template name is required');
+    const raw = body.configs && typeof body.configs === 'object' ? (body.configs as Record<string, unknown>) : {};
+    const configs: Partial<Record<StageId, StageRunConfig>> = {};
+    for (const stage of STAGE_ORDER) {
+      const entry = raw[stage];
+      if (entry && typeof entry === 'object') configs[stage] = buildStageConfig(ctx, entry as Record<string, unknown>);
+    }
+    const fromStage = typeof body.fromStage === 'string' && isStage(body.fromStage) ? body.fromStage : undefined;
+    const description = typeof body.description === 'string' ? body.description : undefined;
+    res.json(await orch.saveRunTemplate({ name, description, fromStage, configs }));
+  });
+  router.delete('/templates', async (req, res) => {
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    if (!name) throw badRequest('template name is required');
+    res.json(await orch.deleteRunTemplate(name));
+  });
+
   router.post('/stages/:stage/retry', (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {

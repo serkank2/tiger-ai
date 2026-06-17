@@ -290,3 +290,15 @@ export interface OrchestratorState {
   /** Whether the workflow is currently auto-advancing through stages. */
   autoAdvance: boolean;
 }
+
+/** A saved Run All configuration: per-stage configs + where to start. Stored as a .md file. */
+export interface RunTemplate {
+  name: string;
+  description?: string;
+  /** Which stage the auto-run should start from. */
+  fromStage?: StageId;
+  /** Built-in templates ship with the app and cannot be deleted. */
+  builtin?: boolean;
+  /** Per-stage run configuration. */
+  configs: Partial<Record<StageId, StageRunConfig>>;
+}

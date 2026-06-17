@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { TigerStageId, TigerStageRunConfig } from '~/types';
+import type { TigerRunTemplate, TigerStageId, TigerStageRunConfig } from '~/types';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const tiger = useTigerStore();
+const api = useApi();
 
 const STAGES: { id: TigerStageId; num: string; title: string; opt?: boolean }[] = [
   { id: 'brainstorming', num: '1', title: 'Brainstorming', opt: true },
@@ -60,6 +61,60 @@ async function start() {
   starting.value = false;
   emit('close');
 }
+
+// --- templates ---
+const templates = ref<TigerRunTemplate[]>([]);
+const appliedName = ref<string | null>(null);
+const showSave = ref(false);
+const newName = ref('');
+const newDesc = ref('');
+
+onMounted(async () => {
+  try {
+    templates.value = await api.listTigerTemplates();
+  } catch {
+    /* leave empty */
+  }
+});
+
+function applyTemplate(t: TigerRunTemplate) {
+  for (const s of STAGES) {
+    const c = t.configs?.[s.id];
+    if (c) stageConfigs[s.id] = { ...freshCfg(), ...c };
+  }
+  if (t.fromStage) fromStage.value = t.fromStage;
+  appliedName.value = t.name;
+}
+
+async function doSave() {
+  const name = newName.value.trim();
+  if (!name) return;
+  const configs: Partial<Record<TigerStageId, TigerStageRunConfig>> = {};
+  for (const s of STAGES) configs[s.id] = { ...stageConfigs[s.id]! };
+  try {
+    templates.value = await api.saveTigerTemplate({
+      name,
+      description: newDesc.value.trim() || undefined,
+      fromStage: fromStage.value,
+      configs,
+    });
+    appliedName.value = name;
+    showSave.value = false;
+    newName.value = '';
+    newDesc.value = '';
+  } catch {
+    /* ignore */
+  }
+}
+
+async function removeTemplate(t: TigerRunTemplate) {
+  try {
+    templates.value = await api.deleteTigerTemplate(t.name);
+    if (appliedName.value === t.name) appliedName.value = null;
+  } catch {
+    /* ignore */
+  }
+}
 </script>
 
 <template>
@@ -70,7 +125,31 @@ async function start() {
         <span class="spacer" />
         <button class="ic" title="Close" @click="emit('close')">✕</button>
       </header>
-      <p class="lead">Set each stage's agents, then start — the system runs every stage automatically with these settings.</p>
+      <p class="lead">Pick a template or tune each stage, then start — the system runs every stage automatically with these settings.</p>
+
+      <div class="tpl-bar">
+        <span class="tpl-label">Templates</span>
+        <button
+          v-for="t in templates"
+          :key="t.name"
+          type="button"
+          class="tpl"
+          :class="{ on: appliedName === t.name }"
+          :title="t.description || t.name"
+          @click="applyTemplate(t)"
+        >
+          {{ t.name }}
+          <span v-if="t.builtin" class="tag">built-in</span>
+          <span v-else class="del" title="Delete template" @click.stop="removeTemplate(t)">✕</span>
+        </button>
+        <button type="button" class="tpl add" @click="showSave = !showSave">＋ Save current…</button>
+      </div>
+      <div v-if="showSave" class="save-row">
+        <input v-model="newName" placeholder="Template name" />
+        <input v-model="newDesc" placeholder="Description (optional)" />
+        <button type="button" class="mini" :disabled="!newName.trim()" @click="doSave">Save</button>
+        <button type="button" class="mini ghost" @click="showSave = false">Cancel</button>
+      </div>
 
       <label class="from">
         <span>Start from</span>
@@ -154,6 +233,88 @@ async function start() {
   color: var(--text-dim);
   font-size: 13px;
   margin: 8px 0 12px;
+}
+.tpl-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.tpl-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+.tpl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+.tpl:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.tpl.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tpl.add {
+  border-style: dashed;
+}
+.tpl .tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.tpl .del {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.tpl .del:hover {
+  color: var(--red);
+}
+.save-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.save-row input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+}
+.mini {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #1b1206;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+.mini.ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+}
+.mini:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .from {
   display: flex;

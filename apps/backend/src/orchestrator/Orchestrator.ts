@@ -11,6 +11,7 @@ import type {
   OrchestratorState,
   ProjectInfo,
   ReviewStatus,
+  RunTemplate,
   StageId,
   StageRunConfig,
   StageState,
@@ -46,6 +47,7 @@ import {
   summarizeFindings,
   type FindingsSummary,
 } from './findings.js';
+import { deleteTemplate, listTemplates, saveTemplate } from './templates.js';
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -214,6 +216,25 @@ export class Orchestrator extends EventEmitter {
 
   private firstIncompleteStage(): StageId {
     return STAGE_ORDER.find((s) => this.stages[s].status !== 'completed') ?? 'brainstorming';
+  }
+
+  // --- Run All templates ---
+
+  /** Built-in templates plus the active project's custom templates. */
+  listRunTemplates(): Promise<RunTemplate[]> {
+    return listTemplates(this.paths?.runTemplatesDir ?? null);
+  }
+
+  async saveRunTemplate(t: RunTemplate): Promise<RunTemplate[]> {
+    if (!this.paths) throw httpError(400, 'open a project before saving a template');
+    await saveTemplate(this.paths.runTemplatesDir, t);
+    return this.listRunTemplates();
+  }
+
+  async deleteRunTemplate(name: string): Promise<RunTemplate[]> {
+    if (!this.paths) throw httpError(400, 'open a project first');
+    await deleteTemplate(this.paths.runTemplatesDir, name);
+    return this.listRunTemplates();
   }
 
   /** After a stage finishes: if auto-advancing and it succeeded, start the next stage. */
