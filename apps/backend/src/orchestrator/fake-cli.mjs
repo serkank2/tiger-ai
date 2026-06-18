@@ -91,8 +91,31 @@ async function act(chunk) {
   }
 }
 
+// team-loop: a PERSISTENT session — re-derive the output/marker paths from EACH
+// instruction's prompt file and write them, without exiting, so one CLI can serve
+// many prompts (exercises RoleCliSession's reuse across turns).
+async function actLoop(text) {
+  const promptMatch = /read the file "([^"]+)"/i.exec(text);
+  if (!promptMatch?.[1]) return;
+  const prompt = await fs.readFile(promptMatch[1], 'utf8').catch(() => '');
+  const o = /Save your deliverable to exactly this file \(absolute path\):\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
+  const m = /write the single word "done" into it:\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
+  if (!o || !m) return;
+  await fs.writeFile(
+    o,
+    ['```TeamMessage', JSON.stringify({ kind: 'chat', to: 'all', body: 'Fake persistent turn done.' }), '```', ''].join('\n'),
+    'utf8',
+  );
+  await fs.writeFile(m, 'done', 'utf8');
+  // stay alive for the next prompt
+}
+
 let triggered = false;
 process.stdin.on('data', (chunk) => {
+  if (mode === 'team-loop') {
+    void actLoop(String(chunk ?? ''));
+    return;
+  }
   if (!triggered) {
     if ((!out || !marker) && !/read the file "/i.test(String(chunk ?? ''))) return;
     triggered = true;

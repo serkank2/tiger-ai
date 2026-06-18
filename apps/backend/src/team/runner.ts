@@ -3,6 +3,7 @@ import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import { AgentSession, type AgentRunResult } from '../orchestrator/AgentSession.js';
+import type { RoleCliSession } from './role-session.js';
 import { buildLaunchCommand, type LaunchParams } from '../orchestrator/launch-command.js';
 import type { TigerConfig } from '../orchestrator/types.js';
 import type { TigerPaths } from '../orchestrator/paths.js';
@@ -43,6 +44,14 @@ export interface RunRoleTurnOptions {
   signal?: AbortSignal;
   /** Caller-supplied turn id; makes the live terminal id deterministic for the UI. */
   turnId?: string;
+  /** Stable terminal id to use (per-role for persistent sessions); defaults to per-turn. */
+  terminalId?: string;
+  /**
+   * A live, persistent CLI session to feed this turn's prompt to. When provided, the
+   * turn reuses the running REPL (preserving context) instead of launching a fresh
+   * one-shot AgentSession. Standalone callers omit it for the one-shot path.
+   */
+  session?: RoleCliSession;
   /**
    * Whether this turn appends its parsed messages to the run's `conversation.jsonl`.
    * Standalone callers leave this `true` so the runner owns persistence. When the
@@ -74,11 +83,15 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
   // id so the live terminal id is deterministic and known to the UI before the turn
   // finishes); otherwise generate one for standalone callers.
   const turnId = opts.turnId ?? nanoid();
+  // The team works on the REAL project, so the agent's working directory is the
+  // workspace (project root), not the .tiger metadata root. Team bookkeeping (prompt,
+  // output, marker) still lives under .tiger via the absolute paths below.
+  const workspace = path.dirname(runOpts.paths.root);
   const runtimeDir = teamRuntimeDir(runOpts.paths, runOpts.runId);
   const promptPath = path.join(runtimeDir, `${turnId}.prompt.md`);
   const outputPath = path.join(runtimeDir, `${turnId}.output.md`);
   const markerPath = path.join(runtimeDir, `${turnId}.done`);
-  const terminalId = safeTerminalId(`team-${runOpts.runId}-${turnId}`);
+  const terminalId = opts.terminalId ?? safeTerminalId(`team-${runOpts.runId}-${turnId}`);
   // Build launch params from the raw opts.role, NOT the normalized runOpts.role:
   // normalizeTeamRole() keeps only { id, name, agentType, persona, responsibilities } and drops the
   // role's agent/model/effort/permission. roleLaunchParams must see the un-normalized role so
@@ -111,7 +124,7 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     id: terminalId,
     name: `${role.name} (${turnId.slice(0, 6)})`,
     groupId: null,
-    cwd: runOpts.paths.root,
+    cwd: workspace,
     initialCommand: command,
     shell: { kind: 'system-default' },
     protected: true,
@@ -119,19 +132,29 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     updatedAt: now,
   });
 
-  const session = new AgentSession({
-    manager: opts.manager,
-    termId: terminalId,
-    label: role.id,
-    command,
-    cwd: runOpts.paths.root,
-    promptPath,
-    outputPath,
-    markerPath,
-    timing: runOpts.config.timing,
-  });
-
-  const sessionResult = await session.run(runOpts.signal ?? new AbortController().signal);
+  const signal = runOpts.signal ?? new AbortController().signal;
+  let sessionResult: AgentRunResult;
+  if (opts.session) {
+    // Persistent path: feed this prompt to the role's live REPL, which retains its
+    // context across turns instead of relaunching the CLI every turn.
+    opts.session.noteFed(composed.size.characters);
+    const r = await opts.session.runPrompt({ promptPath, outputPath, markerPath, signal });
+    sessionResult = { state: r.state, exitCode: r.exitCode, error: r.error };
+  } else {
+    // One-shot path (standalone / Tiger-style): launch, prompt, wait, stop.
+    const session = new AgentSession({
+      manager: opts.manager,
+      termId: terminalId,
+      label: role.id,
+      command,
+      cwd: workspace,
+      promptPath,
+      outputPath,
+      markerPath,
+      timing: runOpts.config.timing,
+    });
+    sessionResult = await session.run(signal);
+  }
   const parsed = await parseCompletedOrBlocker(runOpts, turnId, outputPath, sessionResult);
   // When an orchestrator drives the turn it owns conversation persistence (and seq
   // assignment), so we only parse-and-return; standalone callers persist here.
@@ -335,6 +358,11 @@ async function appendJsonLine(file: string, value: unknown): Promise<void> {
 
 function safeTerminalId(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+/** Stable per-role terminal id for a run — one live CLI session per role. */
+export function teamRoleTerminalId(runId: string, roleId: string): string {
+  return safeTerminalId(`team-${runId}-${roleId}`);
 }
 
 function messageOf(err: unknown): string {

@@ -440,7 +440,7 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  async function control(action: 'stop' | 'pause' | 'resume', runId?: string): Promise<TeamRunState> {
+  async function control(action: 'stop' | 'pause' | 'resume' | 'close', runId?: string): Promise<TeamRunState> {
     const key = `${action}:${runId ?? activeRunId.value ?? 'active'}`;
     setBusy(key, true);
     actionError.value = null;
@@ -451,11 +451,15 @@ export const useTeamStore = defineStore('team', () => {
           ? await api.stopTeamRun(id)
           : action === 'pause'
             ? await api.pauseTeamRun(id)
-            : await api.resumeTeamRun(id);
+            : action === 'resume'
+              ? await api.resumeTeamRun(id)
+              : await api.closeTeamRun(id);
       const next = normalizeStateResponse(response as StateResponse);
       if (!next) throw new Error(`Team ${action} did not return a run state`);
       applyState(next);
-      notices.push(`Team run ${action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'stopped'}`, 'info');
+      const verb =
+        action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : action === 'close' ? 'closed' : 'stopped';
+      notices.push(`Team run ${verb}`, 'info');
       return next;
     } catch (error) {
       recordFailure(`Team ${action} failed`, error);
@@ -530,6 +534,7 @@ export const useTeamStore = defineStore('team', () => {
   const stop = (runId?: string) => control('stop', runId);
   const pause = (runId?: string) => control('pause', runId);
   const resume = (runId?: string) => control('resume', runId);
+  const close = (runId?: string) => control('close', runId);
 
   return {
     templates,
@@ -582,6 +587,8 @@ export const useTeamStore = defineStore('team', () => {
     pauseRun: pause,
     resume,
     resumeRun: resume,
+    close,
+    closeRun: close,
     steer,
     steerRun: steer,
     bindSocket,

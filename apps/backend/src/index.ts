@@ -193,7 +193,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`\n[${signal}] shutting down — killing terminals...`);
   queueScheduler.stop();
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
-  if (teamOrchestrator.tryGetState()) await teamOrchestrator.stop('Backend shutting down.').catch(() => {});
+  if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});
   limits.stop();
   manager.beginShutdown();
   await autostartDone.catch(() => {});

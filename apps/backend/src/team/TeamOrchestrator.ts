@@ -44,7 +44,9 @@ import {
   type TeamTaskState as PureTaskState,
   type TeamFindingState as PureFindingState,
 } from './scheduler.js';
-import { runRoleTurn, type RunRoleTurnResult } from './runner.js';
+import { runRoleTurn, teamRoleTerminalId, type RunRoleTurnResult } from './runner.js';
+import { RoleCliSession } from './role-session.js';
+import { TaskBoard, type AgentTask } from './task-board.js';
 
 // Re-export the canonical conversation contract from `team/types.ts` so existing
 // importers of this module keep working while binding to the authoritative shape
@@ -96,6 +98,8 @@ export interface TeamRoleInstance {
   lastTurnAt?: string;
   /** Terminal id of this role's most recent turn (so the UI can open its live CLI). */
   activeTerminalId?: string;
+  /** Task-board counts for this role (todo/in-progress/done). */
+  taskCounts?: { todo: number; inProgress: number; done: number };
 }
 
 export interface TeamDirective {
@@ -191,6 +195,8 @@ export interface TeamScheduledTurn {
   reason?: string;
   taskId?: string;
   findingId?: string;
+  /** A board task claimed for this turn (Lead-assigned work); filed done/requeued on completion. */
+  task?: AgentTask;
 }
 
 export interface TeamSchedulerDecision {
@@ -243,6 +249,8 @@ export interface TeamRoleTurnInput {
   findingId?: string;
   /** The gates still keeping the run open, injected into the role's prompt. */
   completionHints?: string[];
+  /** The full board task assigned to this turn (its content goes into the prompt). */
+  assignedTask?: { id: string; title?: string; content: string };
 }
 
 export interface TeamRoleTurnResult {
@@ -256,6 +264,12 @@ export interface TeamRoleTurnResult {
 
 export interface TeamTurnRunner {
   runRoleTurn(input: TeamRoleTurnInput): Promise<TeamRoleTurnResult>;
+  /**
+   * Release a run's persistent CLI sessions. `kill: true` (Close / run finished) tears
+   * the terminals down; `kill: false` (Stop / pause) leaves them alive and pooled so the
+   * run can resume into the same context. No-op for one-shot runners.
+   */
+  disposeRun?(runId: string, opts: { kill: boolean }): Promise<void>;
 }
 
 export interface TeamMessageBus {
@@ -502,17 +516,25 @@ class DefaultTeamScheduler implements TeamScheduler {
     if (roles.length === 0) {
       return { turns: [], terminal: { status: 'blocked', reason: 'No team roles are configured.' } };
     }
-    // Bias toward roles that still have work to do — those without a fresh "done"
-    // sign-off — so the run converges on completion instead of re-serving roles that
-    // already signed off. When everyone has signed off, the completion gate fires at
-    // the top of the loop before this runs, so the fallback to all roles is only used
-    // while some other gate (e.g. a missing verification) keeps the run open.
-    const freshlySignedOff = (roleId: string): boolean =>
+    // Fair fixed-order rotation: walk the roles in their declared order starting at
+    // `turnCount % n`, and pick the FIRST role that does not already hold a fresh "done"
+    // sign-off. Starting offset advances by one each turn, so every role is reached in
+    // order (Lead → Analyst → Developer → Tester → Reviewer → …) — no role is starved —
+    // while roles that are genuinely done are skipped so the run converges. When every
+    // role holds a fresh sign-off there is nothing to schedule; the completion gate (run
+    // at the top of the loop) decides completion, and an empty decision here surfaces a
+    // "signed off but a gate is still open" state instead of busy-looping.
+    const n = roles.length;
+    const freshlyDone = (roleId: string): boolean =>
       state.signoffs.some((signoff) => signoff.roleId === roleId && !signoff.stale);
-    const pending = roles.filter((role) => !freshlySignedOff(role.id));
-    const pool = pending.length > 0 ? pending : roles;
-    const role = pool[state.turnCount % pool.length]!;
-    return { turns: [{ roleId: role.id, reason: `${role.name}'s turn to contribute.` }] };
+    const start = state.turnCount % n;
+    for (let i = 0; i < n; i++) {
+      const role = roles[(start + i) % n]!;
+      if (!freshlyDone(role.id)) {
+        return { turns: [{ roleId: role.id, reason: `${role.name}'s turn to contribute.` }] };
+      }
+    }
+    return { turns: [], reason: 'Every role holds a fresh sign-off; no further turn is needed.' };
   }
 }
 
@@ -574,17 +596,40 @@ export interface TeamTurnRunnerAdapterOptions {
  * `RunRoleTurnOptions` and its `RunRoleTurnResult` back to a
  * {@link TeamRoleTurnResult} the engine can apply.
  */
+/** Approx characters fed to a role's CLI before it is asked to compact its context. */
+const COMPACT_THRESHOLD_CHARS = 160_000;
+
 export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): TeamTurnRunner {
+  // One long-lived CLI session per (run, role). Reusing the running REPL across turns
+  // preserves the agent's context and avoids relaunching the CLI every turn.
+  const sessions = new Map<string, RoleCliSession>();
+  const keyOf = (runId: string, roleId: string): string => `${runId}::${roleId}`;
+
   return {
     async runRoleTurn(input: TeamRoleTurnInput): Promise<TeamRoleTurnResult> {
+      const termId = teamRoleTerminalId(input.runId, input.role.id);
+      const key = keyOf(input.runId, input.role.id);
+      let session = sessions.get(key);
+      if (!session) {
+        session = new RoleCliSession({
+          manager: options.manager,
+          termId,
+          tool: input.role.tool,
+          timing: options.config.timing,
+        });
+        sessions.set(key, session);
+      }
+
       const result = await runRoleTurn({
         manager: options.manager,
         paths: new TigerPaths(input.workspace),
         config: options.config,
         runId: input.runId,
-        // Drive the runner's terminal id from the engine's turn id so the UI can
-        // attach to the live CLI terminal as soon as the turn starts.
         turnId: input.turn.id,
+        // Stable per-role terminal id + the live session: the role keeps one terminal the
+        // UI can watch across turns, and the REPL retains its context between turns.
+        terminalId: termId,
+        session,
         role: {
           id: input.role.id,
           name: input.role.name,
@@ -592,12 +637,14 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
           responsibilities: input.role.responsibilities,
           agent: { tool: input.role.tool },
         },
-        assignedTask: input.taskId
-          ? {
-              id: input.taskId,
-              content: `You are assigned ${input.taskId}. Consult the task board under the .tiger root for its full definition and acceptance criteria.`,
-            }
-          : undefined,
+        assignedTask: input.assignedTask
+          ? { id: input.assignedTask.id, title: input.assignedTask.title, content: input.assignedTask.content }
+          : input.taskId
+            ? {
+                id: input.taskId,
+                content: `You are assigned ${input.taskId}. Consult the task board under the .tiger root for its full definition and acceptance criteria.`,
+              }
+            : undefined,
         finding: input.findingId
           ? {
               id: input.findingId,
@@ -616,7 +663,25 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         // persist, or every message would be duplicated with a conflicting seq.
         persistTranscript: false,
       });
+
+      // When this role has fed its CLI a lot of context, ask it to compact before the
+      // next turn so the live session stays efficient instead of growing unbounded.
+      if (session.shouldCompact(COMPACT_THRESHOLD_CHARS)) {
+        await session.compact(input.signal).catch(() => undefined);
+      }
       return mapRunnerResult(result);
+    },
+
+    async disposeRun(runId: string, opts: { kill: boolean }): Promise<void> {
+      for (const [key, session] of [...sessions.entries()]) {
+        if (!key.startsWith(`${runId}::`)) continue;
+        if (opts.kill) {
+          await session.dispose().catch(() => undefined);
+          sessions.delete(key);
+        }
+        // Stop (kill === false): leave the session alive and pooled so a resume can
+        // continue in the same context.
+      }
     },
   };
 }
@@ -806,6 +871,10 @@ export class TeamOrchestrator extends EventEmitter {
   private runLeaseRefresh: Promise<void> | null = null;
   private persistGate: Promise<unknown> = Promise.resolve();
   private lastBoundarySteering: TeamDirective[] = [];
+  /** File-based per-agent task board for the active run (Lead-driven assignment). */
+  private taskBoard: TaskBoard | null = null;
+  /** Tasks claimed for the current in-flight turns, keyed by turn id, so completion can file them. */
+  private turnTasks = new Map<string, AgentTask>();
 
   private readonly executionPersistence: ExecutionPersistence;
   private readonly teamPersistence: TeamPersistence;
@@ -872,6 +941,8 @@ export class TeamOrchestrator extends EventEmitter {
       message: 'Ready to start.',
     };
     this.paths = paths;
+    this.taskBoard = new TaskBoard(paths.runDir);
+    await this.taskBoard.init(roles.map((role) => role.id));
     await this.refreshWorkQueues();
     const seed = await this.appendMessage({
       from: USER_SENDER,
@@ -913,6 +984,28 @@ export class TeamOrchestrator extends EventEmitter {
       if (matching) Object.assign(matching, state.currentTurn);
     }
     await this.finishRun('stopped', reason);
+    return this.getState();
+  }
+
+  /**
+   * Close the run: stop the prompt flow AND tear down the persistent CLI terminals.
+   * Unlike {@link stop} (which leaves the sessions alive so the run can resume into the
+   * same context), close kills them — "Stop pauses, Close ends".
+   */
+  async close(reason = 'Closed by user.'): Promise<TeamRunState> {
+    const state = this.requireState();
+    this.abort?.abort();
+    if (!isTerminalStatus(state.status)) {
+      if (state.currentTurn && (state.currentTurn.status === 'pending' || state.currentTurn.status === 'running')) {
+        state.currentTurn.status = 'interrupted';
+        state.currentTurn.endedAt = nowIso();
+        state.currentTurn.reason = reason;
+        const matching = state.turns.find((turn) => turn.id === state.currentTurn?.id);
+        if (matching) Object.assign(matching, state.currentTurn);
+      }
+      await this.finishRun('stopped', reason);
+    }
+    await this.runner.disposeRun?.(state.runId, { kill: true }).catch(() => undefined);
     return this.getState();
   }
 
@@ -1051,27 +1144,44 @@ export class TeamOrchestrator extends EventEmitter {
       if (await this.completeOrStopFromGate()) return;
       if (await this.pauseIfRequested()) return;
 
-      const messages = await this.listMessages();
-      const decision = await this.scheduler.selectNextTurns(state, {
-        messages,
-        pendingDirectives: state.directives.filter((directive) => directive.status === 'pending'),
-        latestVerification: latestVerification(state),
-        maxTurns: this.maxTurns,
-        maxRounds: this.maxRounds,
-      });
-      if (decision.terminal) {
-        await this.finishRun(decision.terminal.status, decision.terminal.reason);
-        return;
-      }
-      if (decision.turns.length === 0) {
-        await this.finishRun('blocked', decision.reason ?? 'Scheduler did not select a next turn.');
-        return;
+      // Lead-assigned work first: if any role has a queued task on its board, claim and run
+      // it. Only when no task is pending do we fall back to the coordination rotation (which
+      // gives the Lead turns to assign more work, and drives the final sign-off round).
+      let turns: TeamScheduledTurn[];
+      const claimed = await this.claimNextAgentTask();
+      if (claimed) {
+        turns = [
+          {
+            roleId: claimed.roleId,
+            taskId: claimed.task.id,
+            task: claimed.task,
+            reason: `Working assigned ${claimed.task.id}: ${claimed.task.title}`,
+          },
+        ];
+      } else {
+        const messages = await this.listMessages();
+        const decision = await this.scheduler.selectNextTurns(state, {
+          messages,
+          pendingDirectives: state.directives.filter((directive) => directive.status === 'pending'),
+          latestVerification: latestVerification(state),
+          maxTurns: this.maxTurns,
+          maxRounds: this.maxRounds,
+        });
+        if (decision.terminal) {
+          await this.finishRun(decision.terminal.status, decision.terminal.reason);
+          return;
+        }
+        if (decision.turns.length === 0) {
+          await this.finishRun('blocked', decision.reason ?? 'Scheduler did not select a next turn.');
+          return;
+        }
+        turns = decision.turns;
       }
 
       state.round += 1;
       await this.persistState();
       this.emitState();
-      const turns = this.limitWritableConcurrency(decision.turns);
+      turns = this.limitWritableConcurrency(turns);
       await Promise.all(turns.map((turn) => this.runOneTurn(turn, signal)));
       // A turn (or a concurrent stop()) may have already driven the run to a terminal
       // state. Bail before mutating/re-persisting it or re-evaluating the completion gate,
@@ -1101,9 +1211,9 @@ export class TeamOrchestrator extends EventEmitter {
     }
 
     const turnId = nanoid();
-    // The CLI terminal id is deterministic from the run + turn id (the runner uses the
-    // same id), so the UI can open this role's live terminal the moment the turn starts.
-    const terminalId = teamTerminalId(state.runId, turnId);
+    // One stable terminal per role (the persistent session reuses it across turns), so the
+    // UI can open this role's live CLI and watch its scrollback grow turn over turn.
+    const terminalId = teamRoleTerminalId(state.runId, role.id);
     const turn: TeamTurnRecord = {
       id: turnId,
       runId: state.runId,
@@ -1122,6 +1232,7 @@ export class TeamOrchestrator extends EventEmitter {
     role.status = 'running';
     role.lastTurnAt = turn.startedAt;
     role.activeTerminalId = terminalId;
+    if (scheduled.task) this.turnTasks.set(turn.id, scheduled.task);
     await this.persistState();
     this.emitState();
 
@@ -1144,6 +1255,9 @@ export class TeamOrchestrator extends EventEmitter {
         appliedSteering: clone(this.lastBoundarySteering),
         signal,
         taskId: scheduled.taskId,
+        assignedTask: scheduled.task
+          ? { id: scheduled.task.id, title: scheduled.task.title, content: scheduled.task.body }
+          : undefined,
         findingId: scheduled.findingId,
         completionHints: gate.complete ? [] : gate.reasons,
       });
@@ -1165,6 +1279,8 @@ export class TeamOrchestrator extends EventEmitter {
     } finally {
       if (role.status === 'running') role.status = 'idle';
       if (this.state?.currentTurn?.id === turn.id) this.state.currentTurn = null;
+      // File this turn's claimed board task (done on success, requeued otherwise).
+      await this.fileTurnTask(turn);
       await this.persistState();
       this.emitState();
     }
@@ -1173,18 +1289,18 @@ export class TeamOrchestrator extends EventEmitter {
   private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
     const state = this.requireState();
     const messages = result.messages ?? [];
-    const signedOffRoleIds = new Set<string>();
+    const appended: TeamMessage[] = [];
     for (const draft of messages) {
       const message = await this.appendMessage({ ...draft, turnId: draft.turnId ?? turn.id });
+      appended.push(message);
       turn.messageSeqs.push(message.seq);
       if (isMaterialMessage(message.kind)) {
         state.materialChangeAt = message.createdAt;
         this.staleSignoffs(`${message.kind} message changed the run state.`);
       }
-      if (message.kind === 'signoff') {
-        this.recordSignoff(role, message);
-        signedOffRoleIds.add(role.id);
-      }
+      // NOTE: a `kind:'signoff'` chat message does NOT mark the role done — only an explicit
+      // SignOffDirective with status 'done' (surfaced via result.signoffs) counts, so a role
+      // saying "my sign-off is still pending" is not falsely recorded as complete.
       // A role reporting a build/test/check result as a `verification` message becomes a
       // first-class verification record so the done-gate's "objective checks passed"
       // requirement can actually be satisfied by the team (the CLI has no other channel
@@ -1216,13 +1332,17 @@ export class TeamOrchestrator extends EventEmitter {
       state.materialChangeAt = nowIso();
       this.staleSignoffs('Turn reported a material change.');
     }
+    // Record sign-offs ONLY from explicit "done" directives (mapRunnerResult already
+    // filters to status === 'done'), so a role is marked done solely when it genuinely
+    // declares completion — never from a chat message alone.
     for (const signoff of result.signoffs ?? []) {
       const signoffRole = state.roles.find((entry) => entry.id === (signoff.roleId ?? role.id)) ?? role;
-      // Skip roles already signed off via a `kind: 'signoff'` message this turn so a
-      // single logical sign-off is not recorded twice (once per source).
-      if (signedOffRoleIds.has(signoffRole.id)) continue;
       this.recordSignoff(signoffRole, undefined, signoff.createdAt, signoff.messageId);
     }
+
+    // Materialize this turn's `task` assignments (addressed to a role) into that role's
+    // todo queue, so the Lead can dynamically delegate work that later turns will claim.
+    await this.enqueueTaskAssignments(appended);
 
     turn.status = result.status;
     turn.endedAt = nowIso();
@@ -1396,6 +1516,63 @@ export class TeamOrchestrator extends EventEmitter {
     state.tasks = tasks.length > 0 ? summarizeTasks(tasks) : null;
     const findings = await listFindings(tiger.findingsDir);
     state.findings = findings.length > 0 ? summarizeFindings(findings) : null;
+    // Per-role task-board counts (todo/in-progress/done) for the UI.
+    if (this.taskBoard) {
+      for (const role of state.roles) {
+        role.taskCounts = await this.taskBoard.counts(role.id);
+      }
+    }
+  }
+
+  /** Claim the next queued board task for any role (role order; FIFO within a role). */
+  private async claimNextAgentTask(): Promise<{ roleId: string; task: AgentTask } | null> {
+    if (!this.taskBoard) return null;
+    const state = this.requireState();
+    const now = nowIso();
+    for (const role of state.roles) {
+      const task = await this.taskBoard.claimNext(role.id, now);
+      if (task) return { roleId: role.id, task };
+    }
+    return null;
+  }
+
+  /** Derive a concise task title from an assignment message body. */
+  private taskTitle(body: string): string {
+    const firstLine = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? 'Task';
+    return firstLine.slice(0, 120);
+  }
+
+  /** Materialize a role's `task` messages (addressed to a role) into that role's todo queue. */
+  private async enqueueTaskAssignments(messages: TeamMessage[]): Promise<void> {
+    if (!this.taskBoard) return;
+    const roleIds = new Set(this.requireState().roles.map((role) => role.id));
+    for (const message of messages) {
+      const to = message.to;
+      if (message.kind !== 'task' || !to || !roleIds.has(to)) continue;
+      const title = this.taskTitle(message.body);
+      const titles = await this.taskBoard.titles(to);
+      if (titles.has(title)) continue; // a re-assignment of the same task — skip
+      await this.taskBoard.enqueue({
+        roleId: to,
+        fromRoleId: message.from,
+        title,
+        body: message.body,
+        createdAt: message.createdAt,
+      });
+    }
+  }
+
+  /** File a turn's claimed board task: done on success, back to the queue otherwise. */
+  private async fileTurnTask(turn: TeamTurnRecord): Promise<void> {
+    const task = this.turnTasks.get(turn.id);
+    if (!task || !this.taskBoard) return;
+    this.turnTasks.delete(turn.id);
+    try {
+      if (turn.status === 'completed') await this.taskBoard.complete(task, nowIso());
+      else await this.taskBoard.requeue(task);
+    } catch {
+      // a task-board IO hiccup must not crash the run loop
+    }
   }
 
   private async reconcileCurrentRun(): Promise<void> {
@@ -1407,6 +1584,7 @@ export class TeamOrchestrator extends EventEmitter {
     if (loaded) {
       this.state = loaded;
       this.paths = new TeamPaths(loaded.workspace, loaded.runId);
+      this.taskBoard = new TaskBoard(this.paths.runDir);
     }
     const tiger = new TigerPaths(state.workspace);
     const reclaimedTasks = await reclaimStaleTaskClaims(tiger.tasksDir, {
@@ -1524,6 +1702,12 @@ export class TeamOrchestrator extends EventEmitter {
     state.currentTurn = null;
     state.roles = state.roles.map((role) => (role.status === 'running' ? { ...role, status: 'idle' } : role));
     await this.releaseRunLease(teamStatusToExecutionStatus(status), reason);
+    // Persistent CLI sessions: a completed/failed run is genuinely over → tear its
+    // terminals down. A stopped/blocked/interrupted run may resume, so its sessions are
+    // left ALIVE (Close, or backend shutdown, kills them) — "Stop pauses, Close ends".
+    if (status === 'completed' || status === 'failed') {
+      await this.runner.disposeRun?.(state.runId, { kill: true }).catch(() => undefined);
+    }
     await this.persistState();
     this.emitState();
   }
@@ -1564,6 +1748,7 @@ export class TeamOrchestrator extends EventEmitter {
     if (!loaded) throw httpError(404, `team run ${runId} was not found`);
     this.state = loaded;
     this.paths = new TeamPaths(resolvedWorkspace, runId);
+    this.taskBoard = new TaskBoard(this.paths.runDir);
     await this.syncMessageCount();
     await this.refreshWorkQueues();
     this.state.pendingSteeringCount = this.countPendingSteering();

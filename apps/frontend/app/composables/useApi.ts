@@ -175,6 +175,8 @@ export function useApi() {
       req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
     resumeTeamRun: (id: string) =>
       req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+    closeTeamRun: (id: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/close`, { method: 'POST' }),
     steerTeamRun: (id: string, body: TeamSteeringInput) =>
       req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
     listTeamMessages: (runId: string, params: TeamMessageHistoryParams = {}) =>

@@ -9,9 +9,11 @@ import { defaultTigerConfig } from '../orchestrator/config.js';
 import { ensureScaffold } from '../orchestrator/scaffold.js';
 import { PER_FILE_CAP, TOTAL_CONTEXT_CAP } from '../orchestrator/compose.js';
 import type { AgentType, TigerConfig } from '../orchestrator/types.js';
+import { buildLaunchCommand } from '../orchestrator/launch-command.js';
 import { composeRoleTurnPrompt, type TeamRole } from './compose-turn.js';
 import { appendTranscriptMessages, readTranscriptMessages, systemBlockerMessage } from './message-bus.js';
 import { runRoleTurn } from './runner.js';
+import { RoleCliSession } from './role-session.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'orchestrator', 'fake-cli.mjs');
 
@@ -270,5 +272,62 @@ test('composeRoleTurnPrompt windows transcript and assigned context with Tiger c
     assert.match(composed.prompt, /truncated to respect Tiger context caps/);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+function loopPrompt(outputPath: string, markerPath: string): string {
+  return [
+    '# AUTOMATION CONTEXT',
+    'Save your deliverable to exactly this file (absolute path):',
+    `    ${outputPath}`,
+    '',
+    'COMPLETION SIGNAL: create this marker file and write the single word "done" into it:',
+    `    ${markerPath}`,
+    '',
+  ].join('\n');
+}
+
+test('a persistent role session serves multiple prompts on one live CLI without relaunching', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-role-session-'));
+  const manager = new TerminalManager();
+  try {
+    const config = fakeConfig('team-loop');
+    const command = buildLaunchCommand(config, 'codex', { model: 'fake', effort: '', permission: 'test' });
+    const termId = 'team-test-role';
+    const now = new Date().toISOString();
+    manager.upsertDefinition({
+      id: termId,
+      name: 'Developer',
+      groupId: null,
+      cwd: dir,
+      initialCommand: command,
+      shell: { kind: 'system-default' },
+      protected: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const session = new RoleCliSession({ manager, termId, tool: 'codex', timing: config.timing });
+    const signal = new AbortController().signal;
+
+    for (let i = 1; i <= 2; i += 1) {
+      const promptPath = path.join(dir, `t${i}.prompt.md`);
+      const outputPath = path.join(dir, `t${i}.out.md`);
+      const markerPath = path.join(dir, `t${i}.done`);
+      await fs.writeFile(promptPath, loopPrompt(outputPath, markerPath), 'utf8');
+      const result = await session.runPrompt({ promptPath, outputPath, markerPath, signal });
+      assert.equal(result.state, 'completed', `turn ${i} completed`);
+      assert.equal(result.alive, true, `session still alive after turn ${i}`);
+      assert.match(await fs.readFile(outputPath, 'utf8'), /Fake persistent turn done/);
+    }
+    // The single CLI served both prompts.
+    assert.equal(session.turns, 2);
+    assert.equal(session.isAlive, true);
+
+    await session.dispose();
+    assert.equal(session.isAlive, false);
+  } finally {
+    await manager.killAll().catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
   }
 });

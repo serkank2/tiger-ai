@@ -42,8 +42,14 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
       </div>
       <div class="meta">
         <span class="status">{{ statusLabel }}</span>
-        <span v-if="role.canWriteCode" class="flag write" title="Can write code">code</span>
+        <span v-if="role.turnCount" class="turns" :title="`${role.turnCount} turn(s) taken`">×{{ role.turnCount }}</span>
+        <span v-if="role.canWriteCode" class="flag write" title="May edit project source">code</span>
         <span v-if="role.requiredForSignoff" class="flag sign" title="Required for sign-off">sign-off</span>
+      </div>
+      <div v-if="role.tasks && (role.tasks.todo || role.tasks.inProgress || role.tasks.done)" class="tasks">
+        <span v-if="role.tasks.todo" class="tq todo" title="Queued tasks">▤ {{ role.tasks.todo }}</span>
+        <span v-if="role.tasks.inProgress" class="tq prog" title="In progress">▸ {{ role.tasks.inProgress }}</span>
+        <span v-if="role.tasks.done" class="tq done" title="Completed tasks">✓ {{ role.tasks.done }}</span>
       </div>
       <p v-if="role.statusNote" class="note">{{ role.statusNote }}</p>
     </div>
@@ -129,6 +135,11 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
   font-size: var(--text-xs);
   color: var(--text-faint);
 }
+.turns {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .flag {
   font-size: 10px;
   border-radius: var(--radius-pill);
@@ -138,6 +149,18 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
 }
 .flag.write { color: var(--accent); border-color: rgba(245, 158, 66, 0.4); }
 .flag.sign { color: var(--green); border-color: rgba(108, 197, 108, 0.4); }
+.tasks {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 4px;
+}
+.tq {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.tq.prog { color: var(--accent); }
+.tq.done { color: var(--green); }
 .note {
   margin: 4px 0 0;
   font-size: var(--text-xs);

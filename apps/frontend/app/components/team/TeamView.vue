@@ -42,6 +42,11 @@ const connected = computed(() => connection.status === 'connected');
 const canPause = computed(() => status.value === 'running');
 const canResume = computed(() => status.value === 'paused' || status.value === 'blocked' || status.value === 'interrupted');
 const canStop = computed(() => isActive.value || status.value === 'interrupted');
+// Persistent CLI terminals stay alive until the run completes/fails or is Closed, so a
+// Close (kill terminals) is offered for any non-terminal-and-done run.
+const hasLiveSessions = computed(
+  () => status.value != null && status.value !== 'completed' && status.value !== 'failed',
+);
 
 const STATUS_LABEL: Record<string, string> = {
   running: 'Running',
@@ -76,6 +81,9 @@ async function reset() {
       <div v-if="state" class="run-meta">
         <span class="run-name" :title="state.goal">{{ state.name }}</span>
         <span class="status-chip" :class="`st-${status}`">{{ statusLabel(status) }}</span>
+        <span v-if="state.round != null" class="loop-counter" title="Coordination rounds · total turns">
+          ↻ {{ state.round }} round · {{ state.turnCount ?? 0 }} turn
+        </span>
       </div>
 
       <div v-if="state" class="controls">
@@ -95,10 +103,19 @@ async function reset() {
         <BaseButton
           v-if="canStop"
           size="sm"
-          variant="danger"
+          variant="secondary"
           :loading="team.isBusy(`stop:${state.id}`)"
+          title="Halt the flow but keep the agent terminals alive (resumable)"
           @click="team.stop(state.id)"
         >Stop</BaseButton>
+        <BaseButton
+          v-if="hasLiveSessions"
+          size="sm"
+          variant="danger"
+          :loading="team.isBusy(`close:${state.id}`)"
+          title="End the run and kill the agent terminals"
+          @click="team.close(state.id)"
+        >Close</BaseButton>
         <BaseButton v-if="!isActive" size="sm" variant="ghost" @click="reset">New run</BaseButton>
       </div>
     </header>
@@ -213,6 +230,12 @@ async function reset() {
 .st-failed { color: var(--red); border-color: var(--red); }
 .st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
 .st-paused, .st-stopped { color: var(--slate); border-color: var(--slate); }
+.loop-counter {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .controls {
   display: flex;
   gap: var(--space-2);

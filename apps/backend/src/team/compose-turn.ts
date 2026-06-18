@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { measurePromptSize, PER_FILE_CAP, TOTAL_CONTEXT_CAP, type PromptSize } from '../orchestrator/compose.js';
 import type { AgentType } from '../orchestrator/types.js';
 import type { TigerPaths } from '../orchestrator/paths.js';
@@ -101,6 +102,9 @@ export function normalizeTeamRole(role: RoleTurnRole): TeamRole {
 function automationPreamble(opts: NormalizedComposeRoleTurnOptions): string {
   const outputRel = opts.paths.rel(opts.outputPath);
   const markerRel = opts.paths.rel(opts.markerPath);
+  // The team improves the REAL project, so the working root is the workspace (the
+  // directory that CONTAINS .tiger), not the .tiger metadata root.
+  const workspace = path.dirname(opts.paths.root);
   return `# AUTOMATION CONTEXT -- READ THIS FIRST
 
 You are an autonomous Tiger AI-team role agent. No human is available for questions or approvals during this turn.
@@ -115,20 +119,23 @@ You are an autonomous Tiger AI-team role agent. No human is available for questi
 - Your team run ID is: ${opts.runId}
 - Your turn ID is: ${opts.turnId}
 - Your role ID is: ${opts.role.id}
-- Your working directory is the .tiger/ root: ${opts.paths.root}
-- WORKSPACE BOUNDARY — STRICT: this .tiger/ root IS the project root and the ONLY place you may
-  touch. Create, read, and modify files ONLY at or below this root, using paths relative to it,
-  and run every shell command from it. NEVER write, move, or delete anything outside it (no absolute
-  paths elsewhere, no ".." climbing above it, no parent workspace, home, temp, or system locations).
-  If something seems to belong outside this root, keep it inside instead. Escaping this root breaks
-  the run for the whole team.
+- Your working directory is the PROJECT ROOT: ${workspace}
+- This is the REAL project you are improving. Read and modify its actual source files (apps/, src/,
+  config, tests, etc.) to achieve the goal — this is where your product changes must land. Run the
+  project's own build/test/checks from here.
+- Your team's private bookkeeping lives under \`${workspace}/.tiger/team/\`. Write your turn
+  deliverable and your completion marker to the EXACT absolute paths given below (they are inside
+  .tiger), but make your real product changes in the project itself, NOT in .tiger.
+- WORKSPACE BOUNDARY — STRICT: stay within this project root (${workspace}). You may read and edit
+  anything under it. NEVER write, move, or delete anything OUTSIDE it (no absolute paths elsewhere,
+  no ".." climbing above it, no home, temp, or system locations).
 - Save your deliverable to exactly this file (absolute path):
     ${opts.outputPath}
-    (relative to the .tiger root: ${outputRel})
+    (relative to the project root: ${outputRel})
 - COMPLETION SIGNAL: when you have completely finished AND your deliverable file is written, your
   FINAL action MUST be to create this marker file and write the single word "done" into it:
     ${opts.markerPath}
-    (relative to the .tiger root: ${markerRel})
+    (relative to the project root: ${markerRel})
   The orchestrator watches for this marker to know you are done. Do not create it early.`;
 }
 
@@ -214,12 +221,13 @@ Optional sign-off directive block:
 }
 \`\`\`
 
-Allowed sign-off statuses are: done, blocked, pending.
+Allowed sign-off statuses are: done, blocked, pending. You are recorded as signed off ONLY when you emit a \`SignOffDirective\` with \`"status": "done"\` — a \`signoff\` chat message, or status \`pending\`/\`blocked\`, does NOT mark you done. Emit \`done\` only when your role's responsibilities are genuinely met with evidence.
 
 Communication discipline (this is a real team — make every message earn its place):
 - Post only substantive messages that move the work forward. Do NOT narrate, restate what others already said, or pad. One sharp message beats five vague ones.
 - When you decide something, use \`"kind": "decision"\` and state the choice AND the one-line reason.
-- When you hand work to another role, use \`"kind": "handoff"\`, set \`"to"\` to that role id, and name the exact next action you expect.
+- To ASSIGN concrete work to another role, post a \`"kind": "task"\` message with \`"to"\` set to that role's id and the body as a clear, self-contained task: a short title line, what to do, and acceptance criteria. The system queues it on that role's task board (todo → in-progress → done) and they will work it next. Assign ONE task per message; do not re-send a task already assigned.
+- When you simply hand off or notify (no new task), use \`"kind": "handoff"\`, set \`"to"\` to that role id, and name the exact next action.
 - When you report a result of checking/building/testing, use \`"kind": "verification"\` and include what you ran and the outcome.
 - Sign off (\`"kind": "signoff"\` + a \`SignOffDirective\` with \`"status": "done"\`) ONLY when your role's responsibilities are genuinely met and you have concrete evidence — never as a courtesy.
 

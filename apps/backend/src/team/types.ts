@@ -343,6 +343,10 @@ export interface RoleSnapshot {
   statusNote?: string;
   /** Terminal id of this role's most recent turn — open it to watch the live CLI. */
   terminalId?: string;
+  /** How many turns this role has taken so far (UI loop counter). */
+  turnCount?: number;
+  /** This role's task-board counts (todo/in-progress/done). */
+  tasks?: { todo: number; inProgress: number; done: number };
 }
 
 /**
@@ -367,6 +371,10 @@ export interface TeamRunState {
   tasks?: TaskSummary | null;
   /** Optional review findings summary (reused from the orchestrator). */
   findings?: FindingsSummary | null;
+  /** Total turns executed so far (UI loop counter). */
+  turnCount?: number;
+  /** Current coordination round (UI loop counter). */
+  round?: number;
   updatedAt?: string;
 }
 

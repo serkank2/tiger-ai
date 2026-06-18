@@ -717,3 +717,67 @@ async function exists(file: string): Promise<boolean> {
 function nowForTest(): string {
   return new Date().toISOString();
 }
+
+test('the lead assigns a task that is queued, claimed, run with its content, and filed done on the board', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-board-'));
+  try {
+    let devTaskContent: string | undefined;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxTurns: 12,
+      // Complete once the developer (the only required role) holds a fresh sign-off.
+      completionGate: {
+        evaluate(state) {
+          return state.signoffs.some((s) => s.roleId === 'developer' && !s.stale)
+            ? { complete: true, reasons: [] }
+            : { complete: false, reasons: ['Awaiting developer sign-off.'] };
+        },
+      },
+      runner: {
+        async runRoleTurn(input) {
+          if (input.role.id === 'coordinator' && !devTaskContent) {
+            // The lead assigns concrete work to the developer.
+            return {
+              status: 'completed',
+              messages: [
+                { from: 'coordinator', kind: 'task', to: 'developer', body: 'Implement feature X\nAcceptance: it works.' },
+              ],
+            };
+          }
+          if (input.role.id === 'developer') {
+            // The developer received the assigned task as its turn context, then signs off.
+            devTaskContent = input.assignedTask?.content;
+            return {
+              status: 'completed',
+              messages: [{ from: 'developer', kind: 'signoff', body: 'Feature X implemented.' }],
+              signoffs: [{}],
+            };
+          }
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: 'ack' }] };
+        },
+      },
+    });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Assign and complete one task.',
+      roles: [
+        { id: 'coordinator', name: 'Coordinator', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
+        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+      ],
+    });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // The developer's turn actually received the Lead-assigned task content.
+    assert.match(devTaskContent ?? '', /Implement feature X/);
+    // The task progressed todo → in-progress → done on the file board.
+    const agentDir = path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer');
+    const done = await fs.readdir(path.join(agentDir, 'done')).catch(() => [] as string[]);
+    const todo = await fs.readdir(path.join(agentDir, 'todo')).catch(() => [] as string[]);
+    assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'a developer task was filed to done');
+    assert.equal(todo.filter((n) => n.endsWith('.json')).length, 0, 'no developer task left queued');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});

@@ -315,6 +315,13 @@ export function createTeamRouter(ctx: AppCtx): Router {
     res.json({ state: toTeamRunStateDto(orch.getState()) });
   });
 
+  // Close: stop the flow AND kill the persistent CLI terminals (Stop only pauses them).
+  router.post('/runs/:id/close', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    await orch.close();
+    res.json({ state: toTeamRunStateDto(orch.getState()) });
+  });
+
   router.post('/runs/:id/steer', async (req, res) => {
     requireActiveRun(ctx, req.params.id);
     const body = (req.body ?? {}) as Record<string, unknown>;

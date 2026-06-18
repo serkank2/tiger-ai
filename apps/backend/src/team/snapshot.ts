@@ -64,6 +64,8 @@ function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): RoleSnapsh
     signedOff: isRoleSignedOff(state, role.id),
     statusNote: role.status === 'blocked' ? role.name : undefined,
     terminalId: role.activeTerminalId,
+    turnCount: state.turns.filter((turn) => turn.roleId === role.id).length,
+    tasks: role.taskCounts,
   };
 }
 
@@ -114,6 +116,8 @@ export function toTeamRunStateDto(
     pendingSteering: toPendingSteering(state),
     tasks: state.tasks,
     findings: state.findings,
+    turnCount: state.turnCount,
+    round: state.round,
     updatedAt: state.materialChangeAt,
   };
 }
