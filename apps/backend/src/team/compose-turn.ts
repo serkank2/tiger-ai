@@ -42,6 +42,8 @@ export interface ComposeRoleTurnOptions {
   finding?: TeamContextBlock;
   steering?: string[];
   verification?: string[];
+  /** The exact gates still keeping the run open (so the role knows what "done" needs). */
+  completionStatus?: string[];
   transcriptMaxMessages?: number;
 }
 
@@ -160,6 +162,14 @@ function assignedContextSection(opts: NormalizedComposeRoleTurnOptions, budget: 
   if (opts.verification?.length) {
     parts.push(
       `## Verification Context\n\n${budget.take('verification context', opts.verification.map((s) => `- ${s}`).join('\n'))}`,
+    );
+  }
+
+  if (opts.completionStatus?.length) {
+    parts.push(
+      `## What The Run Still Needs To Complete\n\nThe run will not finish until every item below is resolved. ` +
+        `Act to close whichever of these your role is responsible for; do not sign off until your part is genuinely ` +
+        `done with evidence:\n\n${budget.take('completion status', opts.completionStatus.map((s) => `- ${s}`).join('\n'))}`,
     );
   }
 

@@ -13,10 +13,15 @@ const emit = defineEmits<{ saved: [TeamTemplate]; close: [] }>();
 const team = useTeamStore();
 const tiger = useTigerStore();
 
-const EFFORTS = ['', 'low', 'medium', 'high'];
-// Write-capable permission modes per tool (must match the backend's least-privilege rule).
-const WRITE_PERMS: Record<TeamAgentType, string> = { claude: 'acceptEdits', codex: 'workspace-write' };
-const READ_PERMS: Record<TeamAgentType, string> = { claude: 'default', codex: 'read-only' };
+// Efforts the CLIs accept, per tool ('' = use the CLI default).
+const EFFORTS_BY_TOOL: Record<TeamAgentType, string[]> = {
+  claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+  codex: ['', 'low', 'medium', 'high', 'xhigh'],
+};
+// Default autonomous, write-capable permission per tool. Every team role needs to write
+// its own turn deliverable and must not stall on an approval prompt, so this is the safe
+// default; whether a role edits project source is governed by its persona, not the sandbox.
+const AUTONOMOUS_PERM: Record<TeamAgentType, string> = { claude: 'acceptEdits', codex: 'workspace-write' };
 
 interface EditableRole {
   id: string;
@@ -40,11 +45,22 @@ const roles = reactive<EditableRole[]>([]);
 const error = ref('');
 
 const config = computed(() => tiger.config);
-function models(tool: TeamAgentType): string[] {
-  return ['', ...(config.value?.cli[tool].models ?? [])];
+// Each option list always includes the role's current value as a fallback, so a select
+// never renders blank while the Tiger config is still loading (or for an unusual value).
+function withCurrent(list: string[], current: string | undefined): string[] {
+  const out = [...list];
+  if (current && !out.includes(current)) out.push(current);
+  return out;
 }
-function permissions(tool: TeamAgentType): string[] {
-  return Object.keys(config.value?.cli[tool].permissionModes ?? {});
+function models(tool: TeamAgentType, current?: string): string[] {
+  return withCurrent(['', ...(config.value?.cli[tool].models ?? [])], current);
+}
+function permissions(tool: TeamAgentType, current?: string): string[] {
+  const keys = Object.keys(config.value?.cli[tool].permissionModes ?? {});
+  return withCurrent(keys.length ? keys : [AUTONOMOUS_PERM[tool]], current);
+}
+function efforts(tool: TeamAgentType, current?: string): string[] {
+  return withCurrent(EFFORTS_BY_TOOL[tool], current);
 }
 
 function toEditable(r: TeamTemplate['roles'][number]): EditableRole {
@@ -67,7 +83,7 @@ function blankRoles(): EditableRole[] {
     {
       id: 'lead', name: 'Lead / Coordinator', persona: 'You direct the team, delegate work, and decide when the project is genuinely complete. You do not write code.',
       responsibilities: 'Break the goal into clear work items\nDelegate to the right role and sequence the work\nConfirm every required sign-off before completion',
-      tool: 'claude', model: '', effort: 'high', permission: 'default', canWriteCode: false, requiredForSignoff: true,
+      tool: 'claude', model: '', effort: 'high', permission: 'acceptEdits', canWriteCode: false, requiredForSignoff: true,
     },
     {
       id: 'developer', name: 'Developer', persona: 'You implement the agreed work as the smallest correct change that respects the existing conventions, and add or update tests for what you change.',
@@ -85,15 +101,23 @@ onMounted(() => {
   roles.splice(0, roles.length, ...source);
 });
 
-function onToolOrWriteChange(role: EditableRole) {
-  // Keep the permission consistent with least privilege so a save validates first time.
-  role.permission = role.canWriteCode ? WRITE_PERMS[role.tool] : READ_PERMS[role.tool];
+function onToolChange(role: EditableRole) {
+  // Switching CLI: snap model/effort/permission to valid values for the new tool.
+  if (!models(role.tool).includes(role.model)) role.model = '';
+  if (!efforts(role.tool).includes(role.effort)) role.effort = '';
+  if (!permissions(role.tool).includes(role.permission)) role.permission = AUTONOMOUS_PERM[role.tool];
 }
 
 function addRole() {
+  const d = config.value?.defaults;
   roles.push({
     id: '', name: '', persona: '', responsibilities: '',
-    tool: 'claude', model: '', effort: '', permission: 'default', canWriteCode: false, requiredForSignoff: true,
+    tool: 'claude',
+    model: d?.claudeModel ?? '',
+    effort: d?.claudeEffort ?? '',
+    permission: AUTONOMOUS_PERM.claude,
+    canWriteCode: false,
+    requiredForSignoff: true,
   });
 }
 function removeRole(i: number) {
@@ -171,7 +195,7 @@ async function save() {
         <div class="role-grid">
           <label class="mini">
             <span>CLI</span>
-            <select v-model="role.tool" @change="onToolOrWriteChange(role)">
+            <select v-model="role.tool" @change="onToolChange(role)">
               <option value="claude">claude</option>
               <option value="codex">codex</option>
             </select>
@@ -179,19 +203,19 @@ async function save() {
           <label class="mini">
             <span>Model</span>
             <select v-model="role.model">
-              <option v-for="m in models(role.tool)" :key="m" :value="m">{{ m || '(default)' }}</option>
+              <option v-for="m in models(role.tool, role.model)" :key="m" :value="m">{{ m || '(default)' }}</option>
             </select>
           </label>
           <label class="mini">
             <span>Effort</span>
             <select v-model="role.effort">
-              <option v-for="e in EFFORTS" :key="e" :value="e">{{ e || '(default)' }}</option>
+              <option v-for="e in efforts(role.tool, role.effort)" :key="e" :value="e">{{ e || '(default)' }}</option>
             </select>
           </label>
           <label class="mini">
             <span>Permission</span>
             <select v-model="role.permission">
-              <option v-for="p in permissions(role.tool)" :key="p" :value="p">{{ p }}</option>
+              <option v-for="p in permissions(role.tool, role.permission)" :key="p" :value="p">{{ p }}</option>
             </select>
           </label>
         </div>
@@ -200,13 +224,13 @@ async function save() {
         <textarea v-model="role.responsibilities" class="resp" rows="2" placeholder="Responsibilities, one per line…" />
 
         <div class="flags">
-          <label><input type="checkbox" v-model="role.canWriteCode" @change="onToolOrWriteChange(role)" /> writes code</label>
+          <label><input type="checkbox" v-model="role.canWriteCode" /> may edit project source</label>
           <label><input type="checkbox" v-model="role.requiredForSignoff" /> required for sign-off</label>
         </div>
       </div>
 
       <p v-if="error" class="err">{{ error }}</p>
-      <p class="hint">Least privilege: only roles that write code may use a write-capable permission (claude: acceptEdits/dangerous · codex: workspace-write/yolo); every other role stays read-only.</p>
+      <p class="hint">Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).</p>
     </div>
 
     <template #footer>

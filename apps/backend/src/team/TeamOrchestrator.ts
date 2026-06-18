@@ -241,6 +241,8 @@ export interface TeamRoleTurnInput {
   signal: AbortSignal;
   taskId?: string;
   findingId?: string;
+  /** The gates still keeping the run open, injected into the role's prompt. */
+  completionHints?: string[];
 }
 
 export interface TeamRoleTurnResult {
@@ -480,24 +482,37 @@ const DISABLED_GUARD = -1;
  * and drives selection through `selectNextTurns` (TASK-007), mapping its
  * phase-aware decision back onto the engine's turn lifecycle.
  */
+/**
+ * Default scheduler: a deterministic round-robin over the configured roles, one
+ * role per turn, in their declared order (Lead → Analyst → Developer → Tester →
+ * Reviewer → …). Every role therefore gets repeated turns and the conversation
+ * reads like an ordered company chat.
+ *
+ * This intentionally does NOT depend on the Tiger task/finding board: an AI team
+ * coordinates through its conversation, not by populating the pipeline's task
+ * files, so a phase scheduler keyed off that board would dead-end in the "manager"
+ * phase and only ever run the lead. Completion is still gated by the code-enforced
+ * done-gate (every required role must hold a fresh sign-off), so round-robin can
+ * over-serve a role without ever falsely completing.
+ */
 class DefaultTeamScheduler implements TeamScheduler {
-  selectNextTurns(state: TeamRunState, context: TeamSchedulerContext): TeamSchedulerDecision {
+  selectNextTurns(state: TeamRunState): TeamSchedulerDecision {
     if (state.status !== 'running') return { turns: [] };
-    const decision = selectNextTurns(buildSchedulerState(state, context));
-    if (decision.terminal) {
-      return {
-        turns: [],
-        reason: decision.reason,
-        terminal: {
-          status: decision.terminal.status === 'done' ? 'completed' : 'blocked',
-          reason: decision.terminal.reason,
-        },
-      };
+    const roles = state.roles;
+    if (roles.length === 0) {
+      return { turns: [], terminal: { status: 'blocked', reason: 'No team roles are configured.' } };
     }
-    return {
-      turns: decision.turns.map((turn) => ({ roleId: turn.roleId, reason: turn.reason })),
-      reason: decision.reason,
-    };
+    // Bias toward roles that still have work to do — those without a fresh "done"
+    // sign-off — so the run converges on completion instead of re-serving roles that
+    // already signed off. When everyone has signed off, the completion gate fires at
+    // the top of the loop before this runs, so the fallback to all roles is only used
+    // while some other gate (e.g. a missing verification) keeps the run open.
+    const freshlySignedOff = (roleId: string): boolean =>
+      state.signoffs.some((signoff) => signoff.roleId === roleId && !signoff.stale);
+    const pending = roles.filter((role) => !freshlySignedOff(role.id));
+    const pool = pending.length > 0 ? pending : roles;
+    const role = pool[state.turnCount % pool.length]!;
+    return { turns: [{ roleId: role.id, reason: `${role.name}'s turn to contribute.` }] };
   }
 }
 
@@ -590,6 +605,7 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
             }
           : undefined,
         steering: input.appliedSteering.map((directive) => directive.body),
+        completionStatus: input.completionHints,
         transcriptMaxMessages: options.transcriptMaxMessages,
         model: input.role.model,
         effort: input.role.effort,
@@ -1110,6 +1126,13 @@ export class TeamOrchestrator extends EventEmitter {
     this.emitState();
 
     try {
+      const messagesForTurn = await this.listMessages();
+      // Tell the role exactly what still keeps the run open (the done-gate's open blockers),
+      // so it makes decisions that drive toward completion instead of guessing.
+      const gate = await this.completionGate.evaluate(state, {
+        messages: messagesForTurn,
+        latestVerification: latestVerification(state),
+      });
       const result = await this.runner.runRoleTurn({
         workspace: state.workspace,
         paths: this.requirePaths(),
@@ -1117,11 +1140,12 @@ export class TeamOrchestrator extends EventEmitter {
         role: { ...role },
         turn: clone(turn),
         state: this.getState(),
-        messages: await this.listMessages(),
+        messages: messagesForTurn,
         appliedSteering: clone(this.lastBoundarySteering),
         signal,
         taskId: scheduled.taskId,
         findingId: scheduled.findingId,
+        completionHints: gate.complete ? [] : gate.reasons,
       });
       if (signal.aborted || this.state?.status !== 'running') {
         this.interruptTurn(turn, 'Interrupted before the turn result could be applied.');
@@ -1160,6 +1184,19 @@ export class TeamOrchestrator extends EventEmitter {
       if (message.kind === 'signoff') {
         this.recordSignoff(role, message);
         signedOffRoleIds.add(role.id);
+      }
+      // A role reporting a build/test/check result as a `verification` message becomes a
+      // first-class verification record so the done-gate's "objective checks passed"
+      // requirement can actually be satisfied by the team (the CLI has no other channel
+      // to record one). The outcome is inferred from the message text.
+      if (message.kind === 'verification') {
+        state.verifications.push({
+          id: nanoid(),
+          status: inferVerificationOutcome(message.body),
+          summary: message.body.slice(0, 280),
+          createdAt: message.createdAt,
+          completedAt: message.createdAt,
+        });
       }
     }
     if (result.verification) {
@@ -1686,6 +1723,15 @@ function messageFromUnknown(err: unknown): string {
 /** The CLI terminal id for a role turn — must match the runner's own derivation. */
 function teamTerminalId(runId: string, turnId: string): string {
   return `team-${runId}-${turnId}`.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+/** Infer a verification outcome from a role's verification message text. */
+function inferVerificationOutcome(body: string): TeamVerificationStatus {
+  return /\b(fail|failed|failing|error|errors|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/i.test(
+    body,
+  )
+    ? 'failed'
+    : 'passed';
 }
 
 interface HttpError extends Error {

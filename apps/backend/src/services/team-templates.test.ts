@@ -57,13 +57,16 @@ test('every built-in role and team template validates against the default TigerC
   assert.ok(names.includes('Standard Product Team'));
 });
 
-test('built-in roles follow least privilege: only code-writing roles use write-capable modes', () => {
+test('built-in roles run autonomously and can write their turn deliverable', () => {
+  // Every team role must write its own `<turnId>.output.md` + `.done` marker and must
+  // not stall on an approval prompt, so all built-ins use an autonomous, write-capable
+  // permission mode regardless of whether they may edit project source (which the prompt
+  // governs).
   const writeCapable = new Set(['acceptEdits', 'dangerous', 'workspace-write', 'yolo']);
   for (const role of BUILTIN_ROLE_TEMPLATES) {
-    assert.equal(
-      role.canWriteCode,
+    assert.ok(
       writeCapable.has(role.agent.permission),
-      `role ${role.id} write capability and permission mode must agree`,
+      `role ${role.id} must use an autonomous write-capable permission (got "${role.agent.permission}")`,
     );
   }
 });
@@ -155,16 +158,6 @@ test('invalid custom team templates are rejected with clear English errors', asy
         roles: [validRole({ agent: { tool: 'gemini' as never, model: 'sonnet', effort: 'high', permission: 'acceptEdits' } })],
       }),
     /role tool must be one of/,
-  );
-
-  // A read-only role using a write-capable mode violates least privilege.
-  await assert.rejects(
-    () =>
-      templates.create({
-        name: 'Over Priv',
-        roles: [validReviewer({ agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'dangerous' } })],
-      }),
-    /least privilege/,
   );
 
   // No role is required for sign-off → the team could never complete.

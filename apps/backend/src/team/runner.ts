@@ -35,6 +35,7 @@ export interface RunRoleTurnOptions {
   finding?: TeamContextBlock;
   steering?: string[];
   verification?: string[];
+  completionStatus?: string[];
   transcriptMaxMessages?: number;
   model?: string;
   effort?: string;
@@ -100,6 +101,7 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     finding: opts.finding,
     steering: opts.steering,
     verification: opts.verification,
+    completionStatus: opts.completionStatus,
     transcriptMaxMessages: opts.transcriptMaxMessages,
   } satisfies ComposeRoleTurnOptions);
   await fs.writeFile(promptPath, composed.prompt, 'utf8');

@@ -78,16 +78,13 @@ export function validateRoleTemplate(config: TigerConfig, role: RoleTemplate): v
     config,
   );
   if (error) throw configInputError(error);
-  // Least privilege: only code-writing roles may use a write-capable permission mode.
-  const writeCapable = (WRITE_CAPABLE_PERMISSIONS[role.agent.tool] ?? []).includes(role.agent.permission);
-  if (!role.canWriteCode && writeCapable) {
-    throw configInputError(
-      `${where}: a non-code-writing role must not use the write-capable "${role.agent.permission}" mode (least privilege)`,
-    );
-  }
-  if (role.canWriteCode && !writeCapable) {
-    throw configInputError(`${where}: a code-writing role must use a write-capable permission mode`);
-  }
+  // NOTE: every team role must be able to write its own turn deliverable (the
+  // `<turnId>.output.md` + `.done` marker the orchestrator watches for) and must run
+  // without stalling on an approval prompt, so all roles use an autonomous,
+  // write-capable permission mode. Whether a role may modify PROJECT SOURCE is governed
+  // by its persona/`canWriteCode` instruction in the prompt, not by the sandbox — so the
+  // old "non-code role must be read-only" least-privilege rule is intentionally not
+  // enforced here (it made read-only roles unable to complete a turn at all).
 }
 
 /** Validate a fully-typed team template: name, every role, unique role keys, and at least one sign-off role. */
@@ -190,7 +187,7 @@ const ROLE_LEAD: RoleTemplate = {
     'Track progress and surface blockers early',
     'Confirm every required sign-off before completion',
   ],
-  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'default' },
+  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'acceptEdits' },
   canWriteCode: false,
   requiredForSignoff: true,
 };
@@ -209,7 +206,7 @@ const ROLE_BUSINESS_ANALYST: RoleTemplate = {
     'Validate that proposed solutions meet the user’s intent',
     'Flag scope creep and missing requirements',
   ],
-  agent: { tool: 'claude', model: 'sonnet', effort: 'medium', permission: 'default' },
+  agent: { tool: 'claude', model: 'sonnet', effort: 'medium', permission: 'acceptEdits' },
   canWriteCode: false,
   requiredForSignoff: true,
 };
@@ -228,7 +225,7 @@ const ROLE_ARCHITECT: RoleTemplate = {
     'Review designs for scalability, simplicity, and risk',
     'Advise developers on interfaces and integration points',
   ],
-  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'default' },
+  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'acceptEdits' },
   canWriteCode: false,
   requiredForSignoff: true,
 };
@@ -266,7 +263,7 @@ const ROLE_TESTER: RoleTemplate = {
     'Find and clearly describe defects and edge-case failures',
     'Confirm fixes resolve the issues before sign-off',
   ],
-  agent: { tool: 'codex', model: 'gpt-5', effort: 'medium', permission: 'read-only' },
+  agent: { tool: 'codex', model: 'gpt-5', effort: 'medium', permission: 'workspace-write' },
   canWriteCode: false,
   requiredForSignoff: true,
 };
@@ -285,7 +282,7 @@ const ROLE_REVIEWER: RoleTemplate = {
     'Raise actionable findings with clear severity',
     'Approve only when findings are resolved',
   ],
-  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'default' },
+  agent: { tool: 'claude', model: 'opus', effort: 'high', permission: 'acceptEdits' },
   canWriteCode: false,
   requiredForSignoff: true,
 };
