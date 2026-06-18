@@ -341,6 +341,8 @@ export interface RoleSnapshot {
   requiredForSignoff: boolean;
   signedOff: boolean;
   statusNote?: string;
+  /** Terminal id of this role's most recent turn — open it to watch the live CLI. */
+  terminalId?: string;
 }
 
 /**

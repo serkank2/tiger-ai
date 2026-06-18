@@ -116,7 +116,7 @@ function onSaved(tpl: TeamTemplate) {
             </span>
           </div>
           <div class="tpl-actions" @click.stop>
-            <button v-if="!tpl.builtin" type="button" @click="openEdit(tpl)">Edit</button>
+            <button type="button" @click="openEdit(tpl)">{{ tpl.builtin ? 'Customize' : 'Edit' }}</button>
             <button type="button" @click="duplicate(tpl)">Duplicate</button>
             <button v-if="!tpl.builtin" type="button" class="danger" @click="remove(tpl)">Delete</button>
           </div>

@@ -4,6 +4,9 @@ import type { RoleSnapshot } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 
 const props = defineProps<{ role: RoleSnapshot }>();
+const emit = defineEmits<{ select: [] }>();
+
+const hasTerminal = computed(() => !!props.role.terminalId);
 
 const STATUS_LABEL: Record<string, string> = {
   idle: 'Idle',
@@ -20,12 +23,21 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
 </script>
 
 <template>
-  <div class="role-tile" :class="[`s-${role.status}`, { signed: role.signedOff }]">
+  <div
+    class="role-tile"
+    :class="[`s-${role.status}`, { signed: role.signedOff, clickable: hasTerminal }]"
+    :role="hasTerminal ? 'button' : undefined"
+    :tabindex="hasTerminal ? 0 : undefined"
+    :title="hasTerminal ? 'Open the agent terminal' : undefined"
+    @click="hasTerminal && emit('select')"
+    @keydown.enter="hasTerminal && emit('select')"
+  >
     <span class="dot" :class="{ pulse: isActive }" />
     <div class="body">
       <div class="line">
         <TeamAgentBadge :tool="role.tool" />
         <span class="name" :title="role.name">{{ role.name }}</span>
+        <span v-if="hasTerminal" class="term-ic" title="Open terminal">🖥</span>
         <span v-if="role.signedOff" class="check" title="Signed off">✓</span>
       </div>
       <div class="meta">
@@ -47,6 +59,21 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
   border: 1px solid var(--border);
   border-radius: var(--radius);
   transition: border-color var(--dur-base) var(--ease-standard);
+}
+.role-tile.clickable {
+  cursor: pointer;
+}
+.role-tile.clickable:hover {
+  border-color: var(--accent);
+  background: var(--bg-elev-2);
+}
+.role-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.term-ic {
+  font-size: 11px;
+  opacity: 0.75;
 }
 .role-tile.s-working { border-color: var(--accent); }
 .role-tile.s-blocked { border-color: var(--amber); }

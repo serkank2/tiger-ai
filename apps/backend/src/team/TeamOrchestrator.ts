@@ -94,6 +94,8 @@ export interface TeamRoleInstance {
   requiredForSignoff: boolean;
   status: TeamRoleStatus;
   lastTurnAt?: string;
+  /** Terminal id of this role's most recent turn (so the UI can open its live CLI). */
+  activeTerminalId?: string;
 }
 
 export interface TeamDirective {
@@ -137,6 +139,8 @@ export interface TeamTurnRecord {
   reason?: string;
   messageSeqs: number[];
   appliedDirectiveIds: string[];
+  /** Terminal id this turn's CLI ran on (for live viewing / scrollback review). */
+  terminalId?: string;
 }
 
 export interface TeamRunState {
@@ -563,6 +567,9 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         paths: new TigerPaths(input.workspace),
         config: options.config,
         runId: input.runId,
+        // Drive the runner's terminal id from the engine's turn id so the UI can
+        // attach to the live CLI terminal as soon as the turn starts.
+        turnId: input.turn.id,
         role: {
           id: input.role.id,
           name: input.role.name,
@@ -1077,8 +1084,12 @@ export class TeamOrchestrator extends EventEmitter {
       return;
     }
 
+    const turnId = nanoid();
+    // The CLI terminal id is deterministic from the run + turn id (the runner uses the
+    // same id), so the UI can open this role's live terminal the moment the turn starts.
+    const terminalId = teamTerminalId(state.runId, turnId);
     const turn: TeamTurnRecord = {
-      id: nanoid(),
+      id: turnId,
       runId: state.runId,
       roleId: role.id,
       roleName: role.name,
@@ -1088,11 +1099,13 @@ export class TeamOrchestrator extends EventEmitter {
       messageSeqs: [],
       appliedDirectiveIds: this.lastBoundarySteering.map((directive) => directive.id),
       reason: scheduled.reason,
+      terminalId,
     };
     state.currentTurn = turn;
     state.turns.push(turn);
     role.status = 'running';
     role.lastTurnAt = turn.startedAt;
+    role.activeTerminalId = terminalId;
     await this.persistState();
     this.emitState();
 
@@ -1668,6 +1681,11 @@ async function atomicWrite(file: string, body: string): Promise<void> {
 function messageFromUnknown(err: unknown): string {
   if (err instanceof Error) return err.message || err.name;
   return String(err);
+}
+
+/** The CLI terminal id for a role turn — must match the runner's own derivation. */
+function teamTerminalId(runId: string, turnId: string): string {
+  return `team-${runId}-${turnId}`.replace(/[^a-zA-Z0-9._-]/g, '-');
 }
 
 interface HttpError extends Error {

@@ -40,6 +40,8 @@ export interface RunRoleTurnOptions {
   effort?: string;
   permission?: string;
   signal?: AbortSignal;
+  /** Caller-supplied turn id; makes the live terminal id deterministic for the UI. */
+  turnId?: string;
   /**
    * Whether this turn appends its parsed messages to the run's `conversation.jsonl`.
    * Standalone callers leave this `true` so the runner owns persistence. When the
@@ -67,7 +69,10 @@ export interface RunRoleTurnResult {
 export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurnResult> {
   const role = normalizeTeamRole(opts.role);
   const runOpts: RunRoleTurnOptions = { ...opts, role };
-  const turnId = nanoid();
+  // Use the caller-supplied turn id when given (the orchestrator passes its own turn
+  // id so the live terminal id is deterministic and known to the UI before the turn
+  // finishes); otherwise generate one for standalone callers.
+  const turnId = opts.turnId ?? nanoid();
   const runtimeDir = teamRuntimeDir(runOpts.paths, runOpts.runId);
   const promptPath = path.join(runtimeDir, `${turnId}.prompt.md`);
   const outputPath = path.join(runtimeDir, `${turnId}.output.md`);

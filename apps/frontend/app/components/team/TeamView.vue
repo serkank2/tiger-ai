@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
 import { useConnectionStore } from '~/stores/connection';
 import BaseButton from '../ui/BaseButton.vue';
@@ -9,6 +9,7 @@ import TeamRoleTile from './TeamRoleTile.vue';
 import TeamChatPanel from './TeamChatPanel.vue';
 import TeamDoneGate from './TeamDoneGate.vue';
 import TeamSteerBar from './TeamSteerBar.vue';
+import TeamTerminalPane from './TeamTerminalPane.vue';
 
 const emit = defineEmits<{ back: [] }>();
 
@@ -28,6 +29,13 @@ onBeforeUnmount(() => {
 
 const state = computed(() => team.state);
 const status = computed(() => state.value?.status ?? null);
+
+// The role whose live terminal is open. Tracked by id so the pane follows the role's
+// latest turn terminal as new turns start.
+const selectedRoleId = ref<string | null>(null);
+const terminalRole = computed(
+  () => state.value?.roles.find((r) => r.id === selectedRoleId.value && r.terminalId) ?? null,
+);
 const isActive = computed(() => status.value === 'running' || status.value === 'paused' || status.value === 'blocked');
 const connected = computed(() => connection.status === 'connected');
 
@@ -110,7 +118,12 @@ async function reset() {
           <span class="count">{{ state.roles.length }}</span>
         </div>
         <div class="roles">
-          <TeamRoleTile v-for="role in state.roles" :key="role.id" :role="role" />
+          <TeamRoleTile
+            v-for="role in state.roles"
+            :key="role.id"
+            :role="role"
+            @select="selectedRoleId = role.id"
+          />
         </div>
         <details v-if="team.artifacts.length" class="artifacts">
           <summary>Artifacts · {{ team.artifacts.length }}</summary>
@@ -125,6 +138,13 @@ async function reset() {
         <TeamSteerBar v-if="isActive" />
       </main>
     </section>
+
+    <TeamTerminalPane
+      v-if="terminalRole"
+      :term-id="terminalRole.terminalId!"
+      :title="terminalRole.name"
+      @close="selectedRoleId = null"
+    />
   </div>
 </template>
 

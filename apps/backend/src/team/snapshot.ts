@@ -63,6 +63,7 @@ function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): RoleSnapsh
     requiredForSignoff: role.requiredForSignoff,
     signedOff: isRoleSignedOff(state, role.id),
     statusNote: role.status === 'blocked' ? role.name : undefined,
+    terminalId: role.activeTerminalId,
   };
 }
 
