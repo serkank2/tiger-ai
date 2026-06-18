@@ -1,7 +1,7 @@
 import type { TigerConfig, TigerRunTemplate, TigerStageId, TigerStageRunConfig } from '~/types';
 import { TIGER_STAGES } from '~/lib/tigerStages';
 
-const AGENT_COUNT_MIN = 1;
+const AGENT_COUNT_MIN = 0;
 const AGENT_COUNT_MAX = 8;
 const CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];

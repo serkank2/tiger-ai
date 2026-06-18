@@ -213,7 +213,7 @@ test('template API works without an open project and enforces immutability and c
 
     const invalid = await requestJson(f.baseUrl, 'POST', '/api/tiger/templates', {
       name: 'Invalid Config',
-      configs: { 'writing-plan': { ...validConfig, claudeAgents: 0 } },
+      configs: { 'writing-plan': { ...validConfig, claudeAgents: 0, codexAgents: 0 } },
     });
     assert.equal(invalid.status, 400);
     assert.match(JSON.stringify(invalid.json), /configs\.writing-plan\.claudeAgents/);
@@ -270,8 +270,9 @@ test('stage run rejects out-of-range agent counts and unknown model or effort va
       parallel: true,
     };
     const cases = [
-      { claudeAgents: 0 },
+      { claudeAgents: -1 },
       { codexAgents: -1 },
+      { claudeAgents: 0, codexAgents: 0 },
       { claudeAgents: 9 },
       { claudeModel: 'unknown-model' },
       { codexEffort: 'turbo' },

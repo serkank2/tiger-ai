@@ -4,7 +4,7 @@ import type { AgentType, CliToolConfig, StageDefaults, TigerConfig } from './typ
 
 let tmpSeq = 0;
 
-export const TIGER_AGENT_COUNT_MIN = 1;
+export const TIGER_AGENT_COUNT_MIN = 0;
 export const TIGER_AGENT_COUNT_MAX = 8;
 export const TIGER_PROJECT_PROMPT_MAX_CHARS = 200_000;
 export const TIGER_GROUP_NAME_MAX_CHARS = 80;

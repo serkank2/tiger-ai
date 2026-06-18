@@ -73,6 +73,9 @@ export function buildStageConfig(config: TigerConfig, body: Record<string, unkno
   if (!cli.codex.permissionModes[cfg.codexPermission]) {
     throw configInputError(`unknown ${prefix}codex permission mode: ${cfg.codexPermission}`);
   }
+  if (cfg.claudeAgents === 0 && cfg.codexAgents === 0) {
+    throw configInputError(`${prefix}claudeAgents and codexAgents cannot both be 0 — at least one agent is required`);
+  }
   return cfg;
 }
 
