@@ -1,0 +1,333 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { nanoid } from 'nanoid';
+import { PER_FILE_CAP, TOTAL_CONTEXT_CAP } from '../orchestrator/compose.js';
+import type { TigerPaths } from '../orchestrator/paths.js';
+import { TeamPaths } from './paths.js';
+import type { TeamMessage, TeamMessageKind } from './types.js';
+
+export type { TeamMessage } from './types.js';
+
+export type TaskDirectiveAction = 'claim' | 'complete' | 'block' | 'request_review' | 'needs_work';
+
+export interface TaskDirective {
+  kind: 'task';
+  taskId: string;
+  action: TaskDirectiveAction;
+  summary?: string;
+}
+
+export type SignOffStatus = 'done' | 'blocked' | 'pending';
+
+export interface SignOffDirective {
+  kind: 'signoff';
+  roleId: string;
+  status: SignOffStatus;
+  summary: string;
+}
+
+export interface ParsedTeamOutput {
+  messages: TeamMessage[];
+  taskDirectives: TaskDirective[];
+  signOffDirectives: SignOffDirective[];
+}
+
+export interface ParseTeamOutputDefaults {
+  runId: string;
+  turnId: string;
+  roleId: string;
+  roleName: string;
+  startingSeq?: number;
+  timestamp?: string;
+}
+
+export function teamRunDir(paths: TigerPaths, runId: string): string {
+  return new TeamPaths(paths).runDir(safeSegment(runId));
+}
+
+export function teamRuntimeDir(paths: TigerPaths, runId: string): string {
+  return new TeamPaths(paths).runtimeDir(safeSegment(runId));
+}
+
+export function transcriptFile(paths: TigerPaths, runId: string): string {
+  return new TeamPaths(paths).conversationFile(safeSegment(runId));
+}
+
+export function turnsFile(paths: TigerPaths, runId: string): string {
+  return path.join(teamRunDir(paths, runId), 'turns.ndjson');
+}
+
+export function artifactsFile(paths: TigerPaths, runId: string): string {
+  return path.join(teamRunDir(paths, runId), 'artifacts.ndjson');
+}
+
+export async function appendTranscriptMessages(
+  paths: TigerPaths,
+  runId: string,
+  messages: TeamMessage[],
+): Promise<TeamMessage[]> {
+  if (messages.length === 0) return [];
+  const file = transcriptFile(paths, runId);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const nextSeq = await nextMessageSeq(paths, runId);
+  const persisted = messages.map((message, index) => ({ ...message, seq: nextSeq + index }));
+  const lines = persisted.map((m) => JSON.stringify(m)).join('\n') + '\n';
+  await fs.appendFile(file, lines, 'utf8');
+  return persisted;
+}
+
+export async function readTranscriptMessages(paths: TigerPaths, runId: string): Promise<TeamMessage[]> {
+  const raw = await fs.readFile(transcriptFile(paths, runId), 'utf8').catch(() => '');
+  const out: TeamMessage[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isTeamMessage(parsed)) out.push(parsed);
+    } catch {
+      // Ignore a corrupt historical line rather than blocking a new turn.
+    }
+  }
+  return out;
+}
+
+export async function renderTranscriptWindow(
+  paths: TigerPaths,
+  runId: string,
+  options: { maxCharacters?: number; maxMessages?: number } = {},
+): Promise<string> {
+  const maxCharacters = Math.min(options.maxCharacters ?? TOTAL_CONTEXT_CAP, TOTAL_CONTEXT_CAP);
+  const maxMessages = Math.max(1, options.maxMessages ?? 80);
+  const messages = await readTranscriptMessages(paths, runId);
+  const selected: string[] = [];
+  let used = 0;
+
+  for (const message of messages.slice(-maxMessages).reverse()) {
+    const rendered = renderMessageForPrompt(message);
+    const capped = rendered.length > PER_FILE_CAP ? `${rendered.slice(0, PER_FILE_CAP)}\n_(truncated)_` : rendered;
+    const next = capped.length + (selected.length ? 2 : 0);
+    if (used + next > maxCharacters) break;
+    selected.push(capped);
+    used += next;
+  }
+
+  return selected.reverse().join('\n\n');
+}
+
+export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefaults): ParsedTeamOutput {
+  const parsed: ParsedTeamOutput = {
+    messages: [],
+    taskDirectives: [],
+    signOffDirectives: [],
+  };
+  const timestamp = defaults.timestamp ?? new Date().toISOString();
+  const blocks = extractBlocks(output);
+
+  for (const block of blocks) {
+    const value = parseBlockJson(block);
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) {
+      if (block.kind === 'TeamMessage') {
+        parsed.messages.push(normalizeMessage(item, defaults, timestamp));
+      } else if (block.kind === 'TaskDirective') {
+        parsed.taskDirectives.push(normalizeTaskDirective(item));
+      } else {
+        parsed.signOffDirectives.push(normalizeSignOffDirective(item));
+      }
+    }
+  }
+
+  return parsed;
+}
+
+export function systemBlockerMessage(input: {
+  runId: string;
+  turnId: string;
+  content: string;
+  taskId?: string;
+  timestamp?: string;
+}): TeamMessage {
+  return {
+    id: nanoid(),
+    runId: input.runId,
+    turnId: input.turnId,
+    seq: 0,
+    from: 'system',
+    to: 'all',
+    kind: 'blocker',
+    body: input.content,
+    refs: input.taskId ? [{ kind: 'task', value: input.taskId }] : undefined,
+    createdAt: input.timestamp ?? new Date().toISOString(),
+  };
+}
+
+interface OutputBlock {
+  kind: 'TeamMessage' | 'TaskDirective' | 'SignOffDirective';
+  body: string;
+}
+
+function extractBlocks(output: string): OutputBlock[] {
+  const blocks: OutputBlock[] = [];
+  const re = /```[ \t]*(TeamMessage|TaskDirective|SignOffDirective)[^\r\n]*\r?\n([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(output)) !== null) {
+    const kind = normalizeBlockKind(match[1]);
+    const body = match[2];
+    if (kind && body !== undefined) blocks.push({ kind, body: body.trim() });
+  }
+  return blocks;
+}
+
+function normalizeBlockKind(value: string | undefined): OutputBlock['kind'] | null {
+  const lower = value?.toLowerCase();
+  if (lower === 'teammessage') return 'TeamMessage';
+  if (lower === 'taskdirective') return 'TaskDirective';
+  if (lower === 'signoffdirective') return 'SignOffDirective';
+  return null;
+}
+
+function parseBlockJson(block: OutputBlock): unknown {
+  try {
+    return JSON.parse(block.body);
+  } catch (err) {
+    throw new Error(`${block.kind} block contains invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function normalizeMessage(raw: unknown, defaults: ParseTeamOutputDefaults, timestamp: string): TeamMessage {
+  if (!isRecord(raw)) throw new Error('TeamMessage block must contain a JSON object');
+  const body = (stringField(raw, 'body') || stringField(raw, 'content')).trim();
+  if (!body) throw new Error('TeamMessage.body is required');
+  const kind = parseMessageKind(stringField(raw, 'kind') || stringField(raw, 'type', 'chat'));
+  const roleId = stringField(raw, 'roleId', defaults.roleId).trim() || defaults.roleId;
+  const roleName = stringField(raw, 'roleName', defaults.roleName).trim() || defaults.roleName;
+  const taskId = optionalString(raw, 'taskId');
+  const to = stringField(raw, 'to') || stringArrayField(raw, 'to', ['all'])[0] || 'all';
+  return {
+    id: optionalString(raw, 'id') ?? nanoid(),
+    runId: defaults.runId,
+    turnId: defaults.turnId,
+    seq: defaults.startingSeq ?? 0,
+    from: roleId,
+    to,
+    channel: optionalString(raw, 'channel'),
+    kind,
+    body,
+    refs: taskId ? [{ kind: 'task', value: taskId }] : undefined,
+    createdAt: timestamp,
+  };
+}
+
+function normalizeTaskDirective(raw: unknown): TaskDirective {
+  if (!isRecord(raw)) throw new Error('TaskDirective block must contain a JSON object');
+  const taskId = stringField(raw, 'taskId').trim();
+  if (!taskId) throw new Error('TaskDirective.taskId is required');
+  const action = parseTaskDirectiveAction(stringField(raw, 'action'));
+  return { kind: 'task', taskId, action, summary: optionalString(raw, 'summary') };
+}
+
+function normalizeSignOffDirective(raw: unknown): SignOffDirective {
+  if (!isRecord(raw)) throw new Error('SignOffDirective block must contain a JSON object');
+  const roleId = stringField(raw, 'roleId').trim();
+  if (!roleId) throw new Error('SignOffDirective.roleId is required');
+  const status = parseSignOffStatus(stringField(raw, 'status'));
+  const summary = stringField(raw, 'summary').trim();
+  if (!summary) throw new Error('SignOffDirective.summary is required');
+  return { kind: 'signoff', roleId, status, summary };
+}
+
+function parseMessageKind(value: string): TeamMessageKind {
+  switch (value) {
+    case 'chat':
+    case 'decision':
+    case 'task':
+    case 'handoff':
+    case 'tool':
+    case 'verification':
+    case 'finding':
+    case 'steering':
+    case 'signoff':
+    case 'system':
+    case 'blocker':
+      return value;
+    case 'status':
+    case 'instruction':
+    case 'question':
+      return 'chat';
+    default:
+      throw new Error(`unsupported TeamMessage.kind: ${value}`);
+  }
+}
+
+function parseTaskDirectiveAction(value: string): TaskDirectiveAction {
+  switch (value) {
+    case 'claim':
+    case 'complete':
+    case 'block':
+    case 'request_review':
+    case 'needs_work':
+      return value;
+    default:
+      throw new Error(`unsupported TaskDirective.action: ${value}`);
+  }
+}
+
+function parseSignOffStatus(value: string): SignOffStatus {
+  switch (value) {
+    case 'done':
+    case 'blocked':
+    case 'pending':
+      return value;
+    default:
+      throw new Error(`unsupported SignOffDirective.status: ${value}`);
+  }
+}
+
+function renderMessageForPrompt(message: TeamMessage): string {
+  const to = message.to ? ` -> ${message.to}` : '';
+  return `[${message.createdAt}] ${message.from}/${message.kind}${to}\n${message.body}`;
+}
+
+function isTeamMessage(value: unknown): value is TeamMessage {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.runId === 'string' &&
+    typeof value.seq === 'number' &&
+    typeof value.from === 'string' &&
+    typeof value.kind === 'string' &&
+    typeof value.body === 'string' &&
+    typeof value.createdAt === 'string'
+  );
+}
+
+function stringField(raw: Record<string, unknown>, key: string, fallback = ''): string {
+  const value = raw[key];
+  return typeof value === 'string' ? value : fallback;
+}
+
+function optionalString(raw: Record<string, unknown>, key: string): string | undefined {
+  const value = raw[key];
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function stringArrayField(raw: Record<string, unknown>, key: string, fallback: string[]): string[] {
+  const value = raw[key];
+  if (!Array.isArray(value)) return fallback;
+  const out = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  return out.length ? out : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function nextMessageSeq(paths: TigerPaths, runId: string): Promise<number> {
+  const messages = await readTranscriptMessages(paths, runId);
+  return messages.length ? messages[messages.length - 1]!.seq + 1 : 1;
+}
+
+function safeSegment(value: string): string {
+  const safe = value.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return safe || 'run';
+}

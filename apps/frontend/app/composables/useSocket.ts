@@ -205,6 +205,8 @@ export function useSocket() {
       // Domain-state pushes for screens delivered by later tasks. The shell does not
       // own these stores yet, so it simply fans the raw message out to subscribers.
       case 'queue.state':
+      case 'team.state':
+      case 'team.message':
       case 'generation.state':
       case 'history.changed':
         emitServerEvent(msg);
@@ -283,8 +285,8 @@ export function useSocket() {
   const onSnapshot = (id: string, cb: (d: string) => void) => subscribe(snapshotListeners, id, cb);
 
   /**
-   * Subscribe to a raw server message type (e.g. 'queue.state', 'limit.state',
-   * 'generation.state', 'history.changed'). Returns an unsubscribe function. This is the WS-side
+   * Subscribe to a raw server message type (e.g. 'queue.state', 'team.state',
+   * 'team.message', 'limit.state', 'generation.state', 'history.changed'). Returns an unsubscribe function. This is the WS-side
    * extension point for the domain stores delivered by later tasks.
    */
   function onServerEvent(type: string, cb: (msg: ServerMessage) => void): () => void {

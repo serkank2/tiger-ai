@@ -1,6 +1,7 @@
 import type { Pool } from 'mysql2/promise';
 import { getDbPool } from './pool.js';
 import { EXECUTION_CHECKPOINT_MIGRATION, EXECUTION_WORKSPACE_LEASE_MIGRATION } from '../orchestrator/persistence.js';
+import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION } from '../team/persistence.js';
 
 interface Migration {
   id: string;
@@ -229,6 +230,10 @@ const MIGRATIONS: Migration[] = [
   },
   EXECUTION_CHECKPOINT_MIGRATION,
   EXECUTION_WORKSPACE_LEASE_MIGRATION,
+  TEAM_MIGRATION,
+  // Corrects the team_templates columns to match MySqlTeamTemplateRepository.
+  // Must run after TEAM_MIGRATION, which creates the original (mismatched) table.
+  TEAM_TEMPLATES_MIGRATION,
 ];
 
 let migrationRun: Promise<void> | null = null;

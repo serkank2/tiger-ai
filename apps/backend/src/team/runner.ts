@@ -1,0 +1,321 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { nanoid } from 'nanoid';
+import type { TerminalManager } from '../terminal/TerminalManager.js';
+import { AgentSession, type AgentRunResult } from '../orchestrator/AgentSession.js';
+import { buildLaunchCommand, type LaunchParams } from '../orchestrator/launch-command.js';
+import type { TigerConfig } from '../orchestrator/types.js';
+import type { TigerPaths } from '../orchestrator/paths.js';
+import { checkOutputFile } from '../orchestrator/validate.js';
+import {
+  composeRoleTurnPrompt,
+  normalizeTeamRole,
+  type ComposeRoleTurnOptions,
+  type RoleTurnRole,
+  type TeamContextBlock,
+} from './compose-turn.js';
+import {
+  appendTranscriptMessages,
+  artifactsFile,
+  parseTeamOutput,
+  systemBlockerMessage,
+  teamRuntimeDir,
+  turnsFile,
+  type ParsedTeamOutput,
+} from './message-bus.js';
+import type { TeamMessage } from './types.js';
+
+export interface RunRoleTurnOptions {
+  manager: TerminalManager;
+  paths: TigerPaths;
+  config: TigerConfig;
+  runId: string;
+  role: RoleTurnRole;
+  assignedTask?: TeamContextBlock;
+  finding?: TeamContextBlock;
+  steering?: string[];
+  verification?: string[];
+  transcriptMaxMessages?: number;
+  model?: string;
+  effort?: string;
+  permission?: string;
+  signal?: AbortSignal;
+}
+
+export interface RunRoleTurnResult {
+  runId: string;
+  turnId: string;
+  terminalId: string;
+  promptPath: string;
+  outputPath: string;
+  markerPath: string;
+  command: string;
+  outcome: AgentRunResult;
+  parsed: ParsedTeamOutput;
+  messages: TeamMessage[];
+}
+
+export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurnResult> {
+  const role = normalizeTeamRole(opts.role);
+  const runOpts: RunRoleTurnOptions = { ...opts, role };
+  const turnId = nanoid();
+  const runtimeDir = teamRuntimeDir(runOpts.paths, runOpts.runId);
+  const promptPath = path.join(runtimeDir, `${turnId}.prompt.md`);
+  const outputPath = path.join(runtimeDir, `${turnId}.output.md`);
+  const markerPath = path.join(runtimeDir, `${turnId}.done`);
+  const terminalId = safeTerminalId(`team-${runOpts.runId}-${turnId}`);
+  // Build launch params from the raw opts.role, NOT the normalized runOpts.role:
+  // normalizeTeamRole() keeps only { id, name, agentType, persona, responsibilities } and drops the
+  // role's agent/model/effort/permission. roleLaunchParams must see the un-normalized role so
+  // roleAgentString can read those per-role CLI settings; it re-normalizes internally to resolve agentType.
+  const launchParams = roleLaunchParams(opts);
+  const command = buildLaunchCommand(runOpts.config, role.agentType, launchParams);
+  const startedAt = new Date().toISOString();
+
+  await fs.mkdir(runtimeDir, { recursive: true });
+  await Promise.all([fs.rm(outputPath, { force: true }), fs.rm(markerPath, { force: true })]);
+
+  const composed = await composeRoleTurnPrompt({
+    paths: opts.paths,
+    runId: opts.runId,
+    turnId,
+    role,
+    outputPath,
+    markerPath,
+    assignedTask: opts.assignedTask,
+    finding: opts.finding,
+    steering: opts.steering,
+    verification: opts.verification,
+    transcriptMaxMessages: opts.transcriptMaxMessages,
+  } satisfies ComposeRoleTurnOptions);
+  await fs.writeFile(promptPath, composed.prompt, 'utf8');
+
+  const now = new Date().toISOString();
+  opts.manager.upsertDefinition({
+    id: terminalId,
+    name: `${role.name} (${turnId.slice(0, 6)})`,
+    groupId: null,
+    cwd: runOpts.paths.root,
+    initialCommand: command,
+    shell: { kind: 'system-default' },
+    protected: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const session = new AgentSession({
+    manager: opts.manager,
+    termId: terminalId,
+    label: role.id,
+    command,
+    cwd: runOpts.paths.root,
+    promptPath,
+    outputPath,
+    markerPath,
+    timing: runOpts.config.timing,
+  });
+
+  const sessionResult = await session.run(runOpts.signal ?? new AbortController().signal);
+  const parsed = await parseCompletedOrBlocker(runOpts, turnId, outputPath, sessionResult);
+  const messages = await appendTranscriptMessages(runOpts.paths, runOpts.runId, parsed.messages);
+  const persistedParsed: ParsedTeamOutput = { ...parsed.parsed, messages };
+
+  const endedAt = new Date().toISOString();
+  await recordTurn(runOpts, {
+    turnId,
+    terminalId,
+    promptPath,
+    outputPath,
+    markerPath,
+    command,
+    startedAt,
+    endedAt,
+    outcome: parsed.outcome,
+    messageCount: messages.length,
+    promptCharacters: composed.size.characters,
+  });
+  await recordArtifacts(runOpts, {
+    turnId,
+    terminalId,
+    promptPath,
+    outputPath,
+    markerPath,
+  });
+
+  return {
+    runId: opts.runId,
+    turnId,
+    terminalId,
+    promptPath,
+    outputPath,
+    markerPath,
+    command,
+    outcome: parsed.outcome,
+    parsed: persistedParsed,
+    messages,
+  };
+}
+
+interface ParseOutcome {
+  outcome: AgentRunResult;
+  parsed: ParsedTeamOutput;
+  messages: TeamMessage[];
+}
+
+async function parseCompletedOrBlocker(
+  opts: RunRoleTurnOptions,
+  turnId: string,
+  outputPath: string,
+  sessionResult: AgentRunResult,
+): Promise<ParseOutcome> {
+  const outputCheck = await checkOutputFile(outputPath);
+  const outputText = outputCheck.ok ? await fs.readFile(outputPath, 'utf8') : '';
+  if (sessionResult.state === 'completed' && outputCheck.ok) {
+    try {
+      const parsed = parseTeamOutput(outputText, {
+        runId: opts.runId,
+        turnId,
+        roleId: opts.role.id,
+        roleName: opts.role.name,
+      });
+      if (parsed.messages.length === 0) {
+        throw new Error('output did not contain any TeamMessage blocks');
+      }
+      return { outcome: sessionResult, parsed, messages: parsed.messages };
+    } catch (err) {
+      return blockerOutcome(opts, turnId, `Role turn output was invalid: ${messageOf(err)}`);
+    }
+  }
+
+  const detail =
+    sessionResult.error ??
+    outputCheck.reason ??
+    (sessionResult.state === 'stopped' ? 'role turn was stopped before completion' : 'role turn did not complete');
+  const failed: AgentRunResult = {
+    ...sessionResult,
+    state: sessionResult.state === 'stopped' ? 'stopped' : 'failed',
+    error: detail,
+  };
+  const blocker = systemBlockerMessage({
+    runId: opts.runId,
+    turnId,
+    taskId: opts.assignedTask?.id,
+    content: `Role turn failed for ${opts.role.name}: ${detail}`,
+  });
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [] };
+  return { outcome: failed, parsed, messages: parsed.messages };
+}
+
+function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string): ParseOutcome {
+  const blocker = systemBlockerMessage({
+    runId: opts.runId,
+    turnId,
+    taskId: opts.assignedTask?.id,
+    content: reason,
+  });
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [] };
+  return { outcome: { state: 'failed', error: reason }, parsed, messages: parsed.messages };
+}
+
+function roleLaunchParams(opts: RunRoleTurnOptions): LaunchParams {
+  const defaults = opts.config.defaults;
+  const role = normalizeTeamRole(opts.role);
+  if (role.agentType === 'claude') {
+    return {
+      model: opts.model ?? roleAgentString(opts.role, 'model') ?? defaults.claudeModel,
+      effort: opts.effort ?? roleAgentString(opts.role, 'effort') ?? defaults.claudeEffort,
+      permission: opts.permission ?? roleAgentString(opts.role, 'permission') ?? defaults.claudePermission,
+    };
+  }
+  return {
+    model: opts.model ?? roleAgentString(opts.role, 'model') ?? defaults.codexModel,
+    effort: opts.effort ?? roleAgentString(opts.role, 'effort') ?? defaults.codexEffort,
+    permission: opts.permission ?? roleAgentString(opts.role, 'permission') ?? defaults.codexPermission,
+  };
+}
+
+function roleAgentString(role: RoleTurnRole, key: 'model' | 'effort' | 'permission'): string | undefined {
+  const raw = role as { agent?: Partial<Record<typeof key, unknown>> } & Partial<Record<typeof key, unknown>>;
+  const direct = raw[key];
+  if (typeof direct === 'string') return direct;
+  const nested = raw.agent?.[key];
+  return typeof nested === 'string' ? nested : undefined;
+}
+
+async function recordTurn(
+  opts: RunRoleTurnOptions,
+  input: {
+    turnId: string;
+    terminalId: string;
+    promptPath: string;
+    outputPath: string;
+    markerPath: string;
+    command: string;
+    startedAt: string;
+    endedAt: string;
+    outcome: AgentRunResult;
+    messageCount: number;
+    promptCharacters: number;
+  },
+): Promise<void> {
+  await appendJsonLine(turnsFile(opts.paths, opts.runId), {
+    runId: opts.runId,
+    turnId: input.turnId,
+    terminalId: input.terminalId,
+    roleId: opts.role.id,
+    roleName: opts.role.name,
+    agentType: opts.role.agentType,
+    command: input.command,
+    promptPath: input.promptPath,
+    outputPath: input.outputPath,
+    markerPath: input.markerPath,
+    outcome: input.outcome,
+    messageCount: input.messageCount,
+    promptCharacters: input.promptCharacters,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+  });
+}
+
+async function recordArtifacts(
+  opts: RunRoleTurnOptions,
+  input: {
+    turnId: string;
+    terminalId: string;
+    promptPath: string;
+    outputPath: string;
+    markerPath: string;
+  },
+): Promise<void> {
+  for (const [kind, absPath] of [
+    ['prompt', input.promptPath],
+    ['output', input.outputPath],
+    ['marker', input.markerPath],
+  ] as const) {
+    const stat = await fs.stat(absPath).catch(() => null);
+    await appendJsonLine(artifactsFile(opts.paths, opts.runId), {
+      runId: opts.runId,
+      turnId: input.turnId,
+      terminalId: input.terminalId,
+      roleId: opts.role.id,
+      kind,
+      absPath,
+      relPath: opts.paths.rel(absPath),
+      sizeBytes: stat?.isFile() ? stat.size : null,
+      recordedAt: new Date().toISOString(),
+    });
+  }
+}
+
+async function appendJsonLine(file: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.appendFile(file, JSON.stringify(value) + '\n', 'utf8');
+}
+
+function safeTerminalId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

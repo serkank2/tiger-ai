@@ -14,6 +14,15 @@ import type {
   QueueJob,
   QueueRule,
   QueueState,
+  CreateTeamRunResponse,
+  SteerResponse,
+  TeamArtifact,
+  TeamMessageHistoryParams,
+  TeamMessagePage,
+  TeamRunStateResponse,
+  TeamRunStartInput,
+  TeamSteeringInput,
+  TeamTemplatesResponse,
   TerminalDto,
   TerminalInput,
   TerminalStatus,
@@ -143,6 +152,34 @@ export function useApi() {
     getTigerUsage: () => req<TigerUsage>('/api/tiger/usage'),
     getLimits: () => req<LimitStatus>('/api/limits'),
     refreshLimits: () => req<LimitStatus>('/api/limits/refresh', { method: 'POST' }),
+
+    // --- Team orchestrator ---
+    listTeamTemplates: () => req<TeamTemplatesResponse>('/api/team/templates'),
+    getTeamState: () => req<TeamRunStateResponse>('/api/team/state'),
+    startTeamRun: (body: TeamRunStartInput) =>
+      req<TeamRunStateResponse | CreateTeamRunResponse>('/api/team/runs', { method: 'POST', body }),
+    stopTeamRun: (id: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+    pauseTeamRun: (id: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
+    resumeTeamRun: (id: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+    steerTeamRun: (id: string, body: TeamSteeringInput) =>
+      req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
+    listTeamMessages: (runId: string, params: TeamMessageHistoryParams = {}) =>
+      req<TeamMessagePage>(`/api/team/runs/${encodeURIComponent(runId)}/messages${queryString(params as Record<string, unknown>)}`),
+    getTeamMessageHistory: (runId: string, params: TeamMessageHistoryParams = {}) =>
+      req<TeamMessagePage>(`/api/team/runs/${encodeURIComponent(runId)}/messages${queryString(params as Record<string, unknown>)}`),
+    listTeamArtifacts: (runId: string) =>
+      req<TeamArtifact[]>(`/api/team/runs/${encodeURIComponent(runId)}/artifacts`),
+    getTeamArtifacts: (runId: string) =>
+      req<TeamArtifact[]>(`/api/team/runs/${encodeURIComponent(runId)}/artifacts`),
+    readTeamArtifact: (runId: string, path: string) =>
+      req<{ path: string; content: string; artifact?: TeamArtifact }>(
+        `/api/team/runs/${encodeURIComponent(runId)}/artifacts/file?path=${encodeURIComponent(path)}`,
+      ),
+    submitTeamSteering: (id: string, body: TeamSteeringInput) =>
+      req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
 
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),

@@ -375,6 +375,273 @@ export interface TigerStageRunConfig {
   mergeAgent?: TigerAgentType;
 }
 
+// --- Team orchestrator (mirror of apps/backend/src/team/types.ts) ---
+
+export type TeamAgentType = TigerAgentType;
+
+export interface RoleAgentConfig {
+  tool: TeamAgentType;
+  model: string;
+  effort: string;
+  permission: string;
+}
+
+export interface RoleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  persona: string;
+  agent: RoleAgentConfig;
+  canWriteCode: boolean;
+  requiredForSignoff: boolean;
+}
+
+export type RoleStatus = 'idle' | 'thinking' | 'working' | 'waiting' | 'blocked' | 'done' | 'failed';
+
+export interface RoleInstance {
+  id: string;
+  templateId?: string;
+  name: string;
+  description: string;
+  persona: string;
+  agent: RoleAgentConfig;
+  canWriteCode: boolean;
+  requiredForSignoff: boolean;
+  status: RoleStatus;
+  signedOff: boolean;
+  statusNote?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface TeamTemplate {
+  id: string;
+  name: string;
+  description: string;
+  roles: RoleTemplate[];
+  builtin?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
+}
+
+export type TeamMessageKind =
+  | 'chat'
+  | 'decision'
+  | 'task'
+  | 'handoff'
+  | 'tool'
+  | 'verification'
+  | 'finding'
+  | 'steering'
+  | 'signoff'
+  | 'system'
+  | 'blocker';
+
+export type MessageSender = string;
+
+export interface MessageRef {
+  kind: 'message' | 'file' | 'task' | 'finding' | 'url';
+  value: string;
+  label?: string;
+}
+
+export interface TeamMessage {
+  id: string;
+  runId: string;
+  turnId: string;
+  seq: number;
+  from: MessageSender;
+  to?: string;
+  channel?: string;
+  kind: TeamMessageKind;
+  body: string;
+  refs?: MessageRef[];
+  createdAt: string;
+}
+
+export interface SteeringDirective {
+  id: string;
+  runId: string;
+  body: string;
+  target?: string;
+  createdAt: string;
+  acknowledged: boolean;
+}
+
+export interface SignOff {
+  runId: string;
+  roleId: string;
+  done: boolean;
+  rationale: string;
+  createdAt: string;
+}
+
+export type VerificationOutcome = 'passed' | 'failed' | 'inconclusive';
+
+export interface VerificationRecord {
+  id: string;
+  runId: string;
+  roleId: string;
+  subject: string;
+  outcome: VerificationOutcome;
+  details: string;
+  refs?: MessageRef[];
+  createdAt: string;
+}
+
+export interface DoneGateState {
+  satisfied: boolean;
+  requiredRoleIds: string[];
+  signedOffRoleIds: string[];
+  pendingRoleIds: string[];
+  evaluatedAt?: string;
+}
+
+export type TeamTurnStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface TeamTurn {
+  id: string;
+  runId: string;
+  seq: number;
+  roleId: string;
+  status: TeamTurnStatus;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export type TeamRunStatus = 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+
+export interface TeamRun {
+  id: string;
+  name: string;
+  goal: string;
+  status: TeamRunStatus;
+  roles: RoleInstance[];
+  templateId?: string;
+  turnSeq: number;
+  messageSeq: number;
+  doneGate: DoneGateState;
+  createdAt: string;
+  updatedAt?: string;
+  startedAt?: string;
+  endedAt?: string;
+  message?: string;
+}
+
+export interface RoleSnapshot {
+  id: string;
+  name: string;
+  tool: TeamAgentType;
+  status: RoleStatus;
+  canWriteCode: boolean;
+  requiredForSignoff: boolean;
+  signedOff: boolean;
+  statusNote?: string;
+}
+
+export interface TeamRunState {
+  id: string;
+  name: string;
+  goal: string;
+  status: TeamRunStatus;
+  roles: RoleSnapshot[];
+  doneGate: DoneGateState;
+  messageCount: number;
+  recentMessages: TeamMessage[];
+  pendingSteering: SteeringDirective[];
+  tasks?: TigerTaskSummary | null;
+  findings?: TigerFindingsSummary | null;
+  updatedAt?: string;
+}
+
+export type TeamState = TeamRunState;
+
+export interface RoleConfigInput {
+  templateId?: string;
+  name: string;
+  description?: string;
+  persona?: string;
+  tool: TeamAgentType;
+  model: string;
+  effort: string;
+  permission: string;
+  canWriteCode: boolean;
+  requiredForSignoff: boolean;
+}
+
+export interface CreateTeamRunRequest {
+  name?: string;
+  goal: string;
+  templateId?: string;
+  roles?: RoleConfigInput[];
+}
+
+export interface CreateTeamRunResponse {
+  run: TeamRun;
+}
+
+export interface SteerRequest {
+  body: string;
+  target?: string;
+}
+
+export interface SteerResponse {
+  directive: SteeringDirective;
+}
+
+export interface TeamRunStateResponse {
+  state: TeamRunState;
+}
+
+export interface TeamTemplatesResponse {
+  teams: TeamTemplate[];
+  roles: RoleTemplate[];
+}
+
+export interface TeamMessagePage {
+  items: TeamMessage[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface TeamMessageHistoryParams {
+  cursor?: string | null;
+  afterSeq?: number;
+  limit?: number;
+}
+
+export interface TeamArtifact {
+  id: string;
+  runId: string;
+  path: string;
+  name: string;
+  kind?: string;
+  mimeType?: string | null;
+  size?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type TeamRunStartInput = CreateTeamRunRequest;
+export type TeamSteeringInput = SteerRequest;
+export type TeamDirective = SteeringDirective;
+export type TeamVerification = VerificationRecord;
+export type TeamSignOff = SignOff;
+
+export interface TeamStateEvent {
+  type: 'team.state';
+  runId?: string;
+  state: TeamRunState;
+}
+
+export interface TeamMessageEvent {
+  type: 'team.message';
+  runId?: string;
+  message: TeamMessage;
+}
+
 // --- Backend health (mirror of GET /api/health) ---
 
 export interface HealthStatus {

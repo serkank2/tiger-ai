@@ -5,8 +5,8 @@ import { STAGE_META, TigerPaths } from './paths.js';
 import { FIX_FINDING_PROMPT, SYSTEM_PROMPT_BY_STAGE } from './prompt-files.js';
 import { readTaskBlock } from './tasks.js';
 
-const PER_FILE_CAP = 24_000;
-const TOTAL_CONTEXT_CAP = 160_000;
+export const PER_FILE_CAP = 24_000;
+export const TOTAL_CONTEXT_CAP = 160_000;
 const APPROX_CHARS_PER_TOKEN = 4;
 
 export interface PromptSize {
