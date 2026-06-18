@@ -14,6 +14,7 @@ import { createPromptsRouter } from './http/prompts.routes.js';
 import { createTigerRouter } from './http/tiger.routes.js';
 import { createLimitsRouter } from './http/limits.routes.js';
 import { createQueueRouter } from './http/queue.routes.js';
+import { createTeamRouter } from './http/team.routes.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
 import { Orchestrator } from './orchestrator/Orchestrator.js';
@@ -23,7 +24,10 @@ import { migrate } from './db/migrate.js';
 import { MySqlRunTemplateRepository } from './repositories/run-templates.js';
 import { MySqlLimitRepository } from './repositories/LimitRepository.js';
 import { MysqlQueueRepository } from './queue/MysqlQueueRepository.js';
+import { MySqlTeamTemplateRepository } from './repositories/team-templates.js';
 import { RunTemplateService } from './services/run-templates.js';
+import { TeamTemplateService } from './services/team-templates.js';
+import { TeamOrchestrator, createTeamTurnRunner } from './team/TeamOrchestrator.js';
 import { createDefaultPromptGenerationService } from './services/PromptGenerationService.js';
 import { LimitService } from './services/LimitService.js';
 import { QueueService } from './services/QueueService.js';
@@ -71,6 +75,17 @@ const promptGenerations = createDefaultPromptGenerationService(manager, state, (
   return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
 });
 
+// AI Team: reusable role/team templates and the autonomous run engine. The team
+// engine drives real CLI turns on the shared TerminalManager (same path Tiger
+// uses) and shares the per-workspace execution lease so a Team run and a Tiger
+// stage can never spawn agents against the same .tiger root at once.
+const teamTemplates = new TeamTemplateService(new MySqlTeamTemplateRepository(dbPool), () => orchestrator.getConfig());
+const teamOrchestrator = new TeamOrchestrator({
+  executionPersistence: new MySqlExecutionPersistence(dbPool),
+  runner: createTeamTurnRunner({ manager, config: orchestrator.getConfig() }),
+  limitService: limits,
+});
+
 const ctx: AppCtx = {
   state,
   manager,
@@ -79,6 +94,8 @@ const ctx: AppCtx = {
   promptGenerations,
   queueService,
   limits,
+  teamOrchestrator,
+  teamTemplates,
   save,
 };
 
@@ -95,6 +112,7 @@ if (state.tiger?.lastWorkspace) {
 await runTemplates.initialize({
   legacyTemplateDirs: legacyRunTemplateDirs(state.tiger?.projects ?? []),
 });
+await teamTemplates.initialize();
 await queueScheduler.start();
 
 const app = express();
@@ -119,6 +137,8 @@ app.use('/api/prompts', express.json({ limit: '160kb' }), createPromptsRouter(ct
 // mounted before the global tight cap.
 app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
 app.use('/api/queue', express.json({ limit: '2mb' }), createQueueRouter(ctx));
+// Team goals/personas can be sizable; give this router a roomier parser too.
+app.use('/api/team', express.json({ limit: '2mb' }), createTeamRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
@@ -173,6 +193,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`\n[${signal}] shutting down — killing terminals...`);
   queueScheduler.stop();
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
+  if (teamOrchestrator.tryGetState()) await teamOrchestrator.stop('Backend shutting down.').catch(() => {});
   limits.stop();
   manager.beginShutdown();
   await autostartDone.catch(() => {});

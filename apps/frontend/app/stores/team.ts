@@ -22,6 +22,7 @@ import type {
   TeamStateEvent,
   TeamSteeringInput,
   TeamTemplate,
+  TeamTemplatePayload,
   TeamTemplatesResponse,
 } from '~/types';
 
@@ -110,6 +111,8 @@ export const useTeamStore = defineStore('team', () => {
 
   const templates = ref<TeamTemplate[]>([]);
   const roleTemplates = ref<RoleTemplate[]>([]);
+  const projects = ref<string[]>([]);
+  const lastWorkspace = ref<string | null>(null);
   const state = ref<TeamRunState | null>(null);
   const messages = ref<TeamMessage[]>([]);
   const artifacts = ref<TeamArtifact[]>([]);
@@ -231,6 +234,75 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  async function loadProjects(): Promise<void> {
+    try {
+      const res = await api.listTeamProjects();
+      projects.value = res.projects ?? [];
+      lastWorkspace.value = res.lastWorkspace ?? null;
+    } catch {
+      // Non-fatal: the launcher can still browse to a folder.
+    }
+  }
+
+  async function createTemplate(payload: TeamTemplatePayload): Promise<TeamTemplate> {
+    setBusy('template', true);
+    try {
+      const { template } = await api.createTeamTemplate(payload);
+      await loadTemplates(true);
+      notices.push('Team template created', 'info');
+      return template;
+    } catch (error) {
+      recordFailure('Create template failed', error);
+      throw error;
+    } finally {
+      setBusy('template', false);
+    }
+  }
+
+  async function updateTemplate(id: string, payload: TeamTemplatePayload): Promise<TeamTemplate> {
+    setBusy('template', true);
+    try {
+      const { template } = await api.updateTeamTemplate(id, payload);
+      await loadTemplates(true);
+      notices.push('Team template saved', 'info');
+      return template;
+    } catch (error) {
+      recordFailure('Save template failed', error);
+      throw error;
+    } finally {
+      setBusy('template', false);
+    }
+  }
+
+  async function duplicateTemplate(id: string, name?: string): Promise<TeamTemplate> {
+    setBusy('template', true);
+    try {
+      const { template } = await api.duplicateTeamTemplate(id, name ? { name } : {});
+      await loadTemplates(true);
+      notices.push('Team template duplicated', 'info');
+      return template;
+    } catch (error) {
+      recordFailure('Duplicate template failed', error);
+      throw error;
+    } finally {
+      setBusy('template', false);
+    }
+  }
+
+  async function deleteTemplate(id: string): Promise<void> {
+    setBusy('template', true);
+    try {
+      await api.deleteTeamTemplate(id);
+      await loadTemplates(true);
+      notices.push('Team template deleted', 'info');
+    } catch (error) {
+      recordFailure('Delete template failed', error);
+      throw error;
+    } finally {
+      setBusy('template', false);
+    }
+  }
+
   async function loadState(): Promise<void> {
     loading.value = true;
     try {
@@ -307,6 +379,7 @@ export const useTeamStore = defineStore('team', () => {
   async function hydrate(options: { quiet?: boolean } = {}): Promise<void> {
     loading.value = true;
     try {
+      void loadProjects();
       const [templateResponse, stateResponse] = await Promise.all([api.listTeamTemplates(), api.getTeamState()]);
       const nextTemplates = normalizeTemplatesResponse(templateResponse as TemplateResponse);
       templates.value = nextTemplates.teams;
@@ -461,6 +534,8 @@ export const useTeamStore = defineStore('team', () => {
   return {
     templates,
     roleTemplates,
+    projects,
+    lastWorkspace,
     state,
     messages,
     artifacts,
@@ -489,6 +564,11 @@ export const useTeamStore = defineStore('team', () => {
     applyState,
     appendMessage,
     loadTemplates,
+    loadProjects,
+    createTemplate,
+    updateTemplate,
+    duplicateTemplate,
+    deleteTemplate,
     loadState,
     loadMessages,
     loadMoreMessages,

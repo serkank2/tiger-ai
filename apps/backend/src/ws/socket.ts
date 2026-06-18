@@ -5,6 +5,9 @@ import type { AppCtx } from '../context.js';
 import type { ManagerOutputEvent } from '../terminal/TerminalManager.js';
 import type { CommandTarget, TerminalRuntimeStatus } from '../store/types.js';
 import { parseClientMessage, type ServerMsg } from './protocol.js';
+import { toTeamRunStateDto } from '../team/snapshot.js';
+import type { TeamRunState as EngineTeamRunState } from '../team/TeamOrchestrator.js';
+import type { TeamMessage } from '../team/types.js';
 
 interface Peer {
   ws: WebSocket;
@@ -44,7 +47,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     },
   });
   const peers = new Set<Peer>();
-  const { manager, state, orchestrator, queueService, promptGenerations, limits } = ctx;
+  const { manager, state, orchestrator, queueService, promptGenerations, limits, teamOrchestrator } = ctx;
 
   const send = (ws: WebSocket, msg: ServerMsg): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -105,12 +108,22 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   const onLimitState = (s: import('../limits/types.js').LimitStatus) => broadcast({ type: 'limit.state', state: s });
   limits.on('state', onLimitState);
 
+  // AI Team: push the compact run snapshot on every state change, and stream each
+  // new conversation message live so the company-chat panel updates in real time.
+  const onTeamState = (s: EngineTeamRunState) =>
+    broadcast({ type: 'team.state', runId: s.runId, state: toTeamRunStateDto(s) });
+  teamOrchestrator.on('state', onTeamState);
+  const onTeamMessage = (m: TeamMessage) => broadcast({ type: 'team.message', runId: m.runId, message: m });
+  teamOrchestrator.on('message', onTeamMessage);
+
   wss.on('connection', (ws: WebSocket) => {
     const peer: Peer = { ws, attached: new Set(), alive: true };
     peers.add(peer);
     // Send the current orchestrator snapshot immediately so a fresh client is in sync.
     send(ws, { type: 'tiger.state', state: orchestrator.getState() });
     send(ws, { type: 'limit.state', state: limits.getState() });
+    const teamSnapshot = teamOrchestrator.tryGetState();
+    if (teamSnapshot) send(ws, { type: 'team.state', runId: teamSnapshot.runId, state: toTeamRunStateDto(teamSnapshot) });
     if (queueService) void queueService.getState().then((queueState) => send(ws, { type: 'queue.state', state: queueState }));
     ws.on('pong', () => {
       peer.alive = true;
@@ -227,6 +240,8 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     manager.off('status', onStatus);
     manager.off('exit', onExit);
     orchestrator.off('state', onTigerState);
+    teamOrchestrator.off('state', onTeamState);
+    teamOrchestrator.off('message', onTeamMessage);
     queueService?.off('state', onQueueState);
     promptGenerations.off('state', onGenerationState);
     promptGenerations.off('history.changed', onHistoryChanged);

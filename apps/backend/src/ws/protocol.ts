@@ -3,6 +3,7 @@ import type { OrchestratorState } from '../orchestrator/types.js';
 import type { QueueState } from '../queue/types.js';
 import type { PromptGenerationState } from '../services/PromptGenerationService.js';
 import type { LimitStatus } from '../limits/types.js';
+import type { TeamRunState, TeamMessage } from '../team/types.js';
 
 // ---------------------------------------------------------------------------
 // WebSocket message protocol. One socket per browser window; terminals are
@@ -138,6 +139,18 @@ export interface LimitStateMsg {
   type: 'limit.state';
   state: LimitStatus;
 }
+/** Compact AI-team run snapshot pushed whenever the run state changes. */
+export interface TeamStateMsg {
+  type: 'team.state';
+  runId: string;
+  state: TeamRunState;
+}
+/** A single new AI-team conversation message appended to the live transcript. */
+export interface TeamMessageMsg {
+  type: 'team.message';
+  runId: string;
+  message: TeamMessage;
+}
 
 export type ServerMsg =
   | AttachedMsg
@@ -152,7 +165,9 @@ export type ServerMsg =
   | QueueStateMsg
   | GenerationStateMsg
   | HistoryChangedMsg
-  | LimitStateMsg;
+  | LimitStateMsg
+  | TeamStateMsg
+  | TeamMessageMsg;
 
 const CLIENT_MSG_TYPES = new Set<string>([
   'term.attach',

@@ -59,6 +59,9 @@ You are an autonomous Tiger pipeline background agent. No human is available for
 - Write every document, log, report, and comment in clear, professional English.
 - Your agent ID is: ${opts.label}
 - Your working directory is the .tiger/ root: ${opts.paths.root}
+- WORKSPACE BOUNDARY — STRICT: this .tiger/ root is the project root and the ONLY directory you may
+  touch. Create/modify files and run commands only at or below it (relative paths); never write to,
+  use absolute paths to, or ".." escape to anything outside it. Escaping this root breaks the run.
 - Save your deliverable to exactly this file (absolute path):
     ${opts.outputPath}
     (relative to the .tiger root: ${outputRel})

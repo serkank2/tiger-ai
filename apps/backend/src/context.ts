@@ -5,6 +5,8 @@ import type { RunTemplateService } from './services/run-templates.js';
 import type { PromptGenerationService } from './services/PromptGenerationService.js';
 import type { QueueService } from './services/QueueService.js';
 import type { LimitService } from './services/LimitService.js';
+import type { TeamOrchestrator } from './team/TeamOrchestrator.js';
+import type { TeamTemplateService } from './services/team-templates.js';
 
 /** Shared application context injected into REST routers and the WS server. */
 export interface AppCtx {
@@ -20,6 +22,10 @@ export interface AppCtx {
   queueService: QueueService;
   /** Provider limit snapshots and rule decisions. */
   limits: LimitService;
+  /** Autonomous AI-team run engine (role agents that converse and sign off). */
+  teamOrchestrator: TeamOrchestrator;
+  /** DB-backed catalog of reusable team/role templates. */
+  teamTemplates: TeamTemplateService;
   /** Persist the current in-memory state atomically. */
   save: () => Promise<void>;
 }

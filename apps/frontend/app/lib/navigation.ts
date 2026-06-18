@@ -18,6 +18,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { key: 'terminals', to: '/terminals', label: 'Terminals', icon: '🖥️', hint: 'Live terminal grid and command broadcast' },
   { key: 'projects', to: '/tiger', label: 'Projects', icon: '🐅', hint: 'Tiger AI software-team orchestrator' },
+  { key: 'team', to: '/team', label: 'Team', icon: '👥', hint: 'AI Team — role agents that converse, build, and sign off' },
   { key: 'queue', to: '/queue', label: 'Queue', icon: '📥', hint: 'Autonomous job queue with limit-aware dispatch' },
   { key: 'prompts', to: '/prompts', label: 'Prompts', icon: '💬', hint: 'Prompt history and generation' },
   { key: 'templates', to: '/templates', label: 'Templates', icon: '🧩', hint: 'Run-all templates and presets' },

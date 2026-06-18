@@ -24,6 +24,9 @@ Rules:
 - Every document, log, report, and comment you produce MUST be written in clear, professional English.
 - Your agent ID is: ${label}
 - Your working directory is the .tiger/ root: ${paths.root}
+- WORKSPACE BOUNDARY — STRICT: stay entirely within the .tiger/ root above. Never read from, write
+  to, or run commands against anything outside it; never use absolute paths or ".." to escape it.
+  Treat this root as the whole world for your run; escaping it corrupts the pipeline state.
 - Save your deliverable to exactly this file (absolute path):
     ${outputPath}
     (relative to the .tiger root: ${outputRel})

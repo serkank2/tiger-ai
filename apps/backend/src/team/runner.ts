@@ -40,6 +40,15 @@ export interface RunRoleTurnOptions {
   effort?: string;
   permission?: string;
   signal?: AbortSignal;
+  /**
+   * Whether this turn appends its parsed messages to the run's `conversation.jsonl`.
+   * Standalone callers leave this `true` so the runner owns persistence. When the
+   * {@link TeamOrchestrator} drives the turn it sets this `false`: the orchestrator
+   * is the single authoritative writer of the conversation (it stamps `seq` and
+   * emits the WS `message` event), so the runner must only parse-and-return here,
+   * otherwise every message would be written twice with conflicting sequence numbers.
+   */
+  persistTranscript?: boolean;
 }
 
 export interface RunRoleTurnResult {
@@ -117,7 +126,12 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
 
   const sessionResult = await session.run(runOpts.signal ?? new AbortController().signal);
   const parsed = await parseCompletedOrBlocker(runOpts, turnId, outputPath, sessionResult);
-  const messages = await appendTranscriptMessages(runOpts.paths, runOpts.runId, parsed.messages);
+  // When an orchestrator drives the turn it owns conversation persistence (and seq
+  // assignment), so we only parse-and-return; standalone callers persist here.
+  const messages =
+    runOpts.persistTranscript === false
+      ? parsed.messages
+      : await appendTranscriptMessages(runOpts.paths, runOpts.runId, parsed.messages);
   const persistedParsed: ParsedTeamOutput = { ...parsed.parsed, messages };
 
   const endedAt = new Date().toISOString();

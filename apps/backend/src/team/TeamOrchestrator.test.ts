@@ -243,6 +243,9 @@ test('failed fake turn stops the run in an explicit failed state with a reason',
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
+      // Make a single failure terminal so this test pins the hard-failure path; the
+      // recovery (tolerate failures below the cap) path is covered separately.
+      maxConsecutiveFailures: 1,
       runner: {
         async runRoleTurn() {
           return { status: 'failed', reason: 'fake CLI exited 2' };
@@ -275,6 +278,9 @@ test('a completion gate satisfied by a failing turn does not overwrite the faile
             : { complete: false, reasons: ['Waiting for the first turn.'] };
         },
       },
+      // A single failure is terminal here, so the failing turn drives the run to
+      // `failed` and the post-turn gate must not overwrite that with `completed`.
+      maxConsecutiveFailures: 1,
       runner: {
         async runRoleTurn() {
           return { status: 'failed', reason: 'fake CLI exited 2' };
@@ -286,6 +292,49 @@ test('a completion gate satisfied by a failing turn does not overwrite the faile
     const final = await waitForTerminal(orch);
     assert.equal(final.status, 'failed');
     assert.match(final.message ?? '', /fake CLI exited 2/);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a turn failure below the cap is tolerated; the run recovers and completes', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-recover-'));
+  try {
+    let calls = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxConsecutiveFailures: 3,
+      // Complete once any fresh sign-off exists, so the recovering successful turn ends the run.
+      completionGate: {
+        evaluate(state) {
+          return state.signoffs.some((signoff) => !signoff.stale)
+            ? { complete: true, reasons: [] }
+            : { complete: false, reasons: ['Awaiting sign-off.'] };
+        },
+      },
+      runner: {
+        async runRoleTurn(input) {
+          calls += 1;
+          // Fail the first two turns (below the cap of 3), then succeed and sign off.
+          if (calls <= 2) return { status: 'failed', reason: `transient failure ${calls}` };
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: 'work complete' }],
+            signoffs: [{}],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Recover from transient failures.', roles: roles.slice(0, 1) });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    assert.ok(calls >= 3, 'kept going past the early failures instead of ending on the first one');
+    const announced = (await orch.listMessages()).some(
+      (message) => message.from === 'system' && /will continue/.test(message.body),
+    );
+    assert.ok(announced, 'announced the recovery in the conversation');
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }

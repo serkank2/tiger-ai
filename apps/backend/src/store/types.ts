@@ -67,12 +67,21 @@ export interface TigerPersisted {
   projects?: string[];
 }
 
+/** AI Team persistence (only what must survive a restart). */
+export interface TeamPersisted {
+  /** Last workspace directory a Team run used (so a reload re-surfaces it). */
+  lastWorkspace?: string;
+  /** Known Team project workspace directories (the launcher lists these). */
+  projects?: string[];
+}
+
 export interface PersistedState {
   schemaVersion: 1;
   terminals: TerminalDefinition[];
   groups: TerminalGroup[];
   settings: AppSettings;
   tiger?: TigerPersisted;
+  team?: TeamPersisted;
   limits?: LimitsPersistedState;
   updatedAt: string;
 }

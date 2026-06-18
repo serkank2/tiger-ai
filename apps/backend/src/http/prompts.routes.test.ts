@@ -87,6 +87,8 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
     } as AppCtx['promptGenerations'],
     queueService: {} as AppCtx['queueService'],
     limits: {} as AppCtx['limits'],
+    teamOrchestrator: {} as AppCtx['teamOrchestrator'],
+    teamTemplates: {} as AppCtx['teamTemplates'],
     save: async () => {},
   };
 

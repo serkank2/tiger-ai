@@ -22,6 +22,8 @@ import type {
   TeamRunStateResponse,
   TeamRunStartInput,
   TeamSteeringInput,
+  TeamTemplate,
+  TeamTemplatePayload,
   TeamTemplatesResponse,
   TerminalDto,
   TerminalInput,
@@ -155,6 +157,15 @@ export function useApi() {
 
     // --- Team orchestrator ---
     listTeamTemplates: () => req<TeamTemplatesResponse>('/api/team/templates'),
+    listTeamProjects: () => req<{ projects: string[]; lastWorkspace: string | null }>('/api/team/projects'),
+    createTeamTemplate: (body: TeamTemplatePayload) =>
+      req<{ template: TeamTemplate }>('/api/team/templates', { method: 'POST', body }),
+    updateTeamTemplate: (id: string, body: TeamTemplatePayload) =>
+      req<{ template: TeamTemplate }>(`/api/team/templates/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+    duplicateTeamTemplate: (id: string, body: { name?: string } = {}) =>
+      req<{ template: TeamTemplate }>(`/api/team/templates/${encodeURIComponent(id)}/duplicate`, { method: 'POST', body }),
+    deleteTeamTemplate: (id: string) =>
+      req<{ ok: boolean }>(`/api/team/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     getTeamState: () => req<TeamRunStateResponse>('/api/team/state'),
     startTeamRun: (body: TeamRunStartInput) =>
       req<TeamRunStateResponse | CreateTeamRunResponse>('/api/team/runs', { method: 'POST', body }),

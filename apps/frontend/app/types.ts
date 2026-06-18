@@ -391,6 +391,7 @@ export interface RoleTemplate {
   name: string;
   description: string;
   persona: string;
+  responsibilities: string[];
   agent: RoleAgentConfig;
   canWriteCode: boolean;
   requiredForSignoff: boolean;
@@ -576,6 +577,15 @@ export interface CreateTeamRunRequest {
   goal: string;
   templateId?: string;
   roles?: RoleConfigInput[];
+  /** Project folder the team works on (the .tiger root is created inside it). */
+  path?: string;
+}
+
+/** Create/update payload for a custom team template. */
+export interface TeamTemplatePayload {
+  name: string;
+  description?: string;
+  roles: RoleTemplate[];
 }
 
 export interface CreateTeamRunResponse {

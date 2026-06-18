@@ -287,6 +287,13 @@ export interface TeamOrchestratorOptions {
   lockTtlMs?: number;
   maxTurns?: number;
   maxRounds?: number;
+  /**
+   * How many consecutive *failed* role turns (with no successful turn between them)
+   * are tolerated before the run is given up as `failed`. A single failure no longer
+   * kills the run — another role or a retry can recover — but a broken setup that
+   * fails every turn must not loop to the round cap. Default 3.
+   */
+  maxConsecutiveFailures?: number;
 }
 
 export class TeamPaths {
@@ -581,6 +588,10 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         effort: input.role.effort,
         permission: input.role.permission,
         signal: input.signal,
+        // The orchestrator is the single authoritative writer of conversation.jsonl
+        // (it assigns seq and emits the WS message event); the runner must not also
+        // persist, or every message would be duplicated with a conflicting seq.
+        persistTranscript: false,
       });
       return mapRunnerResult(result);
     },
@@ -783,6 +794,9 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly lockTtlMs: number;
   private readonly maxTurns: number;
   private readonly maxRounds: number;
+  private readonly maxConsecutiveFailures: number;
+  /** Consecutive failed turns since the last successful turn (recovery guard). */
+  private consecutiveTurnFailures = 0;
 
   constructor(private readonly options: TeamOrchestratorOptions = {}) {
     super();
@@ -793,6 +807,7 @@ export class TeamOrchestrator extends EventEmitter {
     this.lockTtlMs = options.lockTtlMs ?? 30 * 60_000;
     this.maxTurns = options.maxTurns ?? 200;
     this.maxRounds = options.maxRounds ?? 200;
+    this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
     this.scheduler = options.scheduler ?? new DefaultTeamScheduler();
     this.runner = options.runner ?? new MissingTeamTurnRunner();
     this.completionGate =
@@ -932,6 +947,41 @@ export class TeamOrchestrator extends EventEmitter {
 
   getState(): TeamRunState {
     return clone(this.requireState());
+  }
+
+  /** Like {@link getState} but returns null instead of throwing when no run is loaded. */
+  tryGetState(): TeamRunState | null {
+    return this.state ? clone(this.state) : null;
+  }
+
+  /** The workspace of the run currently held in memory, if any. */
+  activeWorkspace(): string | null {
+    return this.state?.workspace ?? null;
+  }
+
+  /**
+   * Load the most recently persisted run for a workspace into memory. Used by
+   * `GET /state` so a page reload (or a backend restart) re-surfaces the run the
+   * user was watching instead of showing an empty Team view. Returns null when the
+   * workspace has no persisted team run.
+   */
+  async loadLatestRun(workspace: string): Promise<TeamRunState | null> {
+    const resolved = path.resolve(workspace);
+    const teamsDir = path.join(new TigerPaths(resolved).root, 'team');
+    let entries: string[];
+    try {
+      entries = await fs.readdir(teamsDir);
+    } catch {
+      return null;
+    }
+    let newest: { runId: string; mtimeMs: number } | null = null;
+    for (const runId of entries) {
+      const stat = await fs.stat(path.join(teamsDir, runId, 'team.json')).catch(() => null);
+      if (stat?.isFile() && (!newest || stat.mtimeMs > newest.mtimeMs)) newest = { runId, mtimeMs: stat.mtimeMs };
+    }
+    if (!newest) return null;
+    await this.loadRun(resolved, newest.runId);
+    return this.getState();
   }
 
   async listMessages(afterSeq = 0, target?: TeamRunTarget): Promise<TeamMessage[]> {
@@ -1130,9 +1180,35 @@ export class TeamOrchestrator extends EventEmitter {
     state.turnCount += 1;
     await this.refreshWorkQueues();
 
-    if (result.status === 'blocked' || result.status === 'failed' || result.status === 'stopped' || result.status === 'interrupted') {
-      const reason = result.reason ?? `${role.name} turn ended with status ${result.status}.`;
+    // Recovery policy. A single role turn failing — or a role reporting itself blocked —
+    // must NOT end the whole run: another role (or a retry next round) can recover, and
+    // the code-enforced done-gate still prevents a false "complete". Only a user stop /
+    // interruption is terminal here. A run of consecutive *failures* with no successful
+    // turn between them trips a bounded guard so a broken setup can't loop to the round cap.
+    const reason = result.reason ?? `${role.name} turn ended with status ${result.status}.`;
+    if (result.status === 'completed') {
+      this.consecutiveTurnFailures = 0;
+    } else if (result.status === 'stopped' || result.status === 'interrupted') {
       await this.finishRun(turnStatusToRunStatus(result.status), reason);
+    } else {
+      // failed | blocked — keep the run alive and let the scheduler re-route next round.
+      role.status = result.status === 'blocked' ? 'blocked' : 'idle';
+      this.consecutiveTurnFailures = result.status === 'failed' ? this.consecutiveTurnFailures + 1 : 0;
+      await this.appendMessage({
+        turnId: turn.id,
+        from: SYSTEM_SENDER,
+        kind: 'system',
+        body:
+          result.status === 'failed'
+            ? `${role.name}'s turn failed: ${reason}. The team will continue and re-route or retry this work (failure ${this.consecutiveTurnFailures}/${this.maxConsecutiveFailures}).`
+            : `${role.name} reported it is blocked: ${reason}. The team will continue — steer it or let another role unblock the work.`,
+      });
+      if (this.consecutiveTurnFailures >= this.maxConsecutiveFailures) {
+        await this.finishRun(
+          'failed',
+          `Stopped after ${this.consecutiveTurnFailures} consecutive failed turns without progress. Last failure: ${reason}`,
+        );
+      }
     }
   }
 
