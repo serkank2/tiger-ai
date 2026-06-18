@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
+import type { RunTemplateService } from '../services/run-templates.js';
 import { STAGE_META, TigerPaths, agentLabel } from './paths.js';
 import { STAGE_ORDER } from './types.js';
 import type {
@@ -16,6 +17,7 @@ import type {
   StageRunConfig,
   StageState,
   StageStatus,
+  TaskRecord,
   TigerConfig,
 } from './types.js';
 import { defaultTigerConfig, loadConfig, normalizeConfig, saveConfig, validateConfigPatch } from './config.js';
@@ -23,8 +25,19 @@ import { ensureScaffold } from './scaffold.js';
 import { buildLaunchCommand } from './launch-command.js';
 import { AgentSession } from './AgentSession.js';
 import { composePrompt, type ComposeOptions } from './compose.js';
-import { checkOutputFile } from './validate.js';
+import { checkOutputFile, markerExists } from './validate.js';
 import { logAgentResult, logNote, logStageEnd, logStageStart } from './runlog.js';
+import {
+  NoopExecutionPersistence,
+  fileArtifact,
+  leaseExpiresAt,
+  ownerKey,
+  type ExecutionRunStatus,
+  type ExecutionOwner,
+  type ExecutionPersistence,
+  type PersistedAgentRunRecord,
+  type PersistedStageRecord,
+} from './persistence.js';
 import {
   claimNextTaskFile,
   finishTaskFile,
@@ -50,13 +63,19 @@ import {
   summarizeFindings,
   type FindingsSummary,
 } from './findings.js';
-import { deleteTemplate, listTemplates, saveTemplate } from './templates.js';
+import { BUILTIN_TEMPLATES } from './templates.js';
 
 const nowIso = (): string => new Date().toISOString();
 
 interface TerminalRemovalTarget {
   id: string;
   label: string;
+}
+
+export interface OrchestratorOptions {
+  persistence?: ExecutionPersistence;
+  owner?: ExecutionOwner;
+  runTemplates?: RunTemplateService;
 }
 
 function formatRemovalFailure(reason: unknown): string {
@@ -67,6 +86,13 @@ function formatRemovalFailure(reason: unknown): string {
   } catch {
     return String(reason);
   }
+}
+
+function stageStatusToRunStatus(status: StageStatus): ExecutionRunStatus {
+  if (status === 'completed') return 'completed';
+  if (status === 'failed') return 'failed';
+  if (status === 'stopped') return 'stopped';
+  return 'interrupted';
 }
 
 /** Run items through `worker` with bounded concurrency. */
@@ -106,9 +132,41 @@ export class Orchestrator extends EventEmitter {
   private autoAdvance = false;
   /** Per-stage configs used during an auto run (Run All). Falls back to defaults when a stage is absent. */
   private autoConfigs: Partial<Record<StageId, StageRunConfig>> = {};
+  private activeRunId: string | null = null;
+  private activeLeaseOwner: string | null = null;
+  private activeLeaseExpiresAt: string | null = null;
+  private runLeaseHeartbeat: NodeJS.Timeout | null = null;
+  private runLeaseRefresh: Promise<void> | null = null;
+  private readonly persistence: ExecutionPersistence;
+  /** Default execution owner (manual unless overridden at construction). Used when no scoped owner is active. */
+  private readonly defaultOwner: ExecutionOwner;
+  /** When set (e.g. by the queue Scheduler), executions persist under this owner instead of the default. */
+  private activeOwner: ExecutionOwner | null = null;
+  private runTemplates?: RunTemplateService;
 
-  constructor(private readonly manager: TerminalManager) {
+  constructor(private readonly manager: TerminalManager, options: OrchestratorOptions = {}) {
     super();
+    this.persistence = options.persistence ?? new NoopExecutionPersistence();
+    this.defaultOwner = options.owner ?? { type: 'manual', id: `${process.pid}:${nanoid(6)}` };
+    this.runTemplates = options.runTemplates;
+  }
+
+  /** The owner under which executions are currently persisted (the scoped owner if set, else the default). */
+  private get owner(): ExecutionOwner {
+    return this.activeOwner ?? this.defaultOwner;
+  }
+
+  /**
+   * Scope subsequent executions to a specific owner so persisted state (execution_runs, run_stages,
+   * agent_runs, task claims, finding claims) records that owner. The queue Scheduler uses this to run
+   * Tiger stages as `queue:*` instead of the default `manual:*`. Pass null to revert to the default.
+   */
+  setExecutionOwner(owner: ExecutionOwner | null): void {
+    this.activeOwner = owner;
+  }
+
+  setRunTemplateService(runTemplates: RunTemplateService): void {
+    this.runTemplates = runTemplates;
   }
 
   // --- state ---
@@ -171,10 +229,16 @@ export class Orchestrator extends EventEmitter {
     this.initialized = true;
     this.correctionCycles = 0;
     this.stages = blankStages();
+    await this.stopRunLeaseHeartbeat();
+    this.clearActiveRunLease();
+    await this.persistence.init();
+    await this.reconcilePersistentState();
     await this.reclaimStaleClaims();
-    await this.deriveStagesFromDisk();
+    const restored = await this.restoreStagesFromPersistence();
+    if (!restored) await this.deriveStagesFromDisk();
     await this.refreshTasks();
     await this.refreshFindings();
+    await this.quarantineInterruptedOutputs();
     this.emitState();
   }
 
@@ -193,6 +257,16 @@ export class Orchestrator extends EventEmitter {
     await this.initialize(workspace, existing);
   }
 
+  async replaceProjectPrompt(projectPrompt: string): Promise<OrchestratorState> {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    const prompt = projectPrompt.trim();
+    if (!prompt) throw httpError(400, 'project prompt is required');
+    await fs.writeFile(this.paths.projectPromptFile, prompt, 'utf8');
+    this.projectPrompt = prompt;
+    this.emitState();
+    return this.getState();
+  }
+
   async updateConfig(partial: unknown): Promise<TigerConfig> {
     if (!this.paths) throw httpError(400, 'no workspace selected');
     const validationError = validateConfigPatch(partial, this.config);
@@ -209,7 +283,7 @@ export class Orchestrator extends EventEmitter {
    * Validate + kick off a stage (non-blocking). Progress arrives via 'state' events.
    * When `auto` is true, the workflow auto-advances to the next stage on success.
    */
-  startStage(stageId: StageId, cfg: StageRunConfig, auto = false): void {
+  async startStage(stageId: StageId, cfg: StageRunConfig, auto = false): Promise<void> {
     if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
     if (this.busy) throw httpError(409, 'a stage is already running');
     if (!STAGE_ORDER.includes(stageId)) throw httpError(400, 'unknown stage');
@@ -229,28 +303,69 @@ export class Orchestrator extends EventEmitter {
     stage.config = cfg; // remember what this stage ran with, for the UI
     this.emitState();
 
+    let runId: string | null = null;
+    try {
+      runId = await this.beginPersistentRun();
+      await this.persistence.startStage({
+        workspace: this.workspace!,
+        runId,
+        stageId,
+        status: 'running',
+        cfg,
+        owner: this.owner,
+        ttlMs: this.config.execution.lockTtlMs,
+        startedAt: stage.startedAt,
+      });
+    } catch (err) {
+      this.busy = false;
+      this.currentStage = null;
+      this.abort = null;
+      stage.status = 'not_started';
+      stage.startedAt = undefined;
+      stage.message = err instanceof Error ? err.message : String(err);
+      if (runId) await this.finishPersistentRun(runId, 'failed', stage.message);
+      this.emitState();
+      throw err;
+    }
+
     void this.executeStage(stageId, cfg)
       .catch((err) => {
         stage.status = 'failed';
         stage.message = err instanceof Error ? err.message : String(err);
       })
-      .finally(() => {
+      .finally(async () => {
         this.busy = false;
         this.abort = null;
         stage.endedAt = nowIso();
+        await this.persistence.finishStage({
+          workspace: this.workspace!,
+          runId,
+          stageId,
+          status: stage.status,
+          cfg: stage.config,
+          message: stage.message,
+          owner: this.owner,
+          ttlMs: this.config.execution.lockTtlMs,
+          startedAt: stage.startedAt,
+          endedAt: stage.endedAt,
+        });
+        const isFinalAutoStage = this.autoAdvance && STAGE_ORDER.indexOf(stageId) === STAGE_ORDER.length - 1;
+        if (!this.autoAdvance || stage.status !== 'completed' || isFinalAutoStage) {
+          await this.finishPersistentRun(runId, stageStatusToRunStatus(stage.status), stage.message);
+        }
         this.emitState();
         this.maybeAutoAdvance(stageId);
       });
   }
 
   /** Configure-all-then-run: auto-advance from `fromStage` using a per-stage config map. */
-  startAll(configs: Partial<Record<StageId, StageRunConfig>>, fromStage?: StageId): void {
+  async startAll(configs: Partial<Record<StageId, StageRunConfig>>, fromStage?: StageId): Promise<void> {
     if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
     if (this.busy) throw httpError(409, 'a stage is already running');
     this.autoConfigs = configs;
     const start =
       fromStage && STAGE_ORDER.includes(fromStage) ? fromStage : this.firstIncompleteStage();
-    this.startStage(start, configs[start] ?? this.defaultStageConfig(start), true);
+    await this.startStage(start, configs[start] ?? this.defaultStageConfig(start), true);
   }
 
   private firstIncompleteStage(): StageId {
@@ -259,20 +374,20 @@ export class Orchestrator extends EventEmitter {
 
   // --- Run All templates ---
 
-  /** Built-in templates plus the active project's custom templates. */
+  /** Built-in templates plus DB-backed global custom templates. */
   listRunTemplates(): Promise<RunTemplate[]> {
-    return listTemplates(this.paths?.runTemplatesDir ?? null);
+    return this.runTemplates ? this.runTemplates.list() : Promise.resolve(BUILTIN_TEMPLATES);
   }
 
   async saveRunTemplate(t: RunTemplate): Promise<RunTemplate[]> {
-    if (!this.paths) throw httpError(400, 'open a project before saving a template');
-    await saveTemplate(this.paths.runTemplatesDir, t);
+    if (!this.runTemplates) throw httpError(503, 'run template storage is not available');
+    await this.runTemplates.save(t);
     return this.listRunTemplates();
   }
 
   async deleteRunTemplate(name: string): Promise<RunTemplate[]> {
-    if (!this.paths) throw httpError(400, 'open a project first');
-    await deleteTemplate(this.paths.runTemplatesDir, name);
+    if (!this.runTemplates) throw httpError(503, 'run template storage is not available');
+    await this.runTemplates.archive(name);
     return this.listRunTemplates();
   }
 
@@ -295,13 +410,11 @@ export class Orchestrator extends EventEmitter {
       return;
     }
     void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
-    try {
-      this.startStage(next, this.autoConfigs[next] ?? this.defaultStageConfig(next), true);
-    } catch (err) {
+    void this.startStage(next, this.autoConfigs[next] ?? this.defaultStageConfig(next), true).catch((err) => {
       this.autoAdvance = false;
       this.stages[next].message = `Auto-advance failed to start: ${err instanceof Error ? err.message : String(err)}`;
       this.emitState();
-    }
+    });
   }
 
   /**
@@ -326,6 +439,8 @@ export class Orchestrator extends EventEmitter {
     this.stages = blankStages();
     this.tasksSummary = null;
     this.findingsSummary = null;
+    await this.stopRunLeaseHeartbeat();
+    this.clearActiveRunLease();
     this.emitState();
   }
 
@@ -347,11 +462,11 @@ export class Orchestrator extends EventEmitter {
   }
 
   /** Re-run only the failed agents of a stage. */
-  retryStage(stageId: StageId): void {
+  async retryStage(stageId: StageId): Promise<void> {
     if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
     if (this.busy) throw httpError(409, 'a stage is already running');
     const stage = this.stages[stageId];
-    const failed = stage.runs.filter((r) => r.state === 'failed' || r.state === 'stopped');
+    const failed = stage.runs.filter((r) => r.state === 'failed' || r.state === 'stopped' || r.state === 'interrupted');
     if (failed.length === 0) throw httpError(400, 'no failed agents to retry');
 
     this.autoAdvance = false; // a manual retry never auto-advances
@@ -360,6 +475,30 @@ export class Orchestrator extends EventEmitter {
     this.abort = new AbortController();
     stage.status = 'running';
     this.emitState();
+
+    let runId: string | null = null;
+    try {
+      runId = await this.beginPersistentRun();
+      await this.persistence.startStage({
+        workspace: this.workspace!,
+        runId,
+        stageId,
+        status: 'running',
+        cfg: stage.config,
+        owner: this.owner,
+        ttlMs: this.config.execution.lockTtlMs,
+        startedAt: stage.startedAt ?? nowIso(),
+      });
+    } catch (err) {
+      this.busy = false;
+      this.currentStage = null;
+      this.abort = null;
+      stage.status = 'failed';
+      stage.message = err instanceof Error ? err.message : String(err);
+      if (runId) await this.finishPersistentRun(runId, 'failed', stage.message);
+      this.emitState();
+      throw err;
+    }
 
     void (async () => {
       const signal = this.abort!.signal;
@@ -374,10 +513,23 @@ export class Orchestrator extends EventEmitter {
         stage.status = 'failed';
         stage.message = err instanceof Error ? err.message : String(err);
       })
-      .finally(() => {
+      .finally(async () => {
         this.busy = false;
         this.abort = null;
         stage.endedAt = nowIso();
+        await this.persistence.finishStage({
+          workspace: this.workspace!,
+          runId,
+          stageId,
+          status: stage.status,
+          cfg: stage.config,
+          message: stage.message,
+          owner: this.owner,
+          ttlMs: this.config.execution.lockTtlMs,
+          startedAt: stage.startedAt,
+          endedAt: stage.endedAt,
+        });
+        await this.finishPersistentRun(runId, stageStatusToRunStatus(stage.status), stage.message);
         this.emitState();
       });
   }
@@ -473,7 +625,11 @@ export class Orchestrator extends EventEmitter {
       for (let i = 1; i <= clampCount(cfg.codexAgents); i++) runs.push(this.makeRun(stageId, 'codex', i, cfg));
     }
     stage.runs = runs;
-    runs.forEach((r) => this.registerRun(r));
+    for (const r of runs) {
+      r.runId = this.activeRunId ?? undefined;
+      this.registerRun(r);
+      await this.recordAgentSnapshot(r);
+    }
     this.emitState();
 
     if (runs.length === 0) {
@@ -498,6 +654,7 @@ export class Orchestrator extends EventEmitter {
       return;
     }
     const all = await listTaskRecords(paths.tasksDir);
+    await this.recordTaskRecords(all);
     if (all.length === 0) {
       stage.message = 'The merged task file contains no tasks.';
       return;
@@ -536,9 +693,18 @@ export class Orchestrator extends EventEmitter {
         ),
       );
       if (!claimed) return false;
+      await this.refreshActiveRunLease();
+      await this.persistence.recordTaskClaim({
+        workspace: this.workspace!,
+        task: claimed.record,
+        leaseOwner: this.activeLeaseOwner,
+        leaseExpiresAt: this.activeLeaseExpiresAt,
+      });
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
+      run.runId = this.activeRunId ?? undefined;
       stage.runs.push(run);
       this.registerRun(run);
+      await this.recordAgentSnapshot(run);
       void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`);
       this.emitState();
 
@@ -552,6 +718,8 @@ export class Orchestrator extends EventEmitter {
         .catch(() => null);
       if (reported && run.state === 'completed') finalStatus = reported.status;
       await finishTaskFile(paths.tasksDir, claimed.record.id, finalStatus, nowIso());
+      const finalRecord = (await listTaskRecords(paths.tasksDir)).find((t) => t.id === claimed.record.id);
+      if (finalRecord) await this.persistence.recordTaskFinish({ workspace: this.workspace!, task: finalRecord });
       if (this.config.execution.locking) await releaseLock(paths.lockFile(claimed.record.id));
       await this.refreshTasks();
       return true;
@@ -593,7 +761,11 @@ export class Orchestrator extends EventEmitter {
     for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) findRuns.push(this.makeRun('task-review', 'claude', i, cfg));
     for (let i = 1; i <= clampCount(cfg.codexAgents); i++) findRuns.push(this.makeRun('task-review', 'codex', i, cfg));
     stage.runs = findRuns;
-    findRuns.forEach((r) => this.registerRun(r));
+    for (const r of findRuns) {
+      r.runId = this.activeRunId ?? undefined;
+      this.registerRun(r);
+      await this.recordAgentSnapshot(r);
+    }
     this.emitState();
     if (findRuns.length === 0) {
       stage.message = 'No agents were configured for this stage.';
@@ -604,6 +776,7 @@ export class Orchestrator extends EventEmitter {
     findRuns.forEach((r) => partitions.set(r.id, []));
     done.forEach((t, i) => partitions.get(findRuns[i % findRuns.length]!.id)!.push(t.id));
     for (const t of done) await reviewTaskFile(paths.tasksDir, t.id, 'reviewing');
+    await this.recordTaskRecords(await listTaskRecords(paths.tasksDir));
     await this.refreshTasks();
 
     await runPool(findRuns, this.concurrency('task-review', findRuns.length, cfg.parallel), async (run) => {
@@ -616,6 +789,7 @@ export class Orchestrator extends EventEmitter {
       findRuns.map(async (r) => ({ label: r.label, content: await fs.readFile(r.outputPath, 'utf8').catch(() => '') })),
     );
     const found = await splitFindingsToFiles(logs, paths.findingsDir);
+    await this.persistence.recordFindings(found.map((finding) => ({ workspace: this.workspace!, finding })));
     await logNote(paths.runLogFile, `Task review reported ${found.length} finding(s).`);
     await this.refreshFindings();
     await this.reclaimStaleFindingClaims();
@@ -638,15 +812,29 @@ export class Orchestrator extends EventEmitter {
           ),
         );
         if (!claimed) return false;
+        const findingRecord = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
+        if (findingRecord) {
+          await this.refreshActiveRunLease();
+          await this.persistence.recordFindingClaim({
+            workspace: this.workspace!,
+            finding: findingRecord,
+            leaseOwner: this.activeLeaseOwner,
+            leaseExpiresAt: this.activeLeaseExpiresAt,
+          });
+        }
         const run = this.makeRun('task-review', type, index, cfg, claimed.id);
+        run.runId = this.activeRunId ?? undefined;
         stage.runs.push(run);
         this.registerRun(run);
+        await this.recordAgentSnapshot(run);
         void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`);
         this.emitState();
         await this.executeAgentRun(run, { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block }, signal);
         const reported =
           run.state === 'completed' ? parseFixResult(await fs.readFile(run.outputPath, 'utf8').catch(() => '')) : null;
         await finishFinding(paths.findingsDir, claimed.id, reported?.status === 'fixed' ? 'fixed' : 'wontfix');
+        const finalFinding = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
+        if (finalFinding) await this.persistence.recordFindingFinish({ workspace: this.workspace!, finding: finalFinding });
         if (this.config.execution.locking) await releaseLock(paths.findingLockFile(claimed.id));
         await this.refreshFindings();
         return true;
@@ -676,6 +864,7 @@ export class Orchestrator extends EventEmitter {
         own.length === 0 ? 'approved' : own.every((f) => f.status === 'fixed') ? 'fixed' : 'needs_fix';
       await reviewTaskFile(paths.tasksDir, t.id, rs);
     }
+    await this.recordTaskRecords(await listTaskRecords(paths.tasksDir));
     await this.refreshTasks();
     await this.refreshFindings();
   }
@@ -692,6 +881,7 @@ export class Orchestrator extends EventEmitter {
       ttlMs: this.config.execution.lockTtlMs,
     });
     if (reclaimed.length > 0) {
+      await this.recordTaskRecords(reclaimed);
       await logNote(
         this.paths.runLogFile,
         `Reclaimed ${reclaimed.length} stale executing-plan claim(s): ${reclaimed.map((t) => t.id).join(', ')}.`,
@@ -707,6 +897,7 @@ export class Orchestrator extends EventEmitter {
       ttlMs: this.config.execution.lockTtlMs,
     });
     if (reclaimed.length > 0) {
+      await this.persistence.recordFindings(reclaimed.map((finding) => ({ workspace: this.workspace!, finding })));
       await logNote(
         this.paths.runLogFile,
         `Reclaimed ${reclaimed.length} stale task-review finding claim(s): ${reclaimed.map((f) => f.id).join(', ')}.`,
@@ -723,6 +914,10 @@ export class Orchestrator extends EventEmitter {
     this.findingsSummary = (await hasFindings(this.paths.findingsDir))
       ? summarizeFindings(await listFindings(this.paths.findingsDir))
       : null;
+    if (await hasFindings(this.paths.findingsDir)) {
+      const records = await listFindings(this.paths.findingsDir);
+      await this.persistence.recordFindings(records.map((finding) => ({ workspace: this.workspace!, finding })));
+    }
     this.emitState();
   }
 
@@ -768,6 +963,8 @@ export class Orchestrator extends EventEmitter {
     run.error = undefined;
     run.completion = undefined;
     run.state = 'starting';
+    run.runId = this.activeRunId ?? run.runId;
+    await this.recordAgentSnapshot(run);
     this.emitState();
 
     await fs.mkdir(paths.runtimeDir(run.stage), { recursive: true }).catch(() => {});
@@ -782,6 +979,9 @@ export class Orchestrator extends EventEmitter {
       warning: this.upstreamContinuedWarning(run.stage),
     });
     await fs.writeFile(run.promptPath, promptText, 'utf8');
+    await this.recordArtifactPath(run, 'prompt', run.promptPath);
+    await this.recordArtifactPath(run, 'output', run.outputPath);
+    await this.recordArtifactPath(run, 'marker', run.markerPath);
     // Clear any stale marker so detection reflects this run only.
     await fs.rm(run.markerPath, { force: true }).catch(() => {});
 
@@ -797,6 +997,7 @@ export class Orchestrator extends EventEmitter {
       timing: this.config.timing,
       onState: (s) => {
         run.state = s;
+        void this.recordAgentSnapshot(run);
         this.emitState();
       },
     });
@@ -807,6 +1008,10 @@ export class Orchestrator extends EventEmitter {
     run.exitCode = result.exitCode ?? null;
     run.error = result.error;
     run.endedAt = nowIso();
+    await this.recordAgentSnapshot(run);
+    await this.recordArtifactPath(run, 'prompt', run.promptPath);
+    await this.recordArtifactPath(run, 'output', run.outputPath);
+    await this.recordArtifactPath(run, 'marker', run.markerPath);
     await logAgentResult(paths.runLogFile, run);
     this.emitState();
   }
@@ -827,6 +1032,7 @@ export class Orchestrator extends EventEmitter {
     const permission = type === 'claude' ? cfg.claudePermission : cfg.codexPermission;
     return {
       id,
+      runId: this.activeRunId ?? undefined,
       terminalId: id,
       stage,
       type,
@@ -852,10 +1058,12 @@ export class Orchestrator extends EventEmitter {
     const stage = this.stages[stageId];
     const total = stage.runs.length;
     const succeeded = stage.runs.filter((r) => r.state === 'completed').length;
+    const interrupted = stage.runs.some((r) => r.state === 'interrupted');
     const stopped = stage.runs.some((r) => r.state === 'stopped') || this.abort?.signal.aborted;
     let status: StageStatus;
     if (total === 0) status = stage.status === 'running' ? 'completed' : stage.status;
     else if (succeeded === total) status = 'completed';
+    else if (interrupted) status = 'interrupted';
     else if (stopped) status = 'stopped';
     else status = 'failed';
     stage.status = status;
@@ -934,7 +1142,9 @@ export class Orchestrator extends EventEmitter {
     }
     await this.ensureTaskFiles();
     if (await hasTaskFiles(this.paths.tasksDir)) {
-      this.tasksSummary = summarizeTasks(await listTaskRecords(this.paths.tasksDir));
+      const records = await listTaskRecords(this.paths.tasksDir);
+      this.tasksSummary = summarizeTasks(records);
+      await this.recordTaskRecords(records);
     } else {
       const content = await fs.readFile(this.paths.mergedTasksFile, 'utf8').catch(() => null);
       this.tasksSummary = content ? summarizeTasks(parseTasks(content)) : null;
@@ -961,7 +1171,223 @@ export class Orchestrator extends EventEmitter {
     await fs.writeFile(paths.finalSummaryFile, parts.join('\n'), 'utf8').catch(() => {});
   }
 
-  /** On (re)load, infer stage completion from on-disk outputs so progress survives restarts. */
+  private async beginPersistentRun(): Promise<string> {
+    if (!this.paths || !this.workspace) throw httpError(400, 'initialize a workspace first');
+    if (this.activeRunId) {
+      await this.refreshActiveRunLease();
+      this.startRunLeaseHeartbeat();
+      return this.activeRunId;
+    }
+    const acquired = await this.persistence.acquireRunLease({
+      workspace: this.workspace,
+      tigerRoot: this.paths.root,
+      owner: this.owner,
+      ttlMs: this.config.execution.lockTtlMs,
+    });
+    if (!acquired.ok) {
+      throw httpError(
+        409,
+        `Tiger execution is leased by ${acquired.conflict.leaseOwner}` +
+          `${acquired.conflict.leaseExpiresAt ? ` until ${acquired.conflict.leaseExpiresAt}` : ''}`,
+      );
+    }
+    this.activeRunId = acquired.runId;
+    this.activeLeaseOwner = acquired.leaseOwner;
+    this.activeLeaseExpiresAt = acquired.leaseExpiresAt;
+    this.startRunLeaseHeartbeat();
+    return acquired.runId;
+  }
+
+  private heartbeatIntervalMs(): number {
+    const ttlMs = Math.max(1, this.config.execution.lockTtlMs);
+    return Math.max(100, Math.min(60_000, Math.floor(ttlMs / 3)));
+  }
+
+  private startRunLeaseHeartbeat(): void {
+    if (this.runLeaseHeartbeat) return;
+    this.runLeaseHeartbeat = setInterval(() => {
+      void this.refreshActiveRunLease().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (this.paths) void logNote(this.paths.runLogFile, `Failed to refresh execution lease: ${message}`);
+      });
+    }, this.heartbeatIntervalMs());
+    this.runLeaseHeartbeat.unref();
+  }
+
+  private async stopRunLeaseHeartbeat(): Promise<void> {
+    if (this.runLeaseHeartbeat) {
+      clearInterval(this.runLeaseHeartbeat);
+      this.runLeaseHeartbeat = null;
+    }
+    await this.runLeaseRefresh?.catch(() => undefined);
+  }
+
+  private async refreshActiveRunLease(): Promise<void> {
+    if (this.runLeaseRefresh) {
+      await this.runLeaseRefresh;
+      return;
+    }
+    const runId = this.activeRunId;
+    if (!runId) return;
+    const owner = this.owner;
+    const ttlMs = this.config.execution.lockTtlMs;
+    const refresh = (async () => {
+      await this.persistence.refreshRunLease(runId, owner, ttlMs);
+      if (this.activeRunId === runId) {
+        this.activeLeaseOwner = ownerKey(owner);
+        this.activeLeaseExpiresAt = leaseExpiresAt(ttlMs);
+      }
+    })();
+    this.runLeaseRefresh = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (this.runLeaseRefresh === refresh) this.runLeaseRefresh = null;
+    }
+  }
+
+  private async finishPersistentRun(runId: string, status: ExecutionRunStatus, message?: string): Promise<void> {
+    await this.stopRunLeaseHeartbeat();
+    await this.persistence.finishRun(runId, status, message);
+    if (this.activeRunId === runId) this.clearActiveRunLease();
+  }
+
+  private clearActiveRunLease(): void {
+    this.activeRunId = null;
+    this.activeLeaseOwner = null;
+    this.activeLeaseExpiresAt = null;
+  }
+
+  private async recordAgentSnapshot(run: AgentRun): Promise<void> {
+    if (!this.workspace) return;
+    const runId = run.runId ?? this.activeRunId;
+    if (!runId) return;
+    run.runId = runId;
+    await this.persistence.recordAgentRun({
+      workspace: this.workspace,
+      runId,
+      run,
+      owner: this.owner,
+      ttlMs: this.config.execution.lockTtlMs,
+    });
+  }
+
+  private async recordArtifactPath(run: AgentRun, kind: string, absPath: string): Promise<void> {
+    if (!this.workspace || !this.paths) return;
+    const runId = run.runId ?? this.activeRunId;
+    if (!runId) return;
+    const stat = await fileArtifact(absPath);
+    await this.persistence.recordArtifact({
+      workspace: this.workspace,
+      runId,
+      stageId: run.stage,
+      agentRunId: run.id,
+      kind,
+      absPath,
+      relPath: this.paths.rel(absPath),
+      checksumSha256: stat.checksumSha256,
+      sizeBytes: stat.sizeBytes,
+    });
+  }
+
+  private async recordTaskRecords(records: TaskRecord[]): Promise<void> {
+    if (!this.workspace || records.length === 0) return;
+    await this.persistence.recordTasks(records.map((task) => ({ workspace: this.workspace!, task })));
+  }
+
+  private async reconcilePersistentState(): Promise<void> {
+    if (!this.workspace || !this.paths) return;
+    const r = await this.persistence.reconcileOnBoot({
+      workspace: this.workspace,
+      owner: this.owner,
+      ttlMs: this.config.execution.lockTtlMs,
+    });
+    const changed = r.interruptedRuns + r.interruptedStages + r.interruptedAgents + r.reclaimedTasks + r.reclaimedFindings;
+    if (changed > 0) {
+      await logNote(
+        this.paths.runLogFile,
+        `Persistence reconciliation: interrupted ${r.interruptedRuns} run(s), ${r.interruptedStages} stage(s), ` +
+          `${r.interruptedAgents} agent run(s); reclaimed ${r.reclaimedTasks} task lease(s) and ` +
+          `${r.reclaimedFindings} finding lease(s).`,
+      ).catch(() => {});
+    }
+  }
+
+  private async restoreStagesFromPersistence(): Promise<boolean> {
+    if (!this.workspace) return false;
+    const state = await this.persistence.loadProjectState(this.workspace);
+    if (!state) return false;
+    this.stages = blankStages();
+    for (const stageId of STAGE_ORDER) {
+      const persisted = state.stages[stageId];
+      if (!persisted) continue;
+      this.stages[stageId] = this.stageFromPersistence(persisted);
+    }
+    return true;
+  }
+
+  private stageFromPersistence(record: PersistedStageRecord): StageState {
+    const runs = record.runs.map((run) => this.agentFromPersistence(run));
+    const interrupted = record.status === 'interrupted';
+    return {
+      id: record.stageId,
+      status: record.status,
+      runs,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      message:
+        record.message ??
+        (interrupted ? 'Interrupted by a previous backend shutdown; resume will dispatch incomplete work again.' : undefined),
+      config: record.config,
+    };
+  }
+
+  private agentFromPersistence(run: PersistedAgentRunRecord): AgentRun {
+    return {
+      id: run.id,
+      runId: run.runId,
+      terminalId: run.terminalId,
+      stage: run.stage,
+      type: run.type,
+      index: run.index,
+      label: run.label,
+      outputPath: run.outputPath,
+      outputRel: run.outputRel,
+      markerPath: run.markerPath,
+      promptPath: run.promptPath,
+      command: run.command,
+      state: run.state,
+      completion: run.completion,
+      exitCode: run.exitCode,
+      error: run.error,
+      taskId: run.taskId,
+      startedAt: run.startedAt,
+      endedAt: run.endedAt,
+      attempts: run.attempts,
+    };
+  }
+
+  private async quarantineInterruptedOutputs(): Promise<void> {
+    if (!this.paths) return;
+    for (const stage of Object.values(this.stages)) {
+      for (const run of stage.runs) {
+        if (run.state !== 'interrupted') continue;
+        if (await markerExists(run.markerPath)) continue;
+        const exists = await fs
+          .stat(run.outputPath)
+          .then((s) => s.isFile())
+          .catch(() => false);
+        if (!exists) continue;
+        const quarantineDir = path.join(this.paths.runtimeDir(run.stage), 'quarantine');
+        await fs.mkdir(quarantineDir, { recursive: true }).catch(() => {});
+        const quarantined = path.join(quarantineDir, `${run.id}-${path.basename(run.outputPath)}.partial`);
+        await fs.rename(run.outputPath, quarantined).catch(() => {});
+        await this.recordArtifactPath(run, 'quarantine', quarantined);
+      }
+    }
+  }
+
+  /** Fallback/import aid when no durable run state exists yet. */
   private async deriveStagesFromDisk(): Promise<void> {
     if (!this.paths) return;
     for (const stageId of STAGE_ORDER) {
@@ -1039,6 +1465,9 @@ export class Orchestrator extends EventEmitter {
     this.autoAdvance = false;
     this.stages = blankStages();
     this.tasksSummary = null;
+    this.findingsSummary = null;
+    await this.stopRunLeaseHeartbeat();
+    this.clearActiveRunLease();
     this.emitState();
   }
 

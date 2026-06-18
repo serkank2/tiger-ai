@@ -59,14 +59,14 @@ watch(
 watch(
   () => [props.cfg.claudeModel, claudeModels.value.join('\0')],
   ([model]) => {
-    if (!claudeModels.value.includes(model)) props.cfg.claudeModel = '';
+    if (!claudeModels.value.includes(model ?? '')) props.cfg.claudeModel = '';
   },
   { immediate: true },
 );
 watch(
   () => [props.cfg.codexModel, codexModels.value.join('\0')],
   ([model]) => {
-    if (!codexModels.value.includes(model)) props.cfg.codexModel = '';
+    if (!codexModels.value.includes(model ?? '')) props.cfg.codexModel = '';
   },
   { immediate: true },
 );

@@ -18,6 +18,11 @@ export interface UsageEntry {
   /** Whether `percent` is the portion used (Claude) or remaining (Codex). */
   metric: 'used' | 'left';
   reset: string | null;
+  /** Canonical consumed percentage added by the limits service during migration. */
+  percentUsed?: number;
+  windowKey?: string;
+  resetAt?: string | null;
+  parseConfidence?: 'trusted' | 'unknown';
 }
 
 export interface UsageProbe {

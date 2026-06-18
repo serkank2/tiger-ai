@@ -1,5 +1,8 @@
 import type { CommandTarget, TerminalRunState } from '../store/types.js';
 import type { OrchestratorState } from '../orchestrator/types.js';
+import type { QueueState } from '../queue/types.js';
+import type { PromptGenerationState } from '../services/PromptGenerationService.js';
+import type { LimitStatus } from '../limits/types.js';
 
 // ---------------------------------------------------------------------------
 // WebSocket message protocol. One socket per browser window; terminals are
@@ -116,6 +119,25 @@ export interface TigerStateMsg {
   type: 'tiger.state';
   state: OrchestratorState;
 }
+/** Full queue state snapshot pushed whenever it changes. */
+export interface QueueStateMsg {
+  type: 'queue.state';
+  state: QueueState;
+}
+/** Prompt generation state snapshot pushed whenever it changes. */
+export interface GenerationStateMsg {
+  type: 'generation.state';
+  state: PromptGenerationState;
+}
+/** Prompt history changed; clients should refresh their current history view. */
+export interface HistoryChangedMsg {
+  type: 'history.changed';
+}
+/** Provider limit snapshot state pushed after refreshes. */
+export interface LimitStateMsg {
+  type: 'limit.state';
+  state: LimitStatus;
+}
 
 export type ServerMsg =
   | AttachedMsg
@@ -126,7 +148,11 @@ export type ServerMsg =
   | ErrorMsg
   | BroadcastResultMsg
   | PongMsg
-  | TigerStateMsg;
+  | TigerStateMsg
+  | QueueStateMsg
+  | GenerationStateMsg
+  | HistoryChangedMsg
+  | LimitStateMsg;
 
 const CLIENT_MSG_TYPES = new Set<string>([
   'term.attach',

@@ -2,7 +2,15 @@
 import { strictestLimit } from '~/lib/shellLimits';
 import type { BroadcastOutcome } from '~/composables/useSocket';
 
-const emit = defineEmits<{ create: []; manageGroups: []; openSettings: []; openComposer: []; openTiger: [] }>();
+const emit = defineEmits<{
+  create: [];
+  manageGroups: [];
+  openSettings: [];
+  openComposer: [];
+  openPrompts: [];
+  openTiger: [];
+  openTemplates: [];
+}>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const conn = useConnectionStore();
@@ -87,12 +95,6 @@ function sendKey(ch: string) {
 
 <template>
   <header class="bar">
-    <div class="brand">
-      <span class="logo">🐅</span>
-      <b>Kaplan</b>
-      <span class="conn" :class="conn.status" :title="`backend ${conn.status}`" />
-    </div>
-
     <div class="target">
       <div class="seg">
         <button :class="{ on: terminals.commandMode === 'selected' }" @click="terminals.commandMode = 'selected'">
@@ -106,7 +108,6 @@ function sendKey(ch: string) {
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
       <button class="iconbtn" title="Manage groups" aria-label="Manage groups" @click="emit('manageGroups')">🗂</button>
-      <button class="iconbtn" title="Settings" aria-label="Settings" @click="emit('openSettings')">⚙</button>
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -116,6 +117,8 @@ function sendKey(ch: string) {
     </form>
 
     <button class="iconbtn" title="Open prompt composer" aria-label="Open prompt composer" @click="emit('openComposer')">⤢</button>
+
+    <button class="tiger" title="Open Prompts" @click="emit('openPrompts')">Prompts</button>
 
     <div class="keys">
       <button
@@ -136,7 +139,8 @@ function sendKey(ch: string) {
       <button :class="{ on: terminals.layoutMode === 'grid' }" title="Tiled grid view" aria-label="Grid view" @click="terminals.layoutMode = 'grid'">▦</button>
     </div>
 
-    <button class="tiger" title="Open the Tiger AI orchestrator" @click="emit('openTiger')">🐅 Tiger</button>
+    <button class="tiger" title="Open template manager" @click="emit('openTemplates')">Templates</button>
+    <button class="tiger" title="Open the Tiger AI orchestrator" @click="emit('openTiger')">Tiger</button>
     <button class="new" @click="emit('create')">+ New Terminal</button>
   </header>
 </template>
@@ -151,37 +155,6 @@ function sendKey(ch: string) {
   padding: 0 16px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-}
-.logo {
-  font-size: 18px;
-}
-.conn {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--slate);
-}
-.conn.connected {
-  background: var(--green);
-  box-shadow: 0 0 8px var(--green);
-}
-.conn.connecting {
-  background: var(--amber);
-  animation: blink 1s infinite;
-}
-.conn.disconnected {
-  background: var(--red);
-}
-@keyframes blink {
-  50% {
-    opacity: 0.3;
-  }
 }
 .target {
   display: flex;

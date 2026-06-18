@@ -127,8 +127,9 @@ export type AgentRunState =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'stopped';
-export type TigerStageStatus = 'not_started' | 'running' | 'completed' | 'failed' | 'stopped';
+  | 'stopped'
+  | 'interrupted';
+export type TigerStageStatus = 'not_started' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 export type TigerExecutionStatus = 'not_started' | 'in_progress' | 'done' | 'blocked';
 export type TigerReviewStatus = 'pending' | 'reviewing' | 'approved' | 'needs_fix' | 'fixed';
 
@@ -189,12 +190,22 @@ export interface TigerFindingsSummary {
 }
 
 export interface TigerRunTemplate {
+  id?: string;
   name: string;
   description?: string;
   fromStage?: TigerStageId;
   builtin?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
   configs: Partial<Record<TigerStageId, TigerStageRunConfig>>;
 }
+
+export type TigerRunTemplatePayload = Pick<
+  TigerRunTemplate,
+  'name' | 'description' | 'fromStage' | 'configs'
+>;
 
 export interface TigerProjectInfo {
   path: string;
@@ -252,6 +263,7 @@ export interface TigerExecutionConfig {
   maxConcurrent: number;
   lockTtlMs: number;
   maxCorrectionCycles: number;
+  deleteTigerOnComplete: boolean;
 }
 
 export interface TigerConfig {
@@ -267,6 +279,10 @@ export interface TigerUsageEntry {
   percent: number;
   metric: 'used' | 'left';
   reset: string | null;
+  percentUsed: number;
+  windowKey: string;
+  resetAt: string | null;
+  parseConfidence: 'trusted' | 'unknown';
 }
 
 export interface TigerUsageProbe {
@@ -284,6 +300,68 @@ export interface TigerUsage {
   codex: TigerUsageProbe;
 }
 
+export interface LimitSnapshot {
+  id: string;
+  provider: TigerAgentType;
+  windowKey: string;
+  label: string;
+  percentUsed: number | null;
+  metricRaw: { percent: number; metric: 'used' | 'left' } | null;
+  resetText: string | null;
+  resetAt: string | null;
+  ok: boolean;
+  error?: string;
+  rawPanel: string;
+  parseConfidence: 'trusted' | 'unknown';
+  checkedAt: string;
+}
+
+export interface LimitRule {
+  id: string;
+  provider: TigerAgentType;
+  windowKey: string | 'any';
+  thresholdPercent: number;
+  comparison: 'gte';
+  action: 'block';
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LimitSelectedWindow {
+  provider: TigerAgentType;
+  windowKey: string;
+  label: string;
+  percentUsed: number | null;
+  resetAt: string | null;
+  parseConfidence: 'trusted' | 'unknown';
+  checkedAt: string;
+  stale: boolean;
+  ok: boolean;
+  error?: string;
+}
+
+export interface LimitDecision {
+  allowed: boolean;
+  action: 'allow' | 'block';
+  reason: string;
+  ruleId?: string;
+  selectedWindow?: LimitSelectedWindow;
+  resumeAfter: string | null;
+  conservative: boolean;
+  checkedAt: string;
+}
+
+export interface LimitStatus {
+  snapshots: LimitSnapshot[];
+  latest: LimitSnapshot[];
+  providers: Record<TigerAgentType, { provider: TigerAgentType; latest: LimitSnapshot[]; latestCheckedAt: string | null; ok: boolean; error?: string }>;
+  rules: LimitRule[];
+  decision: LimitDecision;
+  staleAfterMs: number;
+  updatedAt?: string;
+}
+
 export interface TigerStageRunConfig {
   claudeAgents: number;
   codexAgents: number;
@@ -295,6 +373,209 @@ export interface TigerStageRunConfig {
   codexPermission: string;
   parallel: boolean;
   mergeAgent?: TigerAgentType;
+}
+
+// --- Backend health (mirror of GET /api/health) ---
+
+export interface HealthStatus {
+  status: 'ok' | 'degraded';
+  ok: boolean;
+  db: { ready: boolean; name: string };
+  terminals: number;
+  dataDir: string;
+}
+
+// --- Autonomous queue (mirror of apps/backend/src/queue/types.ts) ---
+
+export type QueueProvider = 'claude' | 'codex' | 'mixed';
+export type QueueRuleProvider = QueueProvider | 'any';
+export type QueueRuleOperator = 'gte' | 'gt' | 'lte' | 'lt' | 'eq';
+export type QueueRuleAction = 'block_dispatch';
+export type QueueJobStatus =
+  | 'queued'
+  | 'running'
+  | 'blocked_by_limit'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'canceled'
+  | 'retrying';
+export type QueueStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface QueueJobConfigSnapshot {
+  fromStage?: TigerStageId;
+  configs?: Partial<Record<TigerStageId, TigerStageRunConfig>>;
+  templateName?: string;
+  values?: Record<string, unknown>;
+}
+
+export interface QueueStep {
+  id: string;
+  jobId: string;
+  stepKey: TigerStageId;
+  position: number;
+  status: QueueStepStatus;
+  attempts: number;
+  error: string | null;
+  checkpoint: Record<string, unknown> | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueueJob {
+  id: string;
+  position: number;
+  status: QueueJobStatus;
+  priority: number;
+  provider: QueueProvider;
+  workspacePath: string;
+  projectName: string | null;
+  prompt: string;
+  configSnapshot: QueueJobConfigSnapshot;
+  attempts: number;
+  maxAttempts: number;
+  blockedReason: string | null;
+  resumeAfter: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  currentStep: TigerStageId | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueueJobView extends QueueJob {
+  steps: QueueStep[];
+}
+
+export interface QueueRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider: QueueRuleProvider;
+  windowKey: string;
+  metric: 'percent_used';
+  operator: QueueRuleOperator;
+  threshold: number;
+  action: QueueRuleAction;
+  config: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueueEvent {
+  id: string;
+  jobId: string | null;
+  type: string;
+  message: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface QueueState {
+  jobs: QueueJobView[];
+  rules: QueueRule[];
+  events: QueueEvent[];
+  updatedAt: string;
+}
+
+export interface QueueEnqueueInput {
+  prompt: string;
+  workspacePath?: string;
+  projectName?: string;
+  provider?: QueueProvider;
+  priority?: number;
+  maxAttempts?: number;
+  configSnapshot?: QueueJobConfigSnapshot;
+}
+
+export interface QueueClientEvent {
+  id: string;
+  jobId: string | null;
+  type: string;
+  message: string;
+  payload?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+// --- Prompt generation (mirror of apps/backend prompt-generation service) ---
+
+export type PromptGenerationStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export interface PromptGenerationRecord {
+  id: string;
+  inputText: string;
+  outputText: string | null;
+  status: PromptGenerationStatus;
+  agentType: TigerAgentType;
+  model: string | null;
+  error: string | null;
+  projectId: string | null;
+  terminalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export type PromptGenerationReuseAction =
+  | 'copy'
+  | 'edit'
+  | 'save-to-library'
+  | 'use-as-project-prompt'
+  | 'enqueue';
+
+export interface PromptGenerationState {
+  generation: PromptGenerationRecord;
+  progress: AgentRunState | 'blocked' | 'persisting' | 'idle';
+  reuseActions: PromptGenerationReuseAction[];
+}
+
+export interface PromptGenerationStartInput {
+  inputText: string;
+  agentType?: TigerAgentType;
+  model?: string | null;
+  effort?: string | null;
+  permission?: string | null;
+  projectId?: string | null;
+}
+
+// --- Prompt history (mirror of apps/backend prompt_history_events) ---
+
+export type PromptHistoryKind = 'generated' | 'saved_to_library' | 'used_as_project_prompt' | 'enqueue_requested';
+
+export interface PromptHistoryEvent {
+  id: string;
+  projectId: string | null;
+  kind: PromptHistoryKind | string;
+  inputText: string | null;
+  outputText: string | null;
+  generationId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  status?: string | null;
+  agentType?: TigerAgentType | null;
+  model?: string | null;
+  error?: string | null;
+}
+
+export interface PromptHistoryFilters {
+  text?: string;
+  kind?: string;
+  projectId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  status?: string;
+  generationId?: string;
+  limit?: number;
+}
+
+export interface PromptHistoryListResponse {
+  items: PromptHistoryEvent[];
+  total?: number;
 }
 
 /** Loose shape of any server->client WS message (client reads a subset). */

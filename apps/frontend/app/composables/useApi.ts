@@ -1,14 +1,26 @@
 import type {
   AppSettings,
   Group,
+  HealthStatus,
+  LimitStatus,
   PromptFile,
+  PromptGenerationReuseAction,
+  PromptGenerationState,
+  PromptGenerationStartInput,
+  PromptHistoryFilters,
+  PromptHistoryListResponse,
   PromptSummary,
+  QueueEnqueueInput,
+  QueueJob,
+  QueueRule,
+  QueueState,
   TerminalDto,
   TerminalInput,
   TerminalStatus,
   TigerConfig,
   TigerProjectInfo,
   TigerRunTemplate,
+  TigerRunTemplatePayload,
   TigerStageId,
   TigerStageRunConfig,
   TigerState,
@@ -30,12 +42,24 @@ interface ListResult {
   directories: { name: string; path: string }[];
 }
 
+function queryString(params: Record<string, unknown>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    query.set(key, String(value));
+  }
+  const out = query.toString();
+  return out ? `?${out}` : '';
+}
+
 /** Typed REST client for the Kaplan backend. */
 export function useApi() {
   const base = useRuntimeConfig().public.apiBase as string;
   const req = <T>(path: string, opts?: Parameters<typeof $fetch>[1]) => $fetch<T>(`${base}${path}`, opts);
 
   return {
+    getHealth: () => req<HealthStatus>('/api/health'),
+
     listTerminals: () => req<TerminalDto[]>('/api/terminals'),
     createTerminal: (body: TerminalInput) => req<TerminalDto>('/api/terminals', { method: 'POST', body }),
     updateTerminal: (id: string, body: Partial<TerminalInput>) =>
@@ -67,6 +91,8 @@ export function useApi() {
     deletePrompt: (path: string) => req<void>(`/api/prompts/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
     renamePrompt: (fromPath: string, toPath: string, overwrite = false) =>
       req<PromptFile>('/api/prompts/rename', { method: 'POST', body: { fromPath, toPath, overwrite } }),
+    listPromptHistory: (filters: PromptHistoryFilters = {}) =>
+      req<PromptHistoryListResponse>(`/api/prompts/history${queryString(filters as Record<string, unknown>)}`),
 
     // --- Tiger orchestrator ---
     getTigerState: () => req<TigerState>('/api/tiger/state'),
@@ -81,12 +107,27 @@ export function useApi() {
       req<TigerConfig>('/api/tiger/config', { method: 'PUT', body }),
     initTigerWorkspace: (path: string, projectPrompt: string) =>
       req<TigerState>('/api/tiger/workspace', { method: 'POST', body: { path, projectPrompt } }),
+    replaceTigerProjectPrompt: (projectPrompt: string) =>
+      req<TigerState>('/api/tiger/project-prompt', { method: 'PUT', body: { projectPrompt } }),
     runTigerStage: (stage: TigerStageId, cfg: TigerStageRunConfig, auto = false) =>
       req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: { ...cfg, auto } }),
     runAllTiger: (configs: Partial<Record<TigerStageId, TigerStageRunConfig>>, fromStage?: TigerStageId) =>
       req<TigerState>('/api/tiger/run-all', { method: 'POST', body: { configs, fromStage } }),
     listTigerTemplates: () => req<TigerRunTemplate[]>('/api/tiger/templates'),
-    saveTigerTemplate: (t: TigerRunTemplate) =>
+    createTigerTemplate: (t: TigerRunTemplatePayload) =>
+      req<TigerRunTemplate[]>('/api/tiger/templates', { method: 'POST', body: t }),
+    updateTigerTemplate: (id: string, t: Partial<TigerRunTemplatePayload>) =>
+      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}`, { method: 'PUT', body: t }),
+    duplicateTigerTemplate: (id: string, t?: Partial<TigerRunTemplatePayload>) =>
+      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}/duplicate`, {
+        method: 'POST',
+        body: t ?? {},
+      }),
+    applyTigerTemplate: (id: string) =>
+      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
+    archiveTigerTemplate: (id: string) =>
+      req<TigerRunTemplate[]>(`/api/tiger/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    saveTigerTemplate: (t: TigerRunTemplatePayload) =>
       req<TigerRunTemplate[]>('/api/tiger/templates', { method: 'POST', body: t }),
     deleteTigerTemplate: (name: string) =>
       req<TigerRunTemplate[]>(`/api/tiger/templates?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
@@ -100,5 +141,30 @@ export function useApi() {
     readTigerFile: (path: string) =>
       req<{ path: string; content: string }>(`/api/tiger/file?path=${encodeURIComponent(path)}`),
     getTigerUsage: () => req<TigerUsage>('/api/tiger/usage'),
+    getLimits: () => req<LimitStatus>('/api/limits'),
+    refreshLimits: () => req<LimitStatus>('/api/limits/refresh', { method: 'POST' }),
+
+    // --- Autonomous queue ---
+    getQueueState: () => req<QueueState>('/api/queue/state'),
+    enqueueQueueJob: (body: QueueEnqueueInput) =>
+      req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
+    enqueueQueue: (body: QueueEnqueueInput) => req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
+    reorderQueue: (ids: string[]) => req<QueueState>('/api/queue/reorder', { method: 'POST', body: { ids } }),
+    pauseQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/pause`, { method: 'POST' }),
+    resumeQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/resume`, { method: 'POST' }),
+    cancelQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/cancel`, { method: 'POST' }),
+    retryQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/retry`, { method: 'POST' }),
+    listQueueRules: () => req<QueueRule[]>('/api/queue/rules'),
+    createQueueRule: (body: Partial<QueueRule>) => req<QueueRule>('/api/queue/rules', { method: 'POST', body }),
+    updateQueueRule: (id: string, body: Partial<QueueRule>) =>
+      req<QueueRule>(`/api/queue/rules/${id}`, { method: 'PUT', body }),
+    deleteQueueRule: (id: string) => req<void>(`/api/queue/rules/${id}`, { method: 'DELETE' }),
+
+    // --- Prompt generation (screen internals delivered by a later task) ---
+    startPromptGeneration: (body: PromptGenerationStartInput) =>
+      req<PromptGenerationState>('/api/prompts/generate', { method: 'POST', body }),
+    getPromptGeneration: (id: string) => req<PromptGenerationState>(`/api/prompts/generate/${id}`),
+    reusePromptGeneration: (id: string, action: PromptGenerationReuseAction, body: Record<string, unknown> = {}) =>
+      req<Record<string, unknown>>(`/api/prompts/generate/${id}/reuse`, { method: 'POST', body: { ...body, action } }),
   };
 }

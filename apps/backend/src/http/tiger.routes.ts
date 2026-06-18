@@ -1,55 +1,15 @@
 import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { resolveExistingDir } from '../util/paths.js';
-import { STAGE_ORDER, type AgentType, type StageId, type StageRunConfig } from '../orchestrator/types.js';
-import { probeAllUsage } from '../orchestrator/usage.js';
+import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import {
-  TIGER_AGENT_COUNT_MAX,
-  TIGER_AGENT_COUNT_MIN,
-  TIGER_CLAUDE_EFFORTS,
-  TIGER_CODEX_EFFORTS,
   TIGER_PROJECT_PROMPT_MAX_CHARS,
 } from '../orchestrator/config.js';
-
-function badRequest(message: string): Error & { status: number } {
-  const e = new Error(message) as Error & { status: number };
-  e.status = 400;
-  return e;
-}
-
-function toStr(v: unknown, fallback: string): string {
-  return typeof v === 'string' ? v : fallback;
-}
-function toAgentType(v: unknown): AgentType | undefined {
-  return v === 'claude' || v === 'codex' ? v : undefined;
-}
-
-function isStage(v: string): v is StageId {
-  return (STAGE_ORDER as string[]).includes(v);
-}
-
-function toAgentCount(v: unknown, fallback: number, field: string): number {
-  const value = v === undefined ? fallback : v;
-  if (typeof value !== 'number' || !Number.isInteger(value) || !Number.isFinite(value)) {
-    throw badRequest(`${field} must be an integer`);
-  }
-  if (value < TIGER_AGENT_COUNT_MIN || value > TIGER_AGENT_COUNT_MAX) {
-    throw badRequest(`${field} must be between ${TIGER_AGENT_COUNT_MIN} and ${TIGER_AGENT_COUNT_MAX}`);
-  }
-  return value;
-}
-
-function toModel(v: unknown, fallback: string, models: string[] | undefined, field: string): string {
-  const value = toStr(v, fallback).trim();
-  if (value && !models?.includes(value)) throw badRequest(`${field} is not in the configured model list`);
-  return value;
-}
-
-function toEffort(v: unknown, fallback: string, allowed: readonly string[], field: string): string {
-  const value = toStr(v, fallback).trim();
-  if (!allowed.includes(value)) throw badRequest(`${field} is not a known effort`);
-  return value;
-}
+import {
+  buildStageConfig as buildStageRunConfig,
+  configInputError,
+  isStage,
+} from '../orchestrator/stage-config.js';
 
 /** Record a project workspace in app state (dedup) and mark it as the most recent. */
 function rememberProject(ctx: AppCtx, dir: string): void {
@@ -61,27 +21,7 @@ function rememberProject(ctx: AppCtx, dir: string): void {
 
 /** Build a StageRunConfig from request body, defaulting from config; validate permission keys. */
 function buildStageConfig(ctx: AppCtx, body: Record<string, unknown>): StageRunConfig {
-  const d = ctx.orchestrator.getConfig().defaults;
-  const cli = ctx.orchestrator.getConfig().cli;
-  const cfg: StageRunConfig = {
-    claudeAgents: toAgentCount(body.claudeAgents, d.claudeAgents, 'claudeAgents'),
-    codexAgents: toAgentCount(body.codexAgents, d.codexAgents, 'codexAgents'),
-    claudeModel: toModel(body.claudeModel, d.claudeModel, cli.claude.models, 'claudeModel'),
-    codexModel: toModel(body.codexModel, d.codexModel, cli.codex.models, 'codexModel'),
-    claudeEffort: toEffort(body.claudeEffort, d.claudeEffort, TIGER_CLAUDE_EFFORTS, 'claudeEffort'),
-    codexEffort: toEffort(body.codexEffort, d.codexEffort, TIGER_CODEX_EFFORTS, 'codexEffort'),
-    claudePermission: toStr(body.claudePermission, d.claudePermission),
-    codexPermission: toStr(body.codexPermission, d.codexPermission),
-    parallel: typeof body.parallel === 'boolean' ? body.parallel : d.parallel,
-    mergeAgent: toAgentType(body.mergeAgent),
-  };
-  if (!cli.claude.permissionModes[cfg.claudePermission]) {
-    throw badRequest(`unknown claude permission mode: ${cfg.claudePermission}`);
-  }
-  if (!cli.codex.permissionModes[cfg.codexPermission]) {
-    throw badRequest(`unknown codex permission mode: ${cfg.codexPermission}`);
-  }
-  return cfg;
+  return buildStageRunConfig(ctx.orchestrator.getConfig(), body);
 }
 
 /** REST control-plane for the Tiger orchestrator. */
@@ -127,6 +67,22 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.json(orch.getState());
   });
 
+  router.put('/project-prompt', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const prompt = typeof body.projectPrompt === 'string' ? body.projectPrompt : '';
+    if (!prompt.trim()) {
+      res.status(400).json({ error: { message: 'projectPrompt is required' } });
+      return;
+    }
+    if (prompt.length > TIGER_PROJECT_PROMPT_MAX_CHARS) {
+      res.status(400).json({
+        error: { message: `projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer` },
+      });
+      return;
+    }
+    res.json(await orch.replaceProjectPrompt(prompt));
+  });
+
   // List known projects for the launcher.
   router.get('/projects', async (_req, res) => {
     res.json(await orch.listProjects(ctx.state.tiger?.projects ?? []));
@@ -165,7 +121,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.json(await orch.listProjects(ctx.state.tiger?.projects ?? []));
   });
 
-  router.post('/stages/:stage/run', (req, res) => {
+  router.post('/stages/:stage/run', async (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {
       res.status(404).json({ error: { message: 'unknown stage' } });
@@ -173,12 +129,12 @@ export function createTigerRouter(ctx: AppCtx): Router {
     }
     const cfg = buildStageConfig(ctx, (req.body ?? {}) as Record<string, unknown>);
     const auto = (req.body as { auto?: unknown })?.auto === true;
-    orch.startStage(stage, cfg, auto);
+    await orch.startStage(stage, cfg, auto);
     res.status(202).json(orch.getState());
   });
 
   // Configure every stage, then auto-run them all using each stage's own config.
-  router.post('/run-all', (req, res) => {
+  router.post('/run-all', async (req, res) => {
     const body = (req.body ?? {}) as { configs?: Record<string, unknown>; fromStage?: unknown };
     const raw = body.configs && typeof body.configs === 'object' ? (body.configs as Record<string, unknown>) : {};
     const configs: Partial<Record<StageId, StageRunConfig>> = {};
@@ -187,46 +143,52 @@ export function createTigerRouter(ctx: AppCtx): Router {
       if (entry && typeof entry === 'object') configs[stage] = buildStageConfig(ctx, entry as Record<string, unknown>);
     }
     const fromStage = typeof body.fromStage === 'string' && isStage(body.fromStage) ? body.fromStage : undefined;
-    orch.startAll(configs, fromStage);
+    await orch.startAll(configs, fromStage);
     res.status(202).json(orch.getState());
   });
 
-  // --- Run All templates (built-in + the project's custom .md templates) ---
+  // --- Run All templates (global DB-backed built-ins + custom templates) ---
   router.get('/templates', async (_req, res) => {
-    res.json(await orch.listRunTemplates());
-  });
-  router.post('/templates', async (req, res) => {
-    const body = (req.body ?? {}) as {
-      name?: unknown;
-      description?: unknown;
-      fromStage?: unknown;
-      configs?: Record<string, unknown>;
-    };
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
-    if (!name) throw badRequest('template name is required');
-    const raw = body.configs && typeof body.configs === 'object' ? (body.configs as Record<string, unknown>) : {};
-    const configs: Partial<Record<StageId, StageRunConfig>> = {};
-    for (const stage of STAGE_ORDER) {
-      const entry = raw[stage];
-      if (entry && typeof entry === 'object') configs[stage] = buildStageConfig(ctx, entry as Record<string, unknown>);
-    }
-    const fromStage = typeof body.fromStage === 'string' && isStage(body.fromStage) ? body.fromStage : undefined;
-    const description = typeof body.description === 'string' ? body.description : undefined;
-    res.json(await orch.saveRunTemplate({ name, description, fromStage, configs }));
-  });
-  router.delete('/templates', async (req, res) => {
-    const name = typeof req.query.name === 'string' ? req.query.name : '';
-    if (!name) throw badRequest('template name is required');
-    res.json(await orch.deleteRunTemplate(name));
+    res.json(await ctx.runTemplates.list());
   });
 
-  router.post('/stages/:stage/retry', (req, res) => {
+  // Compatibility save endpoint used by the current Run All modal: create or update by name.
+  router.post('/templates', async (req, res) => {
+    await ctx.runTemplates.save(req.body ?? {});
+    res.json(await ctx.runTemplates.list());
+  });
+
+  router.put('/templates/:id', async (req, res) => {
+    res.json(await ctx.runTemplates.update(req.params.id, req.body ?? {}));
+  });
+
+  router.post('/templates/:id/duplicate', async (req, res) => {
+    res.json(await ctx.runTemplates.duplicate(req.params.id, req.body ?? {}));
+  });
+
+  router.post('/templates/:id/apply', async (req, res) => {
+    res.json(await ctx.runTemplates.apply(req.params.id));
+  });
+
+  router.delete('/templates', async (req, res) => {
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    if (!name) throw configInputError('template name is required');
+    await ctx.runTemplates.archive(name);
+    res.json(await ctx.runTemplates.list());
+  });
+
+  router.delete('/templates/:id', async (req, res) => {
+    await ctx.runTemplates.archive(req.params.id);
+    res.json(await ctx.runTemplates.list());
+  });
+
+  router.post('/stages/:stage/retry', async (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {
       res.status(404).json({ error: { message: 'unknown stage' } });
       return;
     }
-    orch.retryStage(stage);
+    await orch.retryStage(stage);
     res.status(202).json(orch.getState());
   });
 
@@ -269,8 +231,8 @@ export function createTigerRouter(ctx: AppCtx): Router {
 
   // Probe Claude/Codex usage panels (best-effort interactive scrape). Used by the limit widget.
   router.get('/usage', async (_req, res) => {
-    const result = await probeAllUsage(ctx.manager);
-    res.json(result);
+    const status = await ctx.limits.refresh('legacy');
+    res.json(ctx.limits.toLegacyUsage(status));
   });
 
   return router;

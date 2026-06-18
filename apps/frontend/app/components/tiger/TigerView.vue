@@ -12,7 +12,7 @@ import RunAllModal from '~/components/tiger/RunAllModal.vue';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
-const emit = defineEmits<{ back: [] }>();
+const emit = defineEmits<{ back: []; openTemplates: [] }>();
 const tiger = useTigerStore();
 const conn = useConnectionStore();
 
@@ -166,6 +166,7 @@ onMounted(() => {
       </div>
       <span class="spacer" />
       <code v-if="tiger.workspace" class="ws" :title="tiger.state?.tigerRoot ?? ''">{{ tiger.state?.tigerRoot }}</code>
+      <button class="back" @click="emit('openTemplates')">Templates</button>
       <button v-if="tiger.initialized" class="back" @click="backToProjects">← Projects</button>
       <button class="back" @click="emit('back')">← Terminals</button>
     </header>
@@ -323,7 +324,7 @@ onMounted(() => {
       @select="(p) => { workspacePath = p; showPicker = false; }"
       @close="showPicker = false"
     />
-    <RunAllModal v-if="showRunAll" @close="showRunAll = false" />
+    <RunAllModal v-if="showRunAll" @close="showRunAll = false" @open-templates="emit('openTemplates')" />
 
     <BaseModal v-if="pendingRun" title="Run out of order?" size="sm" @close="cancelOutOfOrder">
       <p class="confirm-text">

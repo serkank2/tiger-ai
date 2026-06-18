@@ -47,7 +47,10 @@ function metaFromDraft(): PromptMeta {
 const content = computed(() => serializePrompt(metaFromDraft(), draft.body));
 const dirty = computed(() => content.value !== loadedSnapshot.value);
 
-const selectedTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(Boolean));
+function isTerminalDto(t: TerminalDto | undefined): t is TerminalDto {
+  return Boolean(t);
+}
+const selectedTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(isTerminalDto));
 function isSendableTerminal(t: TerminalDto | undefined): t is TerminalDto {
   return Boolean(t && !t.protected);
 }

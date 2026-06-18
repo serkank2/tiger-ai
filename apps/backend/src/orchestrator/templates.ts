@@ -1,14 +1,10 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { defaultTigerConfig } from './config.js';
 import type { RunTemplate, StageId, StageRunConfig } from './types.js';
 import { STAGE_ORDER } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Run All templates. A template is a saved per-stage configuration the user can
-// apply in the Run All dialog. Built-in templates always exist; custom templates
-// are stored one-per-file as Markdown (frontmatter + a JSON block) under
-// .tiger/run-templates/.
+// Run All templates. Built-ins live here; the Markdown helpers are retained for
+// one-time import of legacy .tiger/run-templates/*.md files into the database.
 // ---------------------------------------------------------------------------
 
 const BASE: StageRunConfig = {
@@ -116,33 +112,4 @@ export function parseTemplateMd(content: string, fallbackName: string): RunTempl
     configs: parsed.configs ?? {},
     builtin: false,
   };
-}
-
-/** Read all custom templates from a directory (sorted by name). */
-export async function listCustomTemplates(dir: string): Promise<RunTemplate[]> {
-  const names = (await fs.readdir(dir).catch(() => [] as string[]))
-    .filter((n) => n.toLowerCase().endsWith('.md'))
-    .sort();
-  const out: RunTemplate[] = [];
-  for (const n of names) {
-    const content = await fs.readFile(path.join(dir, n), 'utf8').catch(() => '');
-    const t = parseTemplateMd(content, n.replace(/\.md$/i, ''));
-    if (t) out.push(t);
-  }
-  return out;
-}
-
-/** Built-in templates followed by the project's custom templates. */
-export async function listTemplates(dir: string | null): Promise<RunTemplate[]> {
-  const custom = dir ? await listCustomTemplates(dir) : [];
-  return [...BUILTIN_TEMPLATES, ...custom];
-}
-
-export async function saveTemplate(dir: string, t: RunTemplate): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, `${templateSlug(t.name)}.md`), serializeTemplateMd({ ...t, builtin: false }), 'utf8');
-}
-
-export async function deleteTemplate(dir: string, name: string): Promise<void> {
-  await fs.rm(path.join(dir, `${templateSlug(name)}.md`), { force: true }).catch(() => {});
 }

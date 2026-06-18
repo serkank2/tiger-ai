@@ -141,12 +141,14 @@ export type AgentRunState =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'stopped';
+  | 'stopped'
+  | 'interrupted';
 
 export type CompletionMethod = 'marker' | 'idle' | 'exit';
 
 export interface AgentRun {
   id: string;
+  runId?: string;
   /** Equal to id — the ephemeral terminal id used for the live xterm tile. */
   terminalId: string;
   stage: StageId;
@@ -174,7 +176,7 @@ export interface AgentRun {
   attempts: number;
 }
 
-export type StageStatus = 'not_started' | 'running' | 'completed' | 'failed' | 'stopped';
+export type StageStatus = 'not_started' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export interface StageState {
   id: StageId;
@@ -293,14 +295,21 @@ export interface OrchestratorState {
   autoAdvance: boolean;
 }
 
-/** A saved Run All configuration: per-stage configs + where to start. Stored as a .md file. */
+/** A saved Run All configuration: per-stage configs + where to start. Stored in MySQL. */
 export interface RunTemplate {
+  /** Stable database id. Built-ins use deterministic ids; custom templates use generated ids. */
+  id?: string;
   name: string;
   description?: string;
   /** Which stage the auto-run should start from. */
   fromStage?: StageId;
   /** Built-in templates ship with the app and cannot be deleted. */
   builtin?: boolean;
+  /** Monotonic metadata version for custom template edits. */
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
   /** Per-stage run configuration. */
   configs: Partial<Record<StageId, StageRunConfig>>;
 }

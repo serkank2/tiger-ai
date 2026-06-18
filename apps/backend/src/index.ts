@@ -1,4 +1,5 @@
 import http from 'node:http';
+import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import { config } from './config.js';
@@ -11,21 +12,74 @@ import { createSettingsRouter } from './http/settings.routes.js';
 import { createFsRouter } from './http/fs.routes.js';
 import { createPromptsRouter } from './http/prompts.routes.js';
 import { createTigerRouter } from './http/tiger.routes.js';
+import { createLimitsRouter } from './http/limits.routes.js';
+import { createQueueRouter } from './http/queue.routes.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
 import { Orchestrator } from './orchestrator/Orchestrator.js';
+import { MySqlExecutionPersistence } from './orchestrator/persistence.js';
+import { closeDbPool, getDbPool } from './db/pool.js';
+import { migrate } from './db/migrate.js';
+import { MySqlRunTemplateRepository } from './repositories/run-templates.js';
+import { MySqlLimitRepository } from './repositories/LimitRepository.js';
+import { MysqlQueueRepository } from './queue/MysqlQueueRepository.js';
+import { RunTemplateService } from './services/run-templates.js';
+import { createDefaultPromptGenerationService } from './services/PromptGenerationService.js';
+import { LimitService } from './services/LimitService.js';
+import { QueueService } from './services/QueueService.js';
+import { Scheduler } from './queue/Scheduler.js';
+
+// MySQL is the durable system of record: connect and migrate BEFORE the server listens.
+// If MySQL is unreachable after the retry window, fail fast with a clear error — never
+// silently boot on file state.
+try {
+  await migrate(await getDbPool());
+} catch (err) {
+  const reason = err instanceof Error ? err.message : String(err);
+  console.error('\n  ❌ Kaplan backend: MySQL unavailable — refusing to start.');
+  console.error(`     ${reason}`);
+  console.error('     Start MySQL and check KAPLAN_DB_* settings (see apps/backend/.env.example).\n');
+  process.exit(1);
+}
 
 const state = await loadState();
 await ensurePromptsDir(); // create <repo>/prompts (or KAPLAN_PROMPTS_DIR) if missing
 const manager = new TerminalManager();
 manager.setDefinitions(state.terminals);
-const orchestrator = new Orchestrator(manager);
+const dbPool = await getDbPool();
+const save = () => saveState(state);
+const orchestrator = new Orchestrator(manager, {
+  persistence: new MySqlExecutionPersistence(dbPool),
+});
+const runTemplates = new RunTemplateService(new MySqlRunTemplateRepository(dbPool), () =>
+  orchestrator.getConfig(),
+);
+orchestrator.setRunTemplateService(runTemplates);
+const limits = new LimitService({
+  manager,
+  state,
+  save,
+  repository: new MySqlLimitRepository(),
+  intervalMs: config.limitProbeIntervalMs,
+  staleAfterMs: config.limitStaleAfterMs,
+});
+await limits.initialize();
+const queueService = new QueueService(new MysqlQueueRepository());
+const queueScheduler = new Scheduler(queueService, orchestrator);
+const promptGenerations = createDefaultPromptGenerationService(manager, state, () => orchestrator.getConfig(), () => {
+  const tiger = orchestrator.getState();
+  return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
+});
 
 const ctx: AppCtx = {
   state,
   manager,
   orchestrator,
-  save: () => saveState(state),
+  runTemplates,
+  promptGenerations,
+  queueService,
+  limits,
+  save,
 };
 
 // Tiger opens to a project launcher (no auto-attach). Migrate a legacy lastWorkspace into the
@@ -37,6 +91,11 @@ if (state.tiger?.lastWorkspace) {
     void saveState(state);
   }
 }
+
+await runTemplates.initialize({
+  legacyTemplateDirs: legacyRunTemplateDirs(state.tiger?.projects ?? []),
+});
+await queueScheduler.start();
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
@@ -59,17 +118,26 @@ app.use('/api/prompts', express.json({ limit: '160kb' }), createPromptsRouter(ct
 // Tiger accepts a full project prompt (can be large) on /workspace — give it a roomier parser
 // mounted before the global tight cap.
 app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
+app.use('/api/queue', express.json({ limit: '2mb' }), createQueueRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', ok: true, terminals: state.terminals.length, dataDir: config.dataDir });
+app.get('/api/health', async (_req, res) => {
+  const dbReady = await pingDb();
+  res.json({
+    status: dbReady ? 'ok' : 'degraded',
+    ok: dbReady,
+    db: { ready: dbReady, name: config.db.database },
+    terminals: state.terminals.length,
+    dataDir: config.dataDir,
+  });
 });
 
 app.use('/api/terminals', createTerminalsRouter(ctx));
 app.use('/api/groups', createGroupsRouter(ctx));
 app.use('/api/settings', createSettingsRouter(ctx));
 app.use('/api/fs', createFsRouter(ctx));
+app.use('/api/limits', createLimitsRouter(ctx));
 
 // Central error handler (Express 5 forwards rejected async handlers here).
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -94,6 +162,7 @@ server.listen(config.port, config.host, () => {
   console.log(`     REST   http://${config.host}:${config.port}/api`);
   console.log(`     WS     ws://${config.host}:${config.port}/ws`);
   console.log(`     state  ${config.stateFile}\n`);
+  limits.start();
   autostartDone = manager.autostartAll();
 });
 
@@ -102,11 +171,14 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[${signal}] shutting down — killing terminals...`);
+  queueScheduler.stop();
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
+  limits.stop();
   manager.beginShutdown();
   await autostartDone.catch(() => {});
   await orchestrator.killAgents();
   await manager.killAll();
+  await closeDbPool();
   wss.close();
   server.close(() => process.exit(0));
   // Safety net if server.close hangs on lingering sockets.
@@ -120,6 +192,23 @@ process.on('unhandledRejection', (reason) => {
   console.error('[fatal] unhandledRejection:', reason);
   void shutdown('unhandledRejection');
 });
+
+function legacyRunTemplateDirs(projects: string[]): string[] {
+  const dirs = new Set<string>();
+  dirs.add(path.join(config.repoRoot, '.tiger', 'run-templates'));
+  for (const project of projects) dirs.add(path.join(project, '.tiger', 'run-templates'));
+  return [...dirs];
+}
+
+async function pingDb(): Promise<boolean> {
+  try {
+    const pool = await getDbPool();
+    await pool.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  }
+}
 process.on('uncaughtException', (err) => {
   console.error('[fatal] uncaughtException:', err);
   void shutdown('uncaughtException');

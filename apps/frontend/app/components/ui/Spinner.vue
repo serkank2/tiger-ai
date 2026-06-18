@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 // Indeterminate loading indicator. Accessible by default: when `label` is set it
 // exposes role="status" with screen-reader text; pass an empty label to render it
 // decoratively (e.g. inside a BaseButton that already has its own label).

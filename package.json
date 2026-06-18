@@ -12,7 +12,7 @@
     "dev:frontend": "npm run dev -w @kaplan/frontend",
     "start:backend": "npm run start -w @kaplan/backend",
     "build:frontend": "npm run build -w @kaplan/frontend",
-    "typecheck": "npm run typecheck -w @kaplan/backend"
+    "typecheck": "npm run typecheck -w @kaplan/backend && npm run typecheck -w @kaplan/frontend"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"

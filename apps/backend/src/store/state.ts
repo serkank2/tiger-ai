@@ -3,6 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { config } from '../config.js';
 import type { AppSettings, PersistedState, ShellSpec } from './types.js';
+import { defaultLimitRules } from '../limits/types.js';
+import type { LimitRule, LimitRuleDecision, LimitSnapshot, LimitsPersistedState } from '../limits/types.js';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -49,6 +51,7 @@ export function defaultState(): PersistedState {
     terminals: [],
     groups: [],
     settings: defaultSettings(),
+    limits: { snapshots: [], rules: defaultLimitRules() },
     updatedAt: new Date().toISOString(),
   };
 }
@@ -87,6 +90,7 @@ function normalize(parsed: unknown): PersistedState {
       },
     },
     ...(tiger ? { tiger } : {}),
+    limits: normalizeLimits(p.limits),
     updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : base.updatedAt,
   };
 }
@@ -101,6 +105,81 @@ function parseAndNormalize(raw: string): PersistedState {
     throw e;
   }
   return normalize(parsed);
+}
+
+function isValidMetricRaw(value: unknown): boolean {
+  if (value === null) return true;
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.percent === 'number' &&
+    Number.isFinite(raw.percent) &&
+    (raw.metric === 'used' || raw.metric === 'left')
+  );
+}
+
+function isValidLimitSnapshot(value: unknown): value is LimitSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.id === 'string' &&
+    (raw.provider === 'claude' || raw.provider === 'codex') &&
+    typeof raw.windowKey === 'string' &&
+    typeof raw.label === 'string' &&
+    (raw.percentUsed === null || (typeof raw.percentUsed === 'number' && Number.isFinite(raw.percentUsed))) &&
+    isValidMetricRaw(raw.metricRaw) &&
+    (raw.resetText === null || typeof raw.resetText === 'string') &&
+    (raw.resetAt === null || typeof raw.resetAt === 'string') &&
+    typeof raw.ok === 'boolean' &&
+    (raw.error === undefined || typeof raw.error === 'string') &&
+    typeof raw.rawPanel === 'string' &&
+    (raw.parseConfidence === 'trusted' || raw.parseConfidence === 'unknown') &&
+    typeof raw.checkedAt === 'string'
+  );
+}
+
+function isValidLimitRule(value: unknown): value is LimitRule {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.id === 'string' &&
+    (raw.provider === 'claude' || raw.provider === 'codex') &&
+    typeof raw.windowKey === 'string' &&
+    typeof raw.thresholdPercent === 'number' &&
+    Number.isFinite(raw.thresholdPercent) &&
+    raw.comparison === 'gte' &&
+    raw.action === 'block' &&
+    typeof raw.enabled === 'boolean' &&
+    typeof raw.createdAt === 'string' &&
+    typeof raw.updatedAt === 'string'
+  );
+}
+
+function isValidLimitDecision(value: unknown): value is LimitRuleDecision {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.allowed === 'boolean' &&
+    (raw.action === 'allow' || raw.action === 'block') &&
+    typeof raw.reason === 'string' &&
+    (raw.resumeAfter === null || typeof raw.resumeAfter === 'string') &&
+    typeof raw.conservative === 'boolean' &&
+    typeof raw.checkedAt === 'string'
+  );
+}
+
+function normalizeLimits(raw: unknown): LimitsPersistedState {
+  const now = new Date().toISOString();
+  if (!raw || typeof raw !== 'object') return { snapshots: [], rules: defaultLimitRules(now) };
+  const value = raw as Partial<LimitsPersistedState>;
+  const snapshots = Array.isArray(value.snapshots) ? value.snapshots.filter(isValidLimitSnapshot) : [];
+  const rules = Array.isArray(value.rules) ? value.rules.filter(isValidLimitRule) : [];
+  return {
+    snapshots,
+    rules: rules.length ? rules : defaultLimitRules(now),
+    ...(isValidLimitDecision(value.lastDecision) ? { lastDecision: value.lastDecision } : {}),
+    ...(typeof value.updatedAt === 'string' ? { updatedAt: value.updatedAt } : {}),
+  };
 }
 
 async function tryLoadBackup(): Promise<PersistedState | null> {

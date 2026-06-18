@@ -2,6 +2,8 @@
 // Persisted domain model (saved to state.json) + in-memory runtime types.
 // ---------------------------------------------------------------------------
 
+import type { LimitsPersistedState } from '../limits/types.js';
+
 export type TerminalId = string;
 export type GroupId = string;
 
@@ -71,6 +73,7 @@ export interface PersistedState {
   groups: TerminalGroup[];
   settings: AppSettings;
   tiger?: TigerPersisted;
+  limits?: LimitsPersistedState;
   updatedAt: string;
 }
 

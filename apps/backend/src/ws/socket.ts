@@ -44,7 +44,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     },
   });
   const peers = new Set<Peer>();
-  const { manager, state, orchestrator } = ctx;
+  const { manager, state, orchestrator, queueService, promptGenerations, limits } = ctx;
 
   const send = (ws: WebSocket, msg: ServerMsg): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -94,12 +94,24 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   const onTigerState = (s: import('../orchestrator/types.js').OrchestratorState) =>
     broadcast({ type: 'tiger.state', state: s });
   orchestrator.on('state', onTigerState);
+  const onQueueState = (s: import('../queue/types.js').QueueState) => broadcast({ type: 'queue.state', state: s });
+  queueService?.on('state', onQueueState);
+  const onGenerationState = (s: import('../services/PromptGenerationService.js').PromptGenerationState) =>
+    broadcast({ type: 'generation.state', state: s });
+  promptGenerations.on('state', onGenerationState);
+  const onHistoryChanged = () => broadcast({ type: 'history.changed' });
+  promptGenerations.on('history.changed', onHistoryChanged);
+  queueService?.on('history.changed', onHistoryChanged);
+  const onLimitState = (s: import('../limits/types.js').LimitStatus) => broadcast({ type: 'limit.state', state: s });
+  limits.on('state', onLimitState);
 
   wss.on('connection', (ws: WebSocket) => {
     const peer: Peer = { ws, attached: new Set(), alive: true };
     peers.add(peer);
     // Send the current orchestrator snapshot immediately so a fresh client is in sync.
     send(ws, { type: 'tiger.state', state: orchestrator.getState() });
+    send(ws, { type: 'limit.state', state: limits.getState() });
+    if (queueService) void queueService.getState().then((queueState) => send(ws, { type: 'queue.state', state: queueState }));
     ws.on('pong', () => {
       peer.alive = true;
     });
@@ -215,6 +227,11 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     manager.off('status', onStatus);
     manager.off('exit', onExit);
     orchestrator.off('state', onTigerState);
+    queueService?.off('state', onQueueState);
+    promptGenerations.off('state', onGenerationState);
+    promptGenerations.off('history.changed', onHistoryChanged);
+    queueService?.off('history.changed', onHistoryChanged);
+    limits.off('state', onLimitState);
   });
 
   return wss;

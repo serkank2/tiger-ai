@@ -62,6 +62,16 @@ export const useTigerStore = defineStore('tiger', () => {
     }
   }
 
+  async function replaceProjectPrompt(projectPrompt: string) {
+    try {
+      state.value = await api.replaceTigerProjectPrompt(projectPrompt);
+      notices.push('Project prompt updated', 'info');
+    } catch (e) {
+      notices.push(`Project prompt update failed: ${errText(e)}`, 'error');
+      throw e;
+    }
+  }
+
   async function openProject(path: string) {
     try {
       state.value = await api.openTigerProject(path);
@@ -170,6 +180,7 @@ export const useTigerStore = defineStore('tiger', () => {
     closeProject,
     forgetProject,
     initWorkspace,
+    replaceProjectPrompt,
     saveConfig,
     runStage,
     runAll,

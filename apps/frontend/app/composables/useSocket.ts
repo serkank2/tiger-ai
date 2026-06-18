@@ -1,4 +1,5 @@
-import type { CommandTarget, ServerMessage, TigerState } from '~/types';
+import type { CommandTarget, LimitStatus, ServerMessage, TigerState } from '~/types';
+import { useLimitsStore } from '~/stores/limits';
 
 // Module-scoped singletons: one WebSocket per browser window, shared across callers.
 let socket: WebSocket | null = null;
@@ -8,6 +9,11 @@ let msgSeq = 0;
 let disconnectNoticeShown = false;
 const outputListeners = new Map<string, Set<(data: string) => void>>();
 const snapshotListeners = new Map<string, Set<(data: string) => void>>();
+// Generic server-event fan-out, keyed by message `type`. The shell wires the
+// transport once; domain stores delivered by later tasks (queue, limits,
+// prompt generation) subscribe to their state pushes without re-touching this
+// file. Payload is the full parsed message.
+const serverEventListeners = new Map<string, Set<(msg: ServerMessage) => void>>();
 // ref-counted: a terminal may be bound by >1 view briefly (focus<->grid swap)
 const attached = new Map<string, number>();
 
@@ -50,6 +56,7 @@ export function useSocket() {
   const terminals = useTerminalsStore();
   const notices = useNoticesStore();
   const tiger = useTigerStore();
+  const limits = useLimitsStore();
   const wsBase = config.public.wsBase as string;
 
   function connect(): void {
@@ -195,6 +202,29 @@ export function useSocket() {
         // tiger.state carries the full orchestrator snapshot in `state` (typed loosely here).
         tiger.applyState((msg as unknown as { state: TigerState }).state);
         break;
+      // Domain-state pushes for screens delivered by later tasks. The shell does not
+      // own these stores yet, so it simply fans the raw message out to subscribers.
+      case 'queue.state':
+      case 'generation.state':
+      case 'history.changed':
+        emitServerEvent(msg);
+        break;
+      case 'limit.state':
+        limits.applyState((msg as unknown as { state: LimitStatus }).state);
+        emitServerEvent(msg);
+        break;
+    }
+  }
+
+  function emitServerEvent(msg: ServerMessage): void {
+    const set = serverEventListeners.get(msg.type);
+    if (!set) return;
+    for (const cb of Array.from(set)) {
+      try {
+        cb(msg);
+      } catch (err) {
+        console.error('[useSocket] server-event listener error', err);
+      }
     }
   }
 
@@ -252,7 +282,25 @@ export function useSocket() {
   const onOutput = (id: string, cb: (d: string) => void) => subscribe(outputListeners, id, cb);
   const onSnapshot = (id: string, cb: (d: string) => void) => subscribe(snapshotListeners, id, cb);
 
-  return { connect, attach, detach, input, resize, broadcast, onOutput, onSnapshot };
+  /**
+   * Subscribe to a raw server message type (e.g. 'queue.state', 'limit.state',
+   * 'generation.state', 'history.changed'). Returns an unsubscribe function. This is the WS-side
+   * extension point for the domain stores delivered by later tasks.
+   */
+  function onServerEvent(type: string, cb: (msg: ServerMessage) => void): () => void {
+    let set = serverEventListeners.get(type);
+    if (!set) {
+      set = new Set();
+      serverEventListeners.set(type, set);
+    }
+    set.add(cb);
+    return () => {
+      set!.delete(cb);
+      if (set!.size === 0) serverEventListeners.delete(type);
+    };
+  }
+
+  return { connect, attach, detach, input, resize, broadcast, onOutput, onSnapshot, onServerEvent };
 }
 
 // HMR safety: tear down the live socket/timer when this module is replaced.
@@ -269,6 +317,7 @@ if (import.meta.hot) {
     disconnectNoticeShown = false;
     outputListeners.clear();
     snapshotListeners.clear();
+    serverEventListeners.clear();
     attached.clear();
     settleAllWaiters({ kind: 'disconnected' }); // resolve pending broadcasts so awaiting callers don't hang on HMR
   });

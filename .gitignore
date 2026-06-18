@@ -8,6 +8,11 @@ dist/
 .codex-notes/
 .tiger/
 
+# local environment / secrets — keep the documented example, ignore real .env files
+.env
+.env.*
+!.env.example
+
 # local app state (normally stored in OS app-data dir; ignore stray local copies)
 state.json
 state.json.bak

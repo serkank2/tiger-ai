@@ -100,7 +100,7 @@ export function defaultTigerConfig(): TigerConfig {
       maxConcurrent: 4,
       lockTtlMs: 30 * 60 * 1000,
       maxCorrectionCycles: 2,
-      deleteTigerOnComplete: true,
+      deleteTigerOnComplete: false,
     },
   };
 }
@@ -124,6 +124,10 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
     execution: {
       parallel: typeof p.execution?.parallel === 'boolean' ? p.execution.parallel : def.execution.parallel,
       locking: typeof p.execution?.locking === 'boolean' ? p.execution.locking : def.execution.locking,
+      deleteTigerOnComplete:
+        typeof p.execution?.deleteTigerOnComplete === 'boolean'
+          ? p.execution.deleteTigerOnComplete
+          : def.execution.deleteTigerOnComplete,
       ...normalizeNumberRecord(
         {
           maxConcurrent: def.execution.maxConcurrent,
@@ -320,10 +324,10 @@ function validateDefaultsPatch(raw: unknown, current: TigerConfig): string | nul
 
 function validateExecutionPatch(raw: unknown): string | null {
   if (!isPlainRecord(raw)) return 'execution must be an object';
-  const allowed = ['parallel', 'locking', ...Object.keys(TIGER_EXECUTION_LIMITS)];
+  const allowed = ['parallel', 'locking', 'deleteTigerOnComplete', ...Object.keys(TIGER_EXECUTION_LIMITS)];
   const unknown = unknownKey(raw, allowed);
   if (unknown) return `unknown execution field: ${unknown}`;
-  for (const field of ['parallel', 'locking'] as const) {
+  for (const field of ['parallel', 'locking', 'deleteTigerOnComplete'] as const) {
     if (field in raw && typeof raw[field] !== 'boolean') return `execution.${field} must be a boolean`;
   }
   const numeric: Record<string, unknown> = {};

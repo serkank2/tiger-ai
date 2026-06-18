@@ -10,6 +10,7 @@ import type { AppCtx } from '../context.js';
 import { Orchestrator } from '../orchestrator/Orchestrator.js';
 import { TIGER_GROUP_NAME_MAX_CHARS, TIGER_PROJECT_PROMPT_MAX_CHARS } from '../orchestrator/config.js';
 import type { TigerConfig } from '../orchestrator/types.js';
+import { InMemoryRunTemplateRepository, RunTemplateService } from '../services/run-templates.js';
 import type { PersistedState } from '../store/types.js';
 import { TerminalManager } from '../terminal/TerminalManager.js';
 import { createGroupsRouter } from './groups.routes.js';
@@ -62,14 +63,14 @@ function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFun
 
 async function requestJson(
   baseUrl: string,
-  method: 'POST' | 'PUT',
+  method: 'POST' | 'PUT' | 'DELETE',
   route: string,
-  body: unknown,
+  body?: unknown,
 ): Promise<{ status: number; json: unknown }> {
   const res = await fetch(`${baseUrl}${route}`, {
     method,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   return {
     status: res.status,
@@ -77,14 +78,55 @@ async function requestJson(
   };
 }
 
-async function tigerFixture(): Promise<TestServer & { workspace: string; orchestrator: Orchestrator; cleanup: () => Promise<void> }> {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-tiger-route-'));
+async function makeRunTemplates(orchestrator: Orchestrator): Promise<RunTemplateService> {
+  const service = new RunTemplateService(new InMemoryRunTemplateRepository(), () => orchestrator.getConfig());
+  await service.initialize();
+  orchestrator.setRunTemplateService(service);
+  return service;
+}
+
+async function tigerTemplateFixture(): Promise<TestServer & { orchestrator: Orchestrator; cleanup: () => Promise<void> }> {
   const manager = new TerminalManager();
   const orchestrator = new Orchestrator(manager);
+  const runTemplates = await makeRunTemplates(orchestrator);
   const ctx: AppCtx = {
     state: state(),
     manager,
     orchestrator,
+    runTemplates,
+    promptGenerations: {} as AppCtx['promptGenerations'],
+    queueService: {} as AppCtx['queueService'],
+    limits: {} as AppCtx['limits'],
+    save: async () => {},
+  };
+
+  const app = express();
+  app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
+  app.use(errorHandler);
+  const server = await listen(app);
+  return {
+    ...server,
+    orchestrator,
+    cleanup: async () => {
+      await server.close();
+      await orchestrator.killAgents();
+    },
+  };
+}
+
+async function tigerFixture(): Promise<TestServer & { workspace: string; orchestrator: Orchestrator; cleanup: () => Promise<void> }> {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-tiger-route-'));
+  const manager = new TerminalManager();
+  const orchestrator = new Orchestrator(manager);
+  const runTemplates = await makeRunTemplates(orchestrator);
+  const ctx: AppCtx = {
+    state: state(),
+    manager,
+    orchestrator,
+    runTemplates,
+    promptGenerations: {} as AppCtx['promptGenerations'],
+    queueService: {} as AppCtx['queueService'],
+    limits: {} as AppCtx['limits'],
     save: async () => {},
   };
   await orchestrator.initialize(workspace, 'Build a small test project.');
@@ -104,6 +146,81 @@ async function tigerFixture(): Promise<TestServer & { workspace: string; orchest
     },
   };
 }
+
+test('template API works without an open project and enforces immutability and config validation', async () => {
+  const f = await tigerTemplateFixture();
+  try {
+    assert.equal(f.orchestrator.getState().workspace, null);
+    const validConfig = {
+      claudeAgents: 1,
+      codexAgents: 1,
+      claudeModel: 'sonnet',
+      codexModel: 'gpt-5',
+      claudeEffort: 'medium',
+      codexEffort: 'medium',
+      claudePermission: 'dangerous',
+      codexPermission: 'yolo',
+      parallel: true,
+      mergeAgent: 'claude',
+    };
+
+    const created = await requestJson(f.baseUrl, 'POST', '/api/tiger/templates', {
+      name: 'API Custom',
+      description: 'first version',
+      fromStage: 'writing-plan',
+      configs: { 'writing-plan': validConfig },
+    });
+    assert.equal(created.status, 200);
+    assert.ok(Array.isArray(created.json));
+    const createdTemplates = created.json as Array<{ id?: string; name?: string; builtin?: boolean }>;
+    const custom = createdTemplates.find((t) => t.name === 'API Custom');
+    assert.ok(custom);
+    assert.equal(custom.builtin, false);
+    assert.ok(typeof custom.id === 'string');
+
+    const edited = await requestJson(f.baseUrl, 'PUT', `/api/tiger/templates/${custom.id}`, {
+      name: 'API Custom Edited',
+      description: 'edited',
+      configs: { 'writing-plan': { ...validConfig, claudeAgents: 2 } },
+    });
+    assert.equal(edited.status, 200);
+    const editedTemplate = edited.json as { id: string; name: string; version: number };
+    assert.equal(editedTemplate.name, 'API Custom Edited');
+    assert.equal(editedTemplate.version, 2);
+
+    const duplicated = await requestJson(f.baseUrl, 'POST', `/api/tiger/templates/${editedTemplate.id}/duplicate`, {
+      name: 'API Custom Copy',
+    });
+    assert.equal(duplicated.status, 200);
+    const duplicate = duplicated.json as { id: string; name: string; builtin?: boolean };
+    assert.equal(duplicate.name, 'API Custom Copy');
+    assert.equal(duplicate.builtin, false);
+
+    const applied = await requestJson(f.baseUrl, 'POST', `/api/tiger/templates/${duplicate.id}/apply`);
+    assert.equal(applied.status, 200);
+    assert.equal((applied.json as { configs: Record<string, { claudeAgents: number }> }).configs['writing-plan']?.claudeAgents, 2);
+
+    const removed = await requestJson(f.baseUrl, 'DELETE', `/api/tiger/templates/${duplicate.id}`);
+    assert.equal(removed.status, 200);
+    assert.ok(Array.isArray(removed.json));
+    const remainingTemplates = removed.json as Array<{ name?: string }>;
+    assert.equal(remainingTemplates.some((t) => t.name === 'API Custom Copy'), false);
+
+    const builtinEdit = await requestJson(f.baseUrl, 'PUT', '/api/tiger/templates/builtin-optimum', {
+      description: 'not allowed',
+    });
+    assert.equal(builtinEdit.status, 409);
+
+    const invalid = await requestJson(f.baseUrl, 'POST', '/api/tiger/templates', {
+      name: 'Invalid Config',
+      configs: { 'writing-plan': { ...validConfig, claudeAgents: 0 } },
+    });
+    assert.equal(invalid.status, 400);
+    assert.match(JSON.stringify(invalid.json), /configs\.writing-plan\.claudeAgents/);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test('PUT /api/tiger/config rejects invalid timing, execution, executable, and permission mode overrides', async () => {
   const f = await tigerFixture();
@@ -195,6 +312,10 @@ test('group routes reject overlength names before mutating state', async () => {
     state: persisted,
     manager: {} as AppCtx['manager'],
     orchestrator: {} as AppCtx['orchestrator'],
+    runTemplates: {} as AppCtx['runTemplates'],
+    promptGenerations: {} as AppCtx['promptGenerations'],
+    queueService: {} as AppCtx['queueService'],
+    limits: {} as AppCtx['limits'],
     save: async () => {
       saves += 1;
     },

@@ -1,3 +1,6 @@
+import { ref } from 'vue';
+import { defineStore } from 'pinia';
+
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
 export const useConnectionStore = defineStore('connection', () => {
