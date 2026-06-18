@@ -18,6 +18,14 @@ const editorTemplate = ref<TeamTemplate | null>(null);
 
 const templates = computed(() => team.templates);
 const selected = computed(() => templates.value.find((t) => t.id === selectedId.value) ?? null);
+// Always include the currently-selected folder so a browsed path that isn't in the
+// recent list still shows as selected in the dropdown (instead of looking blank).
+const projectOptions = computed(() => {
+  const set = new Set<string>();
+  if (workspace.value) set.add(workspace.value);
+  for (const p of team.projects) set.add(p);
+  return [...set];
+});
 const canStart = computed(
   () => goal.value.trim().length > 0 && !!selected.value && workspace.value.trim().length > 0 && !team.isBusy('start'),
 );
@@ -119,13 +127,13 @@ function onSaved(tpl: TeamTemplate) {
       <div class="compose">
         <h3>Project folder</h3>
         <div class="ws-row">
-          <select v-if="team.projects.length" v-model="workspace" class="ws-select" aria-label="Recent project">
-            <option value="" disabled>Select a recent project…</option>
-            <option v-for="p in team.projects" :key="p" :value="p">{{ p }}</option>
+          <select v-model="workspace" class="ws-select" aria-label="Project folder">
+            <option value="" disabled>Select or browse a project folder…</option>
+            <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
           </select>
           <BaseButton size="md" variant="secondary" @click="showPicker = true">Browse…</BaseButton>
         </div>
-        <code v-if="workspace" class="ws-path">{{ workspace }}</code>
+        <code v-if="workspace" class="ws-path">📁 {{ workspace }}</code>
         <code v-else class="ws-path empty-path">No folder selected</code>
 
         <h3 class="mt">Project goal</h3>
