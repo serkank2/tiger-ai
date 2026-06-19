@@ -39,6 +39,7 @@ import { createDefaultPromptGenerationService } from './services/PromptGeneratio
 import { LimitService } from './services/LimitService.js';
 import { QueueService } from './services/QueueService.js';
 import { Scheduler } from './queue/Scheduler.js';
+import { isMcpEnabled, startMcpServer, type RunningMcpServer } from './mcp/server.js';
 
 // MySQL is the durable system of record: connect and migrate BEFORE the server listens.
 // If MySQL is unreachable after the retry window, fail fast with a clear error — never
@@ -245,12 +246,18 @@ server.listen(config.port, config.host, () => {
   autostartDone = manager.autostartAll();
 });
 
+// Optional MCP (Model Context Protocol) board server — config-gated, OFF by default
+// (set KAPLAN_MCP_ENABLED=1). Exposes the queue/Tiger/Team board to coding agents over stdio.
+let mcp: RunningMcpServer | null = null;
+if (isMcpEnabled()) mcp = await startMcpServer(ctx);
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info('shutting down — killing terminals', { signal });
   queueScheduler.stop();
+  if (mcp) await mcp.close().catch(() => {});
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
   if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});
   limits.stop();

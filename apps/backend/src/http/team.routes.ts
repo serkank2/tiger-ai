@@ -60,6 +60,13 @@ function sendTemplateError(res: import('express').Response, err: unknown): void 
   httpError(res, status, e.message ?? 'team template request failed');
 }
 
+/** Map an orchestrator error (it throws `Error & { status }`) to a clean HTTP response. */
+function sendOrchError(res: import('express').Response, err: unknown): void {
+  const e = err as { status?: number; message?: string };
+  const status = typeof e.status === 'number' && e.status >= 400 && e.status < 600 ? e.status : 500;
+  httpError(res, status, status >= 500 ? 'internal error' : e.message ?? 'team request failed');
+}
+
 /**
  * The workspace to use for read endpoints (state/messages/artifacts): the active
  * in-memory run's workspace, else the last Team workspace, else the active Tiger
@@ -405,6 +412,153 @@ export function createTeamRouter(ctx: AppCtx): Router {
       return;
     }
     res.json(await computeTeamChanges(workspace, new Date().toISOString()));
+  });
+
+  // ----------------------------------------------------------------------------
+  // Run history (Epic-4 item 4): list past runs for the workspace, and re-open a
+  // past run read-only (rehydrate its snapshot without disturbing the live run).
+  // ----------------------------------------------------------------------------
+
+  // GET /api/team/runs → { runs: TeamRunSummary[] } (newest first) for the known workspace.
+  router.get('/runs', async (_req, res) => {
+    const workspace = knownWorkspace(ctx);
+    if (!workspace) {
+      res.json({ runs: [] });
+      return;
+    }
+    res.json({ runs: await orch.listRuns(workspace) });
+  });
+
+  // GET /api/team/runs/:id → { state } read-only rehydrate of a past run's snapshot. Returns
+  // the active run's live snapshot when :id is the active run; otherwise reads it from disk.
+  router.get('/runs/:id', async (req, res) => {
+    const id = req.params.id;
+    const active = orch.tryGetState();
+    if (active && active.runId === id) {
+      const tail = await recentTail(ctx);
+      res.json({ state: toTeamRunStateDto(active, tail) });
+      return;
+    }
+    const workspace = active?.workspace ?? knownWorkspace(ctx);
+    if (!workspace) {
+      httpError(res, 404, 'no team workspace is known');
+      return;
+    }
+    try {
+      const state = await orch.readRun(workspace, id);
+      const tail = (await orch.listMessages(0, { workspace, runId: id })).slice(-RECENT_MESSAGES);
+      res.json({ state: toTeamRunStateDto(state, tail) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // GET /api/team/runs/:id/export?format=json|markdown → a downloadable transcript + artifacts.
+  router.get('/runs/:id/export', async (req, res) => {
+    const active = orch.tryGetState();
+    const workspace = active?.workspace ?? knownWorkspace(ctx);
+    if (!workspace) {
+      httpError(res, 404, 'no team workspace is known');
+      return;
+    }
+    const format = asString(req.query.format).toLowerCase() === 'markdown' ? 'markdown' : 'json';
+    try {
+      const out = await orch.exportRun(workspace, req.params.id, format);
+      res.setHeader('Content-Type', format === 'markdown' ? 'text/markdown; charset=utf-8' : 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${out.filename}"`);
+      res.send(out.content);
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // Single-role control + mid-run role management (Epic-4 item 8). All act on the
+  // active run; `:roleId` is validated by the orchestrator.
+  // ----------------------------------------------------------------------------
+
+  // Pause a single role (it takes no further turns until resumed) without halting the run.
+  router.post('/runs/:id/roles/:roleId/pause', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    try {
+      await orch.pauseRole(req.params.roleId);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  router.post('/runs/:id/roles/:roleId/resume', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    try {
+      await orch.resumeRole(req.params.roleId);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // Steer a single role: queue a directive addressed to that role (not the Lead).
+  router.post('/runs/:id/roles/:roleId/steer', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const text = asString(body.body).trim();
+    if (!text) {
+      httpError(res, 400, 'message body is required');
+      return;
+    }
+    try {
+      await orch.steerRole(req.params.roleId, text);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // Add a role to the run mid-flight.
+  router.post('/runs/:id/roles', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    try {
+      await orch.addRole(roleFromInput(req.body ?? {}, orch.getState().roles.length));
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // Reconfigure an existing role's settings/persona/capabilities mid-run.
+  router.patch('/runs/:id/roles/:roleId', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      await orch.reconfigureRole(req.params.roleId, {
+        name: typeof body.name === 'string' ? body.name : undefined,
+        persona: typeof body.persona === 'string' ? body.persona : undefined,
+        tool: typeof body.tool === 'string' ? body.tool : undefined,
+        model: typeof body.model === 'string' ? body.model : undefined,
+        effort: typeof body.effort === 'string' ? body.effort : undefined,
+        permission: typeof body.permission === 'string' ? body.permission : undefined,
+        responsibilities: Array.isArray(body.responsibilities)
+          ? (body.responsibilities as unknown[]).map(String).filter(Boolean)
+          : undefined,
+        canWriteCode: typeof body.canWriteCode === 'boolean' ? body.canWriteCode : undefined,
+        requiredForSignoff: typeof body.requiredForSignoff === 'boolean' ? body.requiredForSignoff : undefined,
+      });
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // Remove a role from the run mid-flight (the Lead cannot be removed).
+  router.delete('/runs/:id/roles/:roleId', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    try {
+      await orch.removeRole(req.params.roleId);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
   });
 
   return router;

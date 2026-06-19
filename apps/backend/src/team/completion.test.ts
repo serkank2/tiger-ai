@@ -361,21 +361,25 @@ test('evaluateCompletion: multiple open gates are all reported', () => {
 // toDoneGateState.
 // ---------------------------------------------------------------------------
 
-test('toDoneGateState reflects the sign-off gate', () => {
+test('toDoneGateState reflects the FULL gate and lists open blockers', () => {
   const satisfied = toDoneGateState(evaluateCompletion(greenInput()), T3);
   assert.deepEqual(satisfied, {
     satisfied: true,
     requiredRoleIds: ['lead'],
     signedOffRoleIds: ['lead'],
     pendingRoleIds: [],
+    openBlockers: [],
     evaluatedAt: T3,
   });
 
+  // A later verification stales the sign-off → the gate is NOT satisfied and the stale
+  // sign-off is surfaced as an explicit open blocker (the UI shows exactly why).
   const stale = greenInput();
   stale.verifications = [verification({ id: 'VER-2', outcome: 'passed', createdAt: T3 })];
   const gate = toDoneGateState(evaluateCompletion(stale), T3);
   assert.equal(gate.satisfied, false);
   assert.deepEqual(gate.pendingRoleIds, ['lead']);
+  assert.ok(gate.openBlockers.some((blocker) => blocker.code === 'signoff_stale'));
 });
 
 // ---------------------------------------------------------------------------

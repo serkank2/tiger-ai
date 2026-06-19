@@ -1231,6 +1231,189 @@ test('Stop halts a run without disposing sessions, Resume re-enters it, and Clos
   }
 });
 
+// ---------------------------------------------------------------------------
+// Epic-4: task directives are applied (item 1), the done-gate exposes open blockers
+// (item 2), structured verifications are recorded (item 9), and single-role + mid-run
+// role management work (item 8).
+// ---------------------------------------------------------------------------
+
+test('a complete TaskDirective files the in-flight board task done and a needs_work directive requeues it', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-directives-'));
+  try {
+    let devTurns = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxTurns: 16,
+      completionGate: completeWhenSignedOff('developer'),
+      runner: {
+        async runRoleTurn(input) {
+          if (input.role.id === 'lead') {
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement X\nAcceptance: works.' }],
+            };
+          }
+          // developer: first claim runs the task and explicitly completes it via a directive,
+          // then signs off so the run finishes.
+          devTurns += 1;
+          return {
+            status: 'completed',
+            messages: [{ from: 'developer', kind: 'signoff', body: 'done' }],
+            signoffs: [{}],
+            taskDirectives: input.assignedTask
+              ? [{ taskId: input.assignedTask.id, action: 'complete', summary: 'implemented' }]
+              : undefined,
+          };
+        },
+      },
+    });
+    const created = await orch.createTeamRun({ workspace, goal: 'Apply task directives.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    assert.ok(devTurns >= 1);
+    // The developer's task ended in done/ via the explicit complete directive.
+    const doneDir = path.join(workspace, '.tiger', 'team', created.runId, 'agents', 'developer', 'done');
+    const done = await fs.readdir(doneDir).catch(() => [] as string[]);
+    assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'the task was filed done by the directive');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('the snapshot done-gate exposes the open blockers keeping a run from completing', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-blockers-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+    });
+    // Created but not started: the goal is a pending steering directive and no required role
+    // has signed off → the done-gate must report not-satisfied with explicit blockers.
+    await orch.createTeamRun({ workspace, goal: 'Show the blockers.', roles: leadTeam() });
+    const gate = TeamOrchestrator.computeDoneGate(orch.getState());
+    assert.equal(gate.satisfied, false);
+    assert.ok(gate.openBlockers.length > 0, 'open blockers are listed');
+    assert.ok(gate.openBlockers.some((b) => b.code === 'steering_pending'), 'the pending goal prompt is a blocker');
+    assert.ok(gate.openBlockers.some((b) => b.code === 'verification_missing'), 'no verification yet is a blocker');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a structured VerificationDirective is recorded with its command/exitCode and supersedes prose inference', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-structverify-'));
+  try {
+    let turnNo = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxTurns: 6,
+      runner: {
+        async runRoleTurn(input) {
+          turnNo += 1;
+          if (turnNo === 1) {
+            return {
+              status: 'completed',
+              // A verification chat message that READS like a failure ("error"), but the
+              // structured directive is the source of truth: passed, exit 0.
+              messages: [{ from: input.role.id, kind: 'verification', body: 'ran the suite; no error remained' }],
+              verifications: [{ command: 'npm test', exitCode: 0, outcome: 'passed', summary: 'all green' }],
+            };
+          }
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: 'done' }],
+            signoffs: [{}],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Record structured verification.',
+      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+    });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // Exactly one verification (structured), not a duplicate from the prose-inferred fallback.
+    assert.equal(final.verifications.length, 1);
+    assert.equal(final.verifications[0]?.status, 'passed');
+    assert.equal(final.verifications[0]?.command, 'npm test');
+    assert.equal(final.verifications[0]?.exitCode, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('addRole/removeRole/reconfigureRole mutate the live run and a paused role is skipped by claiming', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-rolemgmt-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Manage roles.', roles: leadTeam() });
+
+    // Add a role.
+    await orch.addRole({ id: 'designer', name: 'Designer', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: false });
+    assert.ok(orch.getState().roles.some((r) => r.id === 'designer'));
+
+    // Reconfigure it.
+    await orch.reconfigureRole('designer', { canWriteCode: true, model: 'gpt-5' });
+    const designer = orch.getState().roles.find((r) => r.id === 'designer');
+    assert.equal(designer?.canWriteCode, true);
+    assert.equal(designer?.model, 'gpt-5');
+
+    // Pause it (single-role) — status flips to paused.
+    await orch.pauseRole('designer');
+    assert.equal(orch.getState().roles.find((r) => r.id === 'designer')?.status, 'paused');
+
+    // Remove it.
+    await orch.removeRole('designer');
+    assert.equal(orch.getState().roles.some((r) => r.id === 'designer'), false);
+
+    // The Lead cannot be removed.
+    const err = await orch.removeRole('lead').then(() => null, (e: unknown) => e as { status?: number });
+    assert.equal(err?.status, 409);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('listRuns and exportRun surface a persisted run read-only', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-history-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+    });
+    const created = await orch.createTeamRun({ workspace, goal: 'History and export.', roles: leadTeam() });
+
+    const runs = await orch.listRuns(workspace);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.runId, created.runId);
+    assert.equal(runs[0]?.name, 'History and export.');
+
+    const json = await orch.exportRun(workspace, created.runId, 'json');
+    assert.equal(json.format, 'json');
+    const parsed = JSON.parse(json.content) as { goal: string; doneGate: { openBlockers: unknown[] } };
+    assert.equal(parsed.goal, 'History and export.');
+    assert.ok(Array.isArray(parsed.doneGate.openBlockers));
+
+    const md = await orch.exportRun(workspace, created.runId, 'markdown');
+    assert.equal(md.format, 'markdown');
+    assert.match(md.content, /# AI Team Run/);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test('resume rejects a genuinely ended run but a stopped run is resumable', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-resume-guard-'));
   try {

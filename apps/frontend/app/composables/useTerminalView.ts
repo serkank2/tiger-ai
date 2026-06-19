@@ -1,11 +1,16 @@
 import type { IDisposable, Terminal as XTermTerminal } from '@xterm/xterm';
 import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit';
+import type { WebglAddon as XTermWebglAddon } from '@xterm/addon-webgl';
 import type { Ref } from 'vue';
 
 let xtermCorePromise: Promise<
   readonly [typeof import('@xterm/xterm'), typeof import('@xterm/addon-fit')]
 > | null = null;
 let webLinksAddonPromise: Promise<typeof import('@xterm/addon-web-links')> | null = null;
+let webglAddonPromise: Promise<typeof import('@xterm/addon-webgl')> | null = null;
+// Once WebGL context creation has failed (no GPU, blocklisted driver, too many live
+// contexts), don't keep retrying it per terminal — fall back to the DOM renderer.
+let webglUnavailable = false;
 
 function loadXtermCore() {
   xtermCorePromise ??= Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
@@ -15,6 +20,11 @@ function loadXtermCore() {
 function loadWebLinksAddon() {
   webLinksAddonPromise ??= import('@xterm/addon-web-links');
   return webLinksAddonPromise;
+}
+
+function loadWebglAddon() {
+  webglAddonPromise ??= import('@xterm/addon-webgl');
+  return webglAddonPromise;
 }
 
 /**
@@ -38,6 +48,8 @@ export function useTerminalView(
 
   let term: XTermTerminal | null = null;
   let fit: XTermFitAddon | null = null;
+  let webgl: XTermWebglAddon | null = null;
+  let offWebglContextLoss: IDisposable | null = null;
   let offOutput: (() => void) | null = null;
   let offSnapshot: (() => void) | null = null;
   let onData: IDisposable | null = null;
@@ -63,9 +75,13 @@ export function useTerminalView(
     offSnapshot?.();
     onData?.dispose();
     onResize?.dispose();
+    offWebglContextLoss?.dispose();
+    // Dispose the WebGL addon before the terminal so its GL context is released
+    // (browsers cap live contexts; leaking them breaks renderers across the grid).
+    webgl?.dispose();
     ro?.disconnect();
     term?.dispose();
-    offOutput = offSnapshot = onData = onResize = ro = term = fit = mousedown = mountedHost = null;
+    offOutput = offSnapshot = onData = onResize = offWebglContextLoss = ro = term = fit = webgl = mousedown = mountedHost = null;
     mountedId = null;
     attachedId = null;
   }
@@ -96,6 +112,41 @@ export function useTerminalView(
   function isTypingElsewhere(): boolean {
     const el = document.activeElement as HTMLElement | null;
     return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  }
+
+  /**
+   * Try to attach the WebGL renderer for GPU-accelerated drawing. Falls back silently
+   * to xterm's default DOM renderer if the addon can't be loaded or the GL context
+   * can't be created. On a later context loss (e.g. GPU reset, tab backgrounded), the
+   * addon is disposed so xterm reverts to the DOM renderer instead of rendering blank.
+   */
+  async function attachWebgl(t: XTermTerminal): Promise<void> {
+    if (webglUnavailable) return;
+    let WebglAddon: typeof XTermWebglAddon;
+    try {
+      ({ WebglAddon } = await loadWebglAddon());
+    } catch {
+      webglUnavailable = true; // module failed to load — don't retry per terminal
+      return;
+    }
+    if (t !== term) return; // superseded while loading
+    try {
+      const addon = new WebglAddon();
+      offWebglContextLoss = addon.onContextLoss(() => {
+        offWebglContextLoss?.dispose();
+        offWebglContextLoss = null;
+        addon.dispose(); // releases the GL context; xterm falls back to DOM renderer
+        if (webgl === addon) webgl = null;
+      });
+      t.loadAddon(addon); // throws synchronously if the GL context can't be created
+      webgl = addon;
+    } catch {
+      // No WebGL context available (headless, blocklisted driver, context limit).
+      offWebglContextLoss?.dispose();
+      offWebglContextLoss = null;
+      webgl = null;
+      webglUnavailable = true;
+    }
   }
 
   async function mount(id: string) {
@@ -134,6 +185,11 @@ export function useTerminalView(
     mountedHost = host.value;
     lastCols = 0;
     lastRows = 0;
+
+    // Upgrade to the GPU renderer once the terminal is open (needs its screen element).
+    // Awaited so the snapshot below paints on whichever renderer ends up active.
+    await attachWebgl(t);
+    if (token !== mountToken || !host.value) return;
 
     safeFit();
     offSnapshot = socket.onSnapshot(id, (data) => {

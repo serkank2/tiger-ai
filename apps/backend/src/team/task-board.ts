@@ -195,6 +195,15 @@ export class TaskBoard {
     return new Set(all.flat().map((task) => task.title));
   }
 
+  /** Find a task by id within a role's board, across all states. Null when not present. */
+  async findTask(roleId: string, taskId: string): Promise<{ task: AgentTask; status: AgentTaskStatus } | null> {
+    for (const status of ['todo', 'in-progress', 'done'] as AgentTaskStatus[]) {
+      const match = (await this.list(roleId, status)).find((task) => task.id === taskId);
+      if (match) return { task: match, status };
+    }
+    return null;
+  }
+
   async counts(roleId: string): Promise<RoleTaskCounts> {
     const [todo, inProgress, done] = await Promise.all([
       this.list(roleId, 'todo'),

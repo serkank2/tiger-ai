@@ -246,7 +246,7 @@ async function parseCompletedOrBlocker(
     taskId: opts.assignedTask?.id,
     content: `Role turn failed for ${opts.role.name}: ${detail}`,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [] };
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [] };
   return { outcome: failed, parsed, messages: parsed.messages };
 }
 
@@ -257,7 +257,7 @@ function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string
     taskId: opts.assignedTask?.id,
     content: reason,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [] };
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [] };
   return { outcome: { state: 'failed', error: reason }, parsed, messages: parsed.messages };
 }
 

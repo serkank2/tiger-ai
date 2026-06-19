@@ -26,10 +26,29 @@ export interface SignOffDirective {
   summary: string;
 }
 
+export type VerificationDirectiveOutcome = 'passed' | 'failed' | 'inconclusive';
+
+/**
+ * A structured self-report of a verification a role actually ran (a build/test/check). This
+ * replaces inferring pass/fail from prose: the role states the exact command, its exit code,
+ * the outcome, and a short output excerpt. Recorded as a first-class verification record so
+ * the done-gate's "objective checks passed" requirement is satisfied by explicit evidence,
+ * not regex guessing. `roleId` is forced to the executing role (trust boundary), like sign-offs.
+ */
+export interface VerificationDirective {
+  kind: 'verification';
+  roleId: string;
+  command?: string;
+  exitCode?: number;
+  outcome: VerificationDirectiveOutcome;
+  summary?: string;
+}
+
 export interface ParsedTeamOutput {
   messages: TeamMessage[];
   taskDirectives: TaskDirective[];
   signOffDirectives: SignOffDirective[];
+  verificationDirectives: VerificationDirective[];
 }
 
 export interface ParseTeamOutputDefaults {
@@ -119,6 +138,7 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
     messages: [],
     taskDirectives: [],
     signOffDirectives: [],
+    verificationDirectives: [],
   };
   const timestamp = defaults.timestamp ?? new Date().toISOString();
   const blocks = extractBlocks(output);
@@ -131,6 +151,8 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
         parsed.messages.push(normalizeMessage(item, defaults, timestamp));
       } else if (block.kind === 'TaskDirective') {
         parsed.taskDirectives.push(normalizeTaskDirective(item));
+      } else if (block.kind === 'VerificationDirective') {
+        parsed.verificationDirectives.push(normalizeVerificationDirective(item, defaults.roleId));
       } else {
         parsed.signOffDirectives.push(normalizeSignOffDirective(item, defaults.roleId));
       }
@@ -162,13 +184,13 @@ export function systemBlockerMessage(input: {
 }
 
 interface OutputBlock {
-  kind: 'TeamMessage' | 'TaskDirective' | 'SignOffDirective';
+  kind: 'TeamMessage' | 'TaskDirective' | 'SignOffDirective' | 'VerificationDirective';
   body: string;
 }
 
 function extractBlocks(output: string): OutputBlock[] {
   const blocks: OutputBlock[] = [];
-  const re = /```[ \t]*(TeamMessage|TaskDirective|SignOffDirective)[^\r\n]*\r?\n([\s\S]*?)```/gi;
+  const re = /```[ \t]*(TeamMessage|TaskDirective|SignOffDirective|VerificationDirective)[^\r\n]*\r?\n([\s\S]*?)```/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(output)) !== null) {
     const kind = normalizeBlockKind(match[1]);
@@ -183,6 +205,7 @@ function normalizeBlockKind(value: string | undefined): OutputBlock['kind'] | nu
   if (lower === 'teammessage') return 'TeamMessage';
   if (lower === 'taskdirective') return 'TaskDirective';
   if (lower === 'signoffdirective') return 'SignOffDirective';
+  if (lower === 'verificationdirective') return 'VerificationDirective';
   return null;
 }
 
@@ -240,6 +263,44 @@ function normalizeSignOffDirective(raw: unknown, executingRoleId: string): SignO
   // to the executing role and any agent-supplied `roleId` is ignored, so one agent can never
   // sign off on behalf of another required role and falsely satisfy the done-gate.
   return { kind: 'signoff', roleId: executingRoleId, status, summary };
+}
+
+function normalizeVerificationDirective(raw: unknown, executingRoleId: string): VerificationDirective {
+  if (!isRecord(raw)) throw new Error('VerificationDirective block must contain a JSON object');
+  const outcome = parseVerificationOutcome(stringField(raw, 'outcome') || stringField(raw, 'status'));
+  const exitRaw = raw.exitCode;
+  const exitCode = typeof exitRaw === 'number' && Number.isFinite(exitRaw) ? exitRaw : undefined;
+  // Trust boundary: a turn can only report a verification AS ITSELF. The reporting identity is
+  // forced to the executing role; any agent-supplied `roleId` is ignored — same rule as sign-offs.
+  return {
+    kind: 'verification',
+    roleId: executingRoleId,
+    command: optionalString(raw, 'command'),
+    exitCode,
+    outcome,
+    summary: optionalString(raw, 'summary') ?? optionalString(raw, 'output'),
+  };
+}
+
+function parseVerificationOutcome(value: string): VerificationDirectiveOutcome {
+  switch (value) {
+    case 'passed':
+    case 'pass':
+    case 'ok':
+    case 'success':
+      return 'passed';
+    case 'failed':
+    case 'fail':
+    case 'error':
+      return 'failed';
+    case 'inconclusive':
+    case 'skipped':
+    case 'unknown':
+    case '':
+      return 'inconclusive';
+    default:
+      throw new Error(`unsupported VerificationDirective.outcome: ${value}`);
+  }
 }
 
 function parseMessageKind(value: string): TeamMessageKind {

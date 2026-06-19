@@ -36,7 +36,18 @@ import type { TerminalManager } from '../terminal/TerminalManager.js';
 // and the one-turn CLI runner (TASK-006). The engine drives turn selection,
 // completion, and real CLI turns through these instead of shipping reduced
 // reimplementations under parallel interfaces.
-import { evaluateRunGate, type CompletionInput, type GuardCounters } from './completion.js';
+import {
+  evaluateCompletion,
+  evaluateRunGate,
+  type CompletionInput,
+  type CompletionResult,
+  type GuardCounters,
+} from './completion.js';
+import { logger } from '../obs/logger.js';
+import { computeTeamChanges, type TeamChanges } from './changes.js';
+import { notifyRunOutcome } from './notify.js';
+import type { DoneGateState, DoneGateBlocker } from './types.js';
+import { toRoleSnapshot } from './snapshot.js';
 import {
   selectNextTurns,
   type TeamSchedulerState as PureSchedulerState,
@@ -96,6 +107,8 @@ export interface TeamRoleInstance {
   canWriteCode: boolean;
   requiredForSignoff: boolean;
   status: TeamRoleStatus;
+  /** Free-form note about the current status (e.g. a single-role pause reason). */
+  statusNote?: string;
   lastTurnAt?: string;
   /** Terminal id of this role's most recent turn (so the UI can open its live CLI). */
   activeTerminalId?: string;
@@ -126,7 +139,11 @@ export interface TeamSignoff {
 export interface TeamVerificationRecord {
   id: string;
   status: TeamVerificationStatus;
+  /** Role that performed and self-reported the verification (when known). */
+  roleId?: string;
   command?: string;
+  /** Exit code of the verification command, when the role reported one. */
+  exitCode?: number;
   summary?: string;
   createdAt: string;
   completedAt?: string;
@@ -167,6 +184,12 @@ export interface TeamRunState {
   messageCount: number;
   pendingSteeringCount: number;
   /**
+   * Token/cost consumed so far (same unit as the budget guard). The interactive-PTY CLIs do
+   * not self-report usage today, so this stays 0; it is the extension point a future
+   * usage-reporting runner would feed, after which the dormant budget guard can trip.
+   */
+  budgetSpent?: number;
+  /**
    * Lead-owned sequencing: true when a non-Lead role has just finished (completed,
    * blocked, failed, verified, signed off, or reported findings) and the Lead must
    * review the result before any further role task is claimed. Guarantees the run
@@ -203,6 +226,61 @@ export interface CreateTeamRunInput {
   goal: string;
   roles: Omit<Partial<TeamRoleInstance>, 'status'>[];
   runId?: string;
+}
+
+/** A lightweight summary of a persisted run, for the run-history list. */
+export interface TeamRunSummary {
+  runId: string;
+  name: string;
+  goal: string;
+  status: TeamRunStatus;
+  roleCount: number;
+  turnCount: number;
+  messageCount: number;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  closed: boolean;
+}
+
+/** Fields a mid-run role reconfigure may change (all optional; id/status are preserved). */
+export interface RoleReconfigurePatch {
+  name?: string;
+  persona?: string;
+  tool?: string;
+  model?: string;
+  effort?: string;
+  permission?: string;
+  responsibilities?: string[];
+  canWriteCode?: boolean;
+  requiredForSignoff?: boolean;
+}
+
+/** The structured (JSON) body of a run export. */
+export interface TeamRunExportJson {
+  runId: string;
+  name: string;
+  goal: string;
+  status: TeamRunStatus;
+  workspace: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  roles: { id: string; name: string; tool: AgentType; canWriteCode: boolean; requiredForSignoff: boolean }[];
+  doneGate: DoneGateState;
+  metrics: import('./types.js').TeamMetrics;
+  turns: TeamTurnRecord[];
+  verifications: TeamVerificationRecord[];
+  signoffs: TeamSignoff[];
+  directives: TeamDirective[];
+  messages: TeamMessage[];
+}
+
+/** A rendered export ready to stream as a download. */
+export interface TeamRunExport {
+  format: 'json' | 'markdown';
+  filename: string;
+  content: string;
 }
 
 export interface TeamRunTarget {
@@ -273,11 +351,28 @@ export interface TeamRoleTurnInput {
   assignedTask?: { id: string; title?: string; content: string };
 }
 
+/** A task-board directive a turn emitted (claim/complete/block/needs_work/request_review). */
+export interface TeamTaskDirective {
+  taskId: string;
+  action: 'claim' | 'complete' | 'block' | 'request_review' | 'needs_work';
+  summary?: string;
+}
+
 export interface TeamRoleTurnResult {
   status: TeamTurnStatus;
   messages?: TeamMessageDraft[];
   signoffs?: { roleId?: string; messageId?: string; createdAt?: string }[];
   verification?: Omit<TeamVerificationRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: string };
+  /** Structured verification self-reports the turn emitted (explicit command/exitCode/outcome). */
+  verifications?: {
+    roleId?: string;
+    command?: string;
+    exitCode?: number;
+    outcome: 'passed' | 'failed' | 'inconclusive';
+    summary?: string;
+  }[];
+  /** Task-board directives the turn emitted; the orchestrator applies them to the board + state. */
+  taskDirectives?: TeamTaskDirective[];
   materialChange?: boolean;
   reason?: string;
 }
@@ -340,6 +435,19 @@ export interface TeamOrchestratorOptions {
    * the run idles/waits rather than spinning the Lead to the round cap. Default 2.
    */
   maxIdleLeadTurns?: number;
+  /**
+   * Wall-clock ceiling for a whole run, in milliseconds. When set (> 0), the dormant time
+   * guard in completion.ts trips and the run ends as `failed` once elapsed since start
+   * exceeds it. Disabled when omitted or <= 0.
+   */
+  maxDurationMs?: number;
+  /**
+   * Token/cost budget ceiling. When set (> 0) and the execution model reports usage, the
+   * dormant budget guard trips and the run ends as `blocked` (limit). The interactive-PTY
+   * CLIs do not currently self-report usage, so `budgetSpent` stays 0 and this never trips
+   * unless a future runner supplies it — it is wired through as an extension point.
+   */
+  maxBudget?: number;
 }
 
 export class TeamPaths {
@@ -596,13 +704,17 @@ function resolveLeadRoleId(roles: TeamRoleInstance[]): string | null {
  * used to ship.
  */
 class DefaultCompletionGate implements TeamCompletionGate {
-  constructor(private readonly limits: { maxTurns: number; maxRounds: number }) {}
+  constructor(
+    private readonly limits: { maxTurns: number; maxRounds: number; maxDurationMs?: number; maxBudget?: number },
+  ) {}
 
   evaluate(state: TeamRunState): TeamCompletionDecision {
     const evaluation = evaluateRunGate(buildCompletionInput(state), buildGuardCounters(state), {
       maxTurns: this.limits.maxTurns,
       maxRounds: this.limits.maxRounds,
       maxCorrectionCycles: DISABLED_GUARD,
+      maxDurationMs: this.limits.maxDurationMs,
+      maxBudget: this.limits.maxBudget,
     });
     // The pure done-gate reads the shared Tiger task summary, which does NOT include the
     // team's per-role file task board. Lead-assigned work that is still queued (todo) or in
@@ -848,14 +960,26 @@ function buildCompletionInput(state: TeamRunState): CompletionInput {
 }
 
 function buildGuardCounters(state: TeamRunState): GuardCounters {
-  return { turns: state.turnCount, rounds: state.round, noProgressRounds: 0, correctionCycles: 0 };
+  // Wall-clock elapsed since the run started, so the dormant time guard can trip. The
+  // budget guard reads `state.metricsBudgetSpent` when a future runner reports usage; today
+  // the interactive-PTY CLIs do not, so it stays 0 (the guard is then inert).
+  const startedMs = state.startedAt ? Date.parse(state.startedAt) : NaN;
+  const elapsedMs = Number.isNaN(startedMs) ? 0 : Math.max(0, Date.now() - startedMs);
+  return {
+    turns: state.turnCount,
+    rounds: state.round,
+    noProgressRounds: 0,
+    correctionCycles: 0,
+    elapsedMs,
+    budgetSpent: state.budgetSpent ?? 0,
+  };
 }
 
 function toModelVerification(record: TeamVerificationRecord, runId: string): TeamModelVerification {
   return {
     id: record.id,
     runId,
-    roleId: '',
+    roleId: record.roleId ?? '',
     subject: record.summary ?? record.command ?? record.id,
     outcome: record.status === 'passed' ? 'passed' : record.status === 'failed' ? 'failed' : 'inconclusive',
     details: record.summary ?? '',
@@ -904,10 +1028,24 @@ function mapRunnerResult(result: RunRoleTurnResult): TeamRoleTurnResult {
   const signoffs = result.parsed.signOffDirectives
     .filter((directive) => directive.status === 'done')
     .map((directive) => ({ roleId: directive.roleId }));
+  const taskDirectives = result.parsed.taskDirectives.map((directive) => ({
+    taskId: directive.taskId,
+    action: directive.action,
+    summary: directive.summary,
+  }));
+  const verifications = result.parsed.verificationDirectives.map((directive) => ({
+    roleId: directive.roleId,
+    command: directive.command,
+    exitCode: directive.exitCode,
+    outcome: directive.outcome,
+    summary: directive.summary,
+  }));
   return {
     status: runnerStateToTurnStatus(result.outcome.state),
     messages: result.parsed.messages.map(toEngineDraft),
     signoffs: signoffs.length ? signoffs : undefined,
+    taskDirectives: taskDirectives.length ? taskDirectives : undefined,
+    verifications: verifications.length ? verifications : undefined,
     reason: result.outcome.error,
   };
 }
@@ -966,8 +1104,14 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxRounds: number;
   private readonly maxConsecutiveFailures: number;
   private readonly maxIdleLeadTurns: number;
+  private readonly maxDurationMs?: number;
+  private readonly maxBudget?: number;
   /** Consecutive failed turns since the last successful turn (recovery guard). */
   private consecutiveTurnFailures = 0;
+  /** Last emitted done-gate snapshot (JSON), so the `done` event fires only on change. */
+  private lastDoneGateJson: string | null = null;
+  /** Last emitted changes summary (JSON), so the `changes` event fires only on change. */
+  private lastChangesJson: string | null = null;
 
   constructor(private readonly options: TeamOrchestratorOptions = {}) {
     super();
@@ -980,10 +1124,18 @@ export class TeamOrchestrator extends EventEmitter {
     this.maxRounds = options.maxRounds ?? 200;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
     this.maxIdleLeadTurns = options.maxIdleLeadTurns ?? 2;
+    this.maxDurationMs = options.maxDurationMs;
+    this.maxBudget = options.maxBudget;
     this.scheduler = options.scheduler ?? new LeadOwnedScheduler(this.maxIdleLeadTurns);
     this.runner = options.runner ?? new MissingTeamTurnRunner();
     this.completionGate =
-      options.completionGate ?? new DefaultCompletionGate({ maxTurns: this.maxTurns, maxRounds: this.maxRounds });
+      options.completionGate ??
+      new DefaultCompletionGate({
+        maxTurns: this.maxTurns,
+        maxRounds: this.maxRounds,
+        maxDurationMs: this.maxDurationMs,
+        maxBudget: this.maxBudget,
+      });
   }
 
   async createTeamRun(input: CreateTeamRunInput): Promise<TeamRunState> {
@@ -1162,13 +1314,15 @@ export class TeamOrchestrator extends EventEmitter {
       body: text,
       createdAt,
     });
-    state.directives.push({
+    const directive: TeamDirective = {
       id: nanoid(),
       messageId: message.id,
       body: text,
       createdAt: message.createdAt,
       status: 'pending',
-    });
+    };
+    state.directives.push(directive);
+    this.emitSteering(directive);
     state.materialChangeAt = message.createdAt;
     this.staleSignoffs('Steering changed the run scope.');
     state.pendingSteeringCount = this.countPendingSteering();
@@ -1228,9 +1382,269 @@ export class TeamOrchestrator extends EventEmitter {
     return this.getState();
   }
 
+  /**
+   * List the persisted runs for a workspace (newest first), as lightweight summaries for a
+   * run-history view. Reads each run's `team.json` without making it the active run, so the
+   * UI can browse past runs while a different run is live. Generalizes `loadLatestRun`.
+   */
+  async listRuns(workspace: string): Promise<TeamRunSummary[]> {
+    const resolved = path.resolve(workspace);
+    const teamsDir = path.join(new TigerPaths(resolved).root, 'team');
+    let entries: string[];
+    try {
+      entries = await fs.readdir(teamsDir);
+    } catch {
+      return [];
+    }
+    const summaries: (TeamRunSummary & { mtimeMs: number })[] = [];
+    for (const runId of entries) {
+      const file = path.join(teamsDir, runId, 'team.json');
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat?.isFile()) continue;
+      const loaded = await this.teamPersistence.loadRun(resolved, runId).catch(() => null);
+      if (!loaded) continue;
+      summaries.push({
+        runId: loaded.runId,
+        name: deriveRunNameFromGoal(loaded.goal),
+        goal: loaded.goal,
+        status: loaded.status,
+        roleCount: loaded.roles.length,
+        turnCount: loaded.turnCount,
+        messageCount: loaded.messageCount,
+        createdAt: loaded.createdAt,
+        startedAt: loaded.startedAt,
+        endedAt: loaded.endedAt,
+        closed: loaded.closed === true,
+        mtimeMs: stat.mtimeMs,
+      });
+    }
+    summaries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return summaries.map(({ mtimeMs: _omit, ...rest }) => rest);
+  }
+
+  /**
+   * Read-only rehydrate of a past run's state (its snapshot) WITHOUT making it the active
+   * run or touching the live loop. Used to re-open a past run from history. The live run (if
+   * any) is left untouched. Returns the loaded state; throws 404 when the run is unknown.
+   */
+  async readRun(workspace: string, runId: string): Promise<TeamRunState> {
+    const resolved = path.resolve(workspace);
+    const loaded = await this.teamPersistence.loadRun(resolved, runId);
+    if (!loaded) throw httpError(404, `team run ${runId} was not found`);
+    return loaded;
+  }
+
+  /**
+   * Build a downloadable export of a run: its full conversation transcript, turn history,
+   * verifications, sign-offs, directives, the done-gate, and metrics. `format: 'markdown'`
+   * renders a human-readable document; `'json'` (default) returns the structured payload.
+   * Read-only; works for any run (active or historical) in a workspace.
+   */
+  async exportRun(workspace: string, runId: string, format: 'json' | 'markdown' = 'json'): Promise<TeamRunExport> {
+    const resolved = path.resolve(workspace);
+    const state = await this.teamPersistence.loadRun(resolved, runId);
+    if (!state) throw httpError(404, `team run ${runId} was not found`);
+    const messages = await this.messageBus.list(new TeamPaths(resolved, runId));
+    const doneGate = TeamOrchestrator.computeDoneGate(state);
+    const metrics = computeRunMetrics(state);
+    const payload: TeamRunExportJson = {
+      runId: state.runId,
+      name: deriveRunNameFromGoal(state.goal),
+      goal: state.goal,
+      status: state.status,
+      workspace: resolved,
+      createdAt: state.createdAt,
+      startedAt: state.startedAt,
+      endedAt: state.endedAt,
+      roles: state.roles.map((role) => ({
+        id: role.id,
+        name: role.name,
+        tool: role.tool,
+        canWriteCode: role.canWriteCode,
+        requiredForSignoff: role.requiredForSignoff,
+      })),
+      doneGate,
+      metrics,
+      turns: state.turns,
+      verifications: state.verifications,
+      signoffs: state.signoffs,
+      directives: state.directives,
+      messages,
+    };
+    if (format === 'markdown') {
+      return { format: 'markdown', filename: `team-run-${runId}.md`, content: renderRunMarkdown(payload) };
+    }
+    return { format: 'json', filename: `team-run-${runId}.json`, content: JSON.stringify(payload, null, 2) };
+  }
+
+  /**
+   * Pause a SINGLE role mid-run (it takes no further turns until resumed) without halting the
+   * whole run. The scheduler/claim path skips a paused role. Distinct from {@link pause},
+   * which halts the entire run at the next boundary.
+   */
+  async pauseRole(roleId: string, reason = 'Role paused by user.'): Promise<TeamRunState> {
+    const state = this.requireState();
+    const role = state.roles.find((entry) => entry.id === roleId);
+    if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    if (role.id === this.leadRoleId()) throw httpError(409, 'the Lead role cannot be paused; pause the whole run instead');
+    if (role.status !== 'paused') {
+      role.status = 'paused';
+      role.statusNote = reason;
+      await this.persistState();
+      this.emitState();
+      this.emitRole(role);
+    }
+    return this.getState();
+  }
+
+  /** Resume a single paused role so it can be scheduled/claimed again. */
+  async resumeRole(roleId: string): Promise<TeamRunState> {
+    const state = this.requireState();
+    const role = state.roles.find((entry) => entry.id === roleId);
+    if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    if (role.status === 'paused') {
+      role.status = 'idle';
+      role.statusNote = undefined;
+      await this.persistState();
+      this.emitState();
+      this.emitRole(role);
+    }
+    return this.getState();
+  }
+
+  /** Steer a SINGLE role: queue a directive addressed to that specific role (not the Lead). */
+  async steerRole(roleId: string, body: string, from: MessageSender = USER_SENDER): Promise<TeamMessage> {
+    const state = this.requireState();
+    const role = state.roles.find((entry) => entry.id === roleId);
+    if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    const text = body.trim();
+    if (!text) throw httpError(400, 'steering directive is required');
+    const message = await this.appendMessage({
+      from,
+      to: roleId,
+      kind: 'steering',
+      channel: 'directives',
+      body: text,
+      createdAt: nowIso(),
+    });
+    // A role-targeted steer is delivered via the transcript the role reads (it is addressed
+    // `to` that role); it is NOT a Lead-queued completion-blocking directive. It still stales
+    // sign-offs because it changes the run scope.
+    state.materialChangeAt = message.createdAt;
+    this.staleSignoffs(`Steering changed the scope for role ${role.name}.`);
+    await this.persistState();
+    this.emitState();
+    return message;
+  }
+
+  /**
+   * Add a role to the run mid-flight. The new role starts idle with an initialized task board,
+   * and stales existing sign-offs (the team composition changed). Cannot duplicate a role id.
+   */
+  async addRole(seed: Omit<Partial<TeamRoleInstance>, 'status'>): Promise<TeamRunState> {
+    const state = this.requireState();
+    const [role] = normalizeRoles([seed]);
+    if (!role) throw httpError(400, 'a valid role definition is required');
+    if (state.roles.some((entry) => entry.id === role.id)) {
+      throw httpError(409, `role ${role.id} already exists in this run`);
+    }
+    state.roles.push(role);
+    if (this.taskBoard) await this.taskBoard.ensureRole(role.id).catch(() => undefined);
+    await this.refreshWorkQueues();
+    this.staleSignoffs('A role was added to the team.');
+    state.materialChangeAt = nowIso();
+    await this.persistState();
+    this.emitState();
+    this.emitRole(role);
+    return this.getState();
+  }
+
+  /**
+   * Remove a role from the run mid-flight. The Lead cannot be removed (it owns sequencing).
+   * Any queued board work for the role is left on disk (inspectable) but no longer scheduled;
+   * removing a required-for-sign-off role re-evaluates the done-gate. Stales sign-offs.
+   */
+  async removeRole(roleId: string): Promise<TeamRunState> {
+    const state = this.requireState();
+    const role = state.roles.find((entry) => entry.id === roleId);
+    if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    if (role.id === this.leadRoleId()) throw httpError(409, 'the Lead role cannot be removed');
+    if (state.currentTurn?.roleId === roleId) throw httpError(409, 'cannot remove a role while its turn is running');
+    state.roles = state.roles.filter((entry) => entry.id !== roleId);
+    // Drop the removed role's sign-offs so it never counts toward (or blocks) completion.
+    state.signoffs = state.signoffs.filter((signoff) => signoff.roleId !== roleId);
+    this.staleSignoffs('A role was removed from the team.');
+    state.materialChangeAt = nowIso();
+    await this.persistState();
+    this.emitState();
+    return this.getState();
+  }
+
+  /**
+   * Reconfigure an existing role's CLI settings / persona / capabilities mid-run. Only the
+   * provided fields change; the role's id and live status are preserved. Changing
+   * capabilities or sign-off requirement stales sign-offs (the contract changed).
+   */
+  async reconfigureRole(roleId: string, patch: RoleReconfigurePatch): Promise<TeamRunState> {
+    const state = this.requireState();
+    const role = state.roles.find((entry) => entry.id === roleId);
+    if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    if (typeof patch.name === 'string' && patch.name.trim()) role.name = patch.name.trim();
+    if (typeof patch.persona === 'string') role.persona = patch.persona;
+    if (patch.tool) role.tool = toAgentTypeOr(patch.tool, role.tool);
+    if (patch.model !== undefined) role.model = patch.model || undefined;
+    if (patch.effort !== undefined) role.effort = patch.effort || undefined;
+    if (patch.permission !== undefined) role.permission = patch.permission || undefined;
+    if (Array.isArray(patch.responsibilities)) role.responsibilities = patch.responsibilities.filter(Boolean);
+    let contractChanged = false;
+    if (typeof patch.canWriteCode === 'boolean' && patch.canWriteCode !== role.canWriteCode) {
+      role.canWriteCode = patch.canWriteCode;
+      contractChanged = true;
+    }
+    if (typeof patch.requiredForSignoff === 'boolean' && patch.requiredForSignoff !== role.requiredForSignoff) {
+      role.requiredForSignoff = patch.requiredForSignoff;
+      contractChanged = true;
+    }
+    if (contractChanged) this.staleSignoffs('A role contract changed.');
+    state.materialChangeAt = nowIso();
+    await this.persistState();
+    this.emitState();
+    this.emitRole(role);
+    return this.getState();
+  }
+
   async listMessages(afterSeq = 0, target?: TeamRunTarget): Promise<TeamMessage[]> {
     const paths = target ? new TeamPaths(path.resolve(target.workspace), target.runId) : this.requirePaths();
     return this.messageBus.list(paths, afterSeq);
+  }
+
+  /**
+   * Compute the authoritative done-gate for a run state: the FULL completion gate (every
+   * required role signed off AND verification passed AND no pending steering AND task/finding
+   * queues clear AND no open blockers AND the per-role board clear), with the exact list of
+   * OPEN BLOCKERS. This is the single source of truth used by both the snapshot DTO and the
+   * `done` WS event, so the UI can show precisely why a run is not done. Pure over `state`.
+   */
+  static computeDoneGate(state: TeamRunState): DoneGateState {
+    const completion: CompletionResult = evaluateCompletion(buildCompletionInput(state));
+    const blockers: DoneGateBlocker[] = completion.blockers.map((b) => ({ code: b.code, message: b.message }));
+    // The pure gate does not see the team's per-role file task board; account for it here so a
+    // queued/in-progress Lead-assigned task is surfaced as an explicit open blocker too.
+    const boardPending = teamBoardPending(state);
+    if (boardPending > 0) {
+      blockers.push({
+        code: 'board_pending',
+        message: `${boardPending} Lead-assigned task(s) are still queued or in progress on the team task board.`,
+      });
+    }
+    return {
+      satisfied: blockers.length === 0,
+      requiredRoleIds: completion.requiredRoleIds,
+      signedOffRoleIds: completion.freshSignoffRoleIds,
+      pendingRoleIds: completion.pendingRoleIds,
+      openBlockers: blockers,
+      evaluatedAt: nowIso(),
+    };
   }
 
   private startLoop(status: 'running'): Promise<TeamRunState> {
@@ -1396,6 +1810,7 @@ export class TeamOrchestrator extends EventEmitter {
     if (scheduled.task) this.turnTasks.set(turn.id, scheduled.task);
     await this.persistState();
     this.emitState();
+    this.emitRole(role);
 
     try {
       const messagesForTurn = await this.listMessages();
@@ -1444,6 +1859,9 @@ export class TeamOrchestrator extends EventEmitter {
       await this.fileTurnTask(turn);
       await this.persistState();
       this.emitState();
+      this.emitRole(role);
+      // The turn may have changed real project files; surface a changeset event when it did.
+      await this.emitChangesIfChanged();
     }
   }
 
@@ -1457,6 +1875,9 @@ export class TeamOrchestrator extends EventEmitter {
     const materialBefore = state.materialChangeAt;
     const messages = result.messages ?? [];
     const appended: TeamMessage[] = [];
+    // Ids of the prose-inferred verification records created by THIS turn, so a structured
+    // self-report (below) can supersede exactly them without disturbing earlier records.
+    const inferredVerificationIds: string[] = [];
     for (const draft of messages) {
       const message = await this.appendMessage({ ...draft, turnId: draft.turnId ?? turn.id });
       appended.push(message);
@@ -1471,10 +1892,15 @@ export class TeamOrchestrator extends EventEmitter {
       // A role reporting a build/test/check result as a `verification` message becomes a
       // first-class verification record so the done-gate's "objective checks passed"
       // requirement can actually be satisfied by the team (the CLI has no other channel
-      // to record one). The outcome is inferred from the message text.
+      // to record one). This is the FALLBACK path: the outcome is inferred from the prose
+      // when the role did not emit a structured `VerificationDirective` (item 9). A
+      // structured directive for the same turn takes precedence and supersedes this below.
       if (message.kind === 'verification') {
+        const id = nanoid();
+        inferredVerificationIds.push(id);
         state.verifications.push({
-          id: nanoid(),
+          id,
+          roleId: role.id,
           status: inferVerificationOutcome(message.body),
           summary: message.body.slice(0, 280),
           createdAt: message.createdAt,
@@ -1482,11 +1908,39 @@ export class TeamOrchestrator extends EventEmitter {
         });
       }
     }
+    // Structured verification self-reports (explicit command/exitCode/outcome) are the
+    // authoritative path — they replace the regex inference for this turn. When a turn emits
+    // a structured directive we drop the prose-inferred record(s) it created above so the
+    // explicit evidence is what the done-gate evaluates, not a guessed duplicate.
+    const structuredVerifications = result.verifications ?? [];
+    if (structuredVerifications.length > 0) {
+      if (inferredVerificationIds.length > 0) {
+        const drop = new Set(inferredVerificationIds);
+        state.verifications = state.verifications.filter((v) => !drop.has(v.id));
+      }
+      for (const verification of structuredVerifications) {
+        const completedAt = nowIso();
+        state.verifications.push({
+          id: nanoid(),
+          roleId: verification.roleId ?? role.id,
+          status: verification.outcome === 'passed' ? 'passed' : verification.outcome === 'failed' ? 'failed' : 'skipped',
+          command: verification.command,
+          exitCode: verification.exitCode,
+          summary: verification.summary,
+          createdAt: completedAt,
+          completedAt,
+        });
+        state.materialChangeAt = completedAt;
+      }
+      this.staleSignoffs('A verification self-report changed the run state.');
+    }
     if (result.verification) {
       const verification: TeamVerificationRecord = {
         id: result.verification.id ?? nanoid(),
+        roleId: result.verification.roleId ?? role.id,
         status: result.verification.status,
         command: result.verification.command,
+        exitCode: result.verification.exitCode,
         summary: result.verification.summary,
         createdAt: result.verification.createdAt ?? nowIso(),
         completedAt: result.verification.completedAt,
@@ -1507,6 +1961,12 @@ export class TeamOrchestrator extends EventEmitter {
       const signoffRole = state.roles.find((entry) => entry.id === (signoff.roleId ?? role.id)) ?? role;
       this.recordSignoff(signoffRole, undefined, signoff.createdAt, signoff.messageId);
     }
+
+    // Apply the structured task-board directives this turn emitted (claim/complete/block/
+    // needs_work/request_review). The message-bus parses these; previously the orchestrator
+    // dropped them. They mutate the board + run state so a role can drive a task's lifecycle
+    // explicitly rather than only via the implicit claim-on-schedule / file-on-complete flow.
+    const directiveEffects = await this.applyTaskDirectives(turn, role, result.taskDirectives ?? []);
 
     // Materialize this turn's Lead-approved `task` assignments into the target role's todo
     // queue. Only the Lead may delegate executable work; lateral non-Lead delegation and
@@ -1537,11 +1997,16 @@ export class TeamOrchestrator extends EventEmitter {
           directive.status = 'applied';
           directive.acknowledgedAt ??= appliedAt;
           directive.appliedAt = appliedAt;
+          this.emitSteering(directive);
         }
         state.pendingSteeringCount = this.countPendingSteering();
       }
       const productive =
-        leadHadPendingWork || state.materialChangeAt !== materialBefore || signoffsRecorded > 0 || tasksEnqueued > 0;
+        leadHadPendingWork ||
+        state.materialChangeAt !== materialBefore ||
+        signoffsRecorded > 0 ||
+        tasksEnqueued > 0 ||
+        directiveEffects > 0;
       state.consecutiveIdleLeadTurns = productive ? 0 : (state.consecutiveIdleLeadTurns ?? 0) + 1;
     } else {
       state.leadReviewPending = true;
@@ -1723,6 +2188,9 @@ export class TeamOrchestrator extends EventEmitter {
     let best: { roleId: string; head: AgentTask } | null = null;
     for (const role of state.roles) {
       if (excludeRoleId && role.id === excludeRoleId) continue;
+      // A single-role pause (item 8) takes the role out of scheduling without halting the run:
+      // skip its queued work until it is resumed.
+      if (role.status === 'paused') continue;
       const head = (await this.taskBoard.listTodo(role.id))[0];
       if (!head) continue;
       if (
@@ -1798,6 +2266,104 @@ export class TeamOrchestrator extends EventEmitter {
       enqueued += 1;
     }
     return enqueued;
+  }
+
+  /**
+   * Apply the structured task-board directives a turn emitted. The message bus parses
+   * `claim/complete/block/needs_work/request_review` blocks but the engine used to drop them;
+   * this is that documented-but-lost capability restored. Directives act on the EMITTING role's
+   * board task (the `taskId` names a board task in the role's queue), with the implicit
+   * claim-on-schedule / file-on-complete flow as the default. Returns how many directives took
+   * effect (so a Lead turn that drove the board counts as productive). Best-effort: an unknown
+   * task id or a board IO hiccup is reported as a system note, never crashes the loop.
+   */
+  private async applyTaskDirectives(
+    turn: TeamTurnRecord,
+    role: TeamRoleInstance,
+    directives: TeamTaskDirective[],
+  ): Promise<number> {
+    if (directives.length === 0 || !this.taskBoard) return 0;
+    const board = this.taskBoard;
+    const state = this.requireState();
+    let applied = 0;
+    for (const directive of directives) {
+      const located = await board.findTask(role.id, directive.taskId).catch(() => null);
+      const note = directive.summary ? ` (${directive.summary})` : '';
+      try {
+        switch (directive.action) {
+          case 'complete': {
+            // Mark the named task done. Prefer the claimed turn task (it is the in-flight one);
+            // otherwise complete the located board task. Completing a task is forward progress
+            // (work being CLEARED, not new work) so it must NOT stale sign-offs — only new work
+            // or a scope change does. Otherwise a role completing its task and signing off in the
+            // same turn would invalidate its own fresh sign-off.
+            const claimed = this.turnTasks.get(turn.id);
+            const target = claimed && claimed.id === directive.taskId ? claimed : located?.task;
+            if (target) {
+              await board.complete(target, nowIso());
+              if (claimed && claimed.id === directive.taskId) this.turnTasks.delete(turn.id);
+              applied += 1;
+            }
+            break;
+          }
+          case 'block':
+          case 'needs_work': {
+            // Return the task to its role's queue so it is re-worked, and flag a Lead review.
+            // `needs_work` (e.g. a reviewer rejecting an implementation) and `block` both reopen
+            // the work; the difference is surfaced in the conversation note.
+            const target = located?.task ?? this.turnTasks.get(turn.id);
+            if (target) {
+              if (target.status === 'in-progress') await board.requeue(target);
+              if (this.turnTasks.get(turn.id)?.id === target.id) this.turnTasks.delete(turn.id);
+            }
+            await this.appendMessage({
+              turnId: turn.id,
+              from: SYSTEM_SENDER,
+              kind: 'blocker',
+              body:
+                directive.action === 'block'
+                  ? `${role.name} reported ${directive.taskId} blocked${note}; it was returned to the queue for the Lead to unblock.`
+                  : `${role.name} sent ${directive.taskId} back for rework${note}; it was returned to the queue.`,
+            });
+            state.leadReviewPending = true;
+            state.materialChangeAt = nowIso();
+            this.staleSignoffs(`${directive.taskId} needs more work.`);
+            applied += 1;
+            break;
+          }
+          case 'request_review': {
+            // Route a finished unit of work to the Lead for review (the Lead decides who reviews).
+            await this.appendMessage({
+              turnId: turn.id,
+              from: role.id,
+              to: this.leadRoleId() ?? undefined,
+              kind: 'handoff',
+              body: `Requesting review of ${directive.taskId}${note}.`,
+            });
+            state.leadReviewPending = true;
+            applied += 1;
+            break;
+          }
+          case 'claim': {
+            // An explicit claim of a queued task: move it to in-progress and attach it to this
+            // turn so it is filed on completion. The scheduler usually claims for the role, so
+            // this matters when a role self-selects from its own queue.
+            if (located && located.task.status === 'todo' && !this.turnTasks.has(turn.id)) {
+              const claimed = await board.claimNext(role.id, nowIso());
+              if (claimed) {
+                this.turnTasks.set(turn.id, claimed);
+                applied += 1;
+              }
+            }
+            break;
+          }
+        }
+      } catch {
+        // a board IO hiccup must not crash the run loop
+      }
+    }
+    if (applied > 0) await this.refreshWorkQueues();
+    return applied;
   }
 
   /** File a turn's claimed board task: done on success, back to the queue otherwise. */
@@ -1954,6 +2520,28 @@ export class TeamOrchestrator extends EventEmitter {
     }
     await this.persistState();
     this.emitState();
+    // Per-run observability (item 7) + best-effort completion/blocked/failed notification
+    // (item 10). Emitted once, on the terminal transition, for the meaningful outcomes.
+    if (status === 'completed' || status === 'blocked' || status === 'failed') {
+      const metrics = computeRunMetrics(state);
+      const provider = mostCommonProvider(state);
+      logger.child({ mod: 'team', runId: state.runId }).info('team run finished', {
+        status,
+        completionMethod: status === 'completed' ? 'done-gate' : reason ?? status,
+        durationMs: metrics.durationMs,
+        turns: metrics.turnCount,
+        provider,
+        tokens: metrics.tokens ?? null,
+        cost: metrics.cost ?? null,
+      });
+      notifyRunOutcome({
+        runId: state.runId,
+        name: deriveRunNameFromGoal(state.goal),
+        outcome: status,
+        message: reason,
+        workspace: state.workspace,
+      });
+    }
   }
 
   private async releaseRunLease(status: ExecutionRunStatus, reason?: string): Promise<void> {
@@ -2021,7 +2609,70 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   private emitState(): void {
-    if (this.state) this.emit('state', this.getState());
+    if (!this.state) return;
+    this.emit('state', this.getState());
+    // Fire the done-gate event only when the gate actually changed, so the UI's "why isn't
+    // this done yet" panel updates without a flood of identical events.
+    const gate = TeamOrchestrator.computeDoneGate(this.state);
+    const gateJson = JSON.stringify({ ...gate, evaluatedAt: undefined });
+    if (gateJson !== this.lastDoneGateJson) {
+      this.lastDoneGateJson = gateJson;
+      this.emit('done', { runId: this.state.runId, gate });
+    }
+  }
+
+  /** Emit a per-role status-change event (the frontend renders per-role status live). */
+  private emitRole(role: TeamRoleInstance): void {
+    if (!this.state) return;
+    this.emit('role', { runId: this.state.runId, role: toRoleSnapshot(this.state, role) });
+  }
+
+  /**
+   * Emit a steering-directive lifecycle event (acked/applied/queued). The frontend uses this
+   * to reflect a directive moving from pending → acknowledged → applied without a full state push.
+   */
+  private emitSteering(directive: TeamDirective): void {
+    if (!this.state) return;
+    this.emit('steering', {
+      runId: this.state.runId,
+      directive: {
+        id: directive.id,
+        runId: this.state.runId,
+        body: directive.body,
+        createdAt: directive.createdAt,
+        acknowledged: directive.status !== 'pending',
+      },
+    });
+  }
+
+  /**
+   * Best-effort: recompute the git changeset for the run's workspace and emit a `changes`
+   * event when it changed. The diff itself is fetched lazily over REST (`/changes`); this
+   * event carries only the lightweight summary so the UI knows when to refetch.
+   */
+  private async emitChangesIfChanged(): Promise<void> {
+    const state = this.state;
+    if (!state) return;
+    // Computing the changeset shells out to git in the workspace; skip that cost entirely
+    // unless something is actually listening for `changes` (the WS layer subscribes in
+    // production; unit tests with fake runners do not, so they never spawn git).
+    if (this.listenerCount('changes') === 0) return;
+    let changes: TeamChanges;
+    try {
+      changes = await computeTeamChanges(state.workspace, nowIso());
+    } catch {
+      return; // never let a git hiccup disturb the run loop
+    }
+    const summary = {
+      isGitRepo: changes.isGitRepo,
+      head: changes.head,
+      branch: changes.branch,
+      summary: changes.summary,
+    };
+    const json = JSON.stringify(summary);
+    if (json === this.lastChangesJson) return;
+    this.lastChangesJson = json;
+    this.emit('changes', { runId: state.runId, changes: { ...summary, generatedAt: changes.generatedAt } });
   }
 
   private requireState(): TeamRunState {
@@ -2107,6 +2758,114 @@ function latestVerification(state: TeamRunState): TeamVerificationRecord | null 
   return state.verifications.length ? state.verifications[state.verifications.length - 1]! : null;
 }
 
+/** Wall-clock duration of one turn in ms, when both endpoints are known. */
+function turnDurationMs(turn: TeamTurnRecord): number {
+  if (!turn.endedAt) return 0;
+  const start = Date.parse(turn.startedAt);
+  const end = Date.parse(turn.endedAt);
+  return Number.isNaN(start) || Number.isNaN(end) ? 0 : Math.max(0, end - start);
+}
+
+/**
+ * Roll up per-role and per-run duration/provider/turn-count metrics from the run's turn
+ * history (item 7). Token/cost stay null: the interactive-PTY CLIs do not self-report usage —
+ * `tokens`/`cost` are the documented extension point a usage-reporting runner would fill.
+ */
+export function computeRunMetrics(state: TeamRunState): import('./types.js').TeamMetrics {
+  const byRole = new Map<string, { roleName: string; provider?: AgentType; turnCount: number; durationMs: number }>();
+  let totalDuration = 0;
+  for (const turn of state.turns) {
+    const dur = turnDurationMs(turn);
+    totalDuration += dur;
+    const role = state.roles.find((r) => r.id === turn.roleId);
+    const entry = byRole.get(turn.roleId) ?? { roleName: turn.roleName, provider: role?.tool, turnCount: 0, durationMs: 0 };
+    entry.turnCount += 1;
+    entry.durationMs += dur;
+    byRole.set(turn.roleId, entry);
+  }
+  // Prefer the actual run wall-clock when known; fall back to summed turn durations.
+  const runStart = state.startedAt ? Date.parse(state.startedAt) : NaN;
+  const runEnd = state.endedAt ? Date.parse(state.endedAt) : Date.now();
+  const wallClock = Number.isNaN(runStart) ? totalDuration : Math.max(0, runEnd - runStart);
+  return {
+    durationMs: wallClock,
+    turnCount: state.turnCount,
+    perRole: [...byRole.entries()].map(([roleId, e]) => ({
+      roleId,
+      roleName: e.roleName,
+      provider: e.provider,
+      turnCount: e.turnCount,
+      durationMs: e.durationMs,
+    })),
+    tokens: null,
+    cost: null,
+  };
+}
+
+/** The provider/CLI tool that ran the most turns this run (for log attribution). */
+function mostCommonProvider(state: TeamRunState): AgentType | undefined {
+  const counts = new Map<AgentType, number>();
+  for (const turn of state.turns) {
+    const tool = state.roles.find((r) => r.id === turn.roleId)?.tool;
+    if (tool) counts.set(tool, (counts.get(tool) ?? 0) + 1);
+  }
+  let best: AgentType | undefined;
+  let bestN = 0;
+  for (const [tool, n] of counts) if (n > bestN) ((best = tool), (bestN = n));
+  return best;
+}
+
+/** Render a run export as a human-readable markdown document. */
+function renderRunMarkdown(run: TeamRunExportJson): string {
+  const lines: string[] = [];
+  lines.push(`# AI Team Run — ${run.name}`, '');
+  lines.push(`- **Run id:** ${run.runId}`);
+  lines.push(`- **Status:** ${run.status}`);
+  lines.push(`- **Workspace:** ${run.workspace}`);
+  lines.push(`- **Created:** ${run.createdAt}`);
+  if (run.startedAt) lines.push(`- **Started:** ${run.startedAt}`);
+  if (run.endedAt) lines.push(`- **Ended:** ${run.endedAt}`);
+  lines.push(`- **Duration:** ${Math.round(run.metrics.durationMs / 1000)}s over ${run.metrics.turnCount} turn(s)`);
+  lines.push('', '## Goal', '', run.goal, '');
+  lines.push('## Roles', '');
+  for (const role of run.roles) {
+    lines.push(
+      `- **${role.name}** (${role.id}) — ${role.tool}${role.canWriteCode ? ', can write code' : ''}${
+        role.requiredForSignoff ? ', required for sign-off' : ''
+      }`,
+    );
+  }
+  lines.push('', '## Done gate', '');
+  lines.push(`- **Satisfied:** ${run.doneGate.satisfied ? 'yes' : 'no'}`);
+  if (run.doneGate.openBlockers.length) {
+    lines.push('- **Open blockers:**');
+    for (const blocker of run.doneGate.openBlockers) lines.push(`  - (${blocker.code}) ${blocker.message}`);
+  }
+  lines.push('', '## Verifications', '');
+  if (run.verifications.length === 0) lines.push('_None recorded._');
+  for (const v of run.verifications) {
+    lines.push(`- [${v.status}] ${v.command ? `\`${v.command}\` ` : ''}${v.summary ?? ''} (${v.createdAt})`);
+  }
+  lines.push('', '## Sign-offs', '');
+  if (run.signoffs.length === 0) lines.push('_None recorded._');
+  for (const s of run.signoffs) {
+    lines.push(`- ${s.roleName} (${s.roleId}) — ${s.stale ? `stale: ${s.staleReason ?? ''}` : 'fresh'} (${s.createdAt})`);
+  }
+  lines.push('', '## Transcript', '');
+  for (const m of run.messages) {
+    const to = m.to ? ` → ${m.to}` : '';
+    lines.push(`### #${m.seq} ${m.from}${to} · ${m.kind} · ${m.createdAt}`, '', m.body, '');
+  }
+  return lines.join('\n');
+}
+
+/** A short display name derived from a run goal (mirrors snapshot.deriveRunName). */
+function deriveRunNameFromGoal(goal: string): string {
+  const firstLine = goal.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  if (!firstLine) return 'Team Run';
+  return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+}
+
 function isTerminalStatus(status: TeamRunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'stopped';
 }
@@ -2154,11 +2913,6 @@ async function atomicWrite(file: string, body: string): Promise<void> {
 function messageFromUnknown(err: unknown): string {
   if (err instanceof Error) return err.message || err.name;
   return String(err);
-}
-
-/** The CLI terminal id for a role turn — must match the runner's own derivation. */
-function teamTerminalId(runId: string, turnId: string): string {
-  return `team-${runId}-${turnId}`.replace(/[^a-zA-Z0-9._-]/g, '-');
 }
 
 /**

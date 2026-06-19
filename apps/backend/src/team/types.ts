@@ -246,12 +246,29 @@ export interface VerificationRecord {
   createdAt: string;
 }
 
+/** A single open completion gate, with a stable machine code and a human reason. */
+export interface DoneGateBlocker {
+  /**
+   * Machine-readable gate identifier (mirrors `completion.ts`'s `CompletionBlockerCode`
+   * plus the synthetic `board_pending` for the team's per-role file task board). The UI
+   * may switch on this; the prose is in `message`.
+   */
+  code: string;
+  /** Clear English explanation of why this gate holds the run open. */
+  message: string;
+}
+
 /**
- * The done-gate: a run completes only when every role required for sign-off has
- * declared its work done. This snapshot tracks progress toward that gate.
+ * The done-gate: a run completes only when EVERY completion condition is met —
+ * every required role has signed off, verification passed, no steering is pending,
+ * the task/finding queues are clear, and no blocker is open. This snapshot tracks
+ * progress toward that gate and lists exactly what is still open.
  */
 export interface DoneGateState {
-  /** Whether the gate is currently satisfied (all required roles signed off). */
+  /**
+   * Whether the FULL completion gate is satisfied (not merely the sign-off sub-gate):
+   * true iff `openBlockers` is empty. The run can complete only when this is true.
+   */
   satisfied: boolean;
   /** Role ids whose sign-off is required. */
   requiredRoleIds: string[];
@@ -259,6 +276,12 @@ export interface DoneGateState {
   signedOffRoleIds: string[];
   /** Required roles still pending sign-off. */
   pendingRoleIds: string[];
+  /**
+   * Every gate still holding the run open (tasks, findings, verification, steering,
+   * sign-offs, board), in a stable evaluation order. Empty iff `satisfied`. The UI
+   * renders this so the user can see exactly WHY a run is not done.
+   */
+  openBlockers: DoneGateBlocker[];
   /** ISO-8601 timestamp of the last evaluation. */
   evaluatedAt?: string;
 }
@@ -350,6 +373,81 @@ export interface RoleSnapshot {
 }
 
 /**
+ * Full turn-lifecycle status the engine tracks (wider than {@link TeamTurnStatus}, which is the
+ * pipeline turn vocabulary): a team turn may also end blocked/stopped/interrupted.
+ */
+export type TeamTurnSnapshotStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'stopped'
+  | 'interrupted';
+
+/** A compact per-turn record for the UI snapshot (the run's turn history). */
+export interface TeamTurnSnapshot {
+  id: string;
+  roleId: string;
+  roleName: string;
+  status: TeamTurnSnapshotStatus;
+  round: number;
+  startedAt: string;
+  endedAt?: string;
+  reason?: string;
+  /** Terminal id this turn ran on (open it to review the CLI scrollback). */
+  terminalId?: string;
+  /** Provider/CLI tool this turn ran on (for cost/duration attribution). */
+  provider?: AgentType;
+  /** Wall-clock duration of this turn in ms (when both start/end are known). */
+  durationMs?: number;
+}
+
+/** A compact verification record for the UI snapshot. */
+export interface TeamVerificationSnapshot {
+  id: string;
+  roleId?: string;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+  command?: string;
+  exitCode?: number;
+  summary?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+/** A compact sign-off record for the UI snapshot. */
+export interface TeamSignoffSnapshot {
+  id: string;
+  roleId: string;
+  roleName: string;
+  createdAt: string;
+  stale: boolean;
+  staleReason?: string;
+}
+
+/** Per-role and per-run cost/duration metrics for the UI snapshot. */
+export interface TeamMetrics {
+  /** Total wall-clock duration of the run so far, in ms. */
+  durationMs: number;
+  /** Total role turns executed. */
+  turnCount: number;
+  /** Per-role rollup of turns, duration, and provider. */
+  perRole: {
+    roleId: string;
+    roleName: string;
+    provider?: AgentType;
+    turnCount: number;
+    durationMs: number;
+  }[];
+  /**
+   * Token/cost totals when the execution model exposes them; null today (the CLIs
+   * are driven as interactive PTYs and do not self-report usage). Extension point.
+   */
+  tokens?: number | null;
+  cost?: number | null;
+}
+
+/**
  * Compact, serializable snapshot of a run for the UI. Excludes the full
  * conversation (streamed over WS) and heavy fields; reuses the orchestrator's
  * `TaskSummary`/`FindingsSummary` so task and review progress render consistently.
@@ -371,6 +469,14 @@ export interface TeamRunState {
   tasks?: TaskSummary | null;
   /** Optional review findings summary (reused from the orchestrator). */
   findings?: FindingsSummary | null;
+  /** The run's turn history (compact). */
+  turns?: TeamTurnSnapshot[];
+  /** The run's verification records (compact). */
+  verifications?: TeamVerificationSnapshot[];
+  /** The run's sign-off records (compact). */
+  signoffs?: TeamSignoffSnapshot[];
+  /** Per-role and per-run duration/provider (and token/cost when available) metrics. */
+  metrics?: TeamMetrics;
   /** Total turns executed so far (UI loop counter). */
   turnCount?: number;
   /** Current coordination round (UI loop counter). */
@@ -442,10 +548,24 @@ export interface TeamTemplatesResponse {
   roles: RoleTemplate[];
 }
 
-/** WS server→client events for a live team run. */
+/** Payload of the `changes`/`artifact` event: the run's git changeset summary. */
+export interface TeamChangesEvent {
+  isGitRepo: boolean;
+  head: string | null;
+  branch: string | null;
+  summary: { files: number; insertions: number; deletions: number };
+  generatedAt: string;
+}
+
+/**
+ * WS server→client events for a live team run. The orchestrator emits each of these
+ * via its EventEmitter; the WS layer fans them out as `team.<type>` frames. Payload
+ * shapes here are the contract the frontend binds to.
+ */
 export type TeamEvent =
   | { type: 'message'; runId: string; message: TeamMessage }
   | { type: 'state'; runId: string; state: TeamRunState }
   | { type: 'role'; runId: string; role: RoleSnapshot }
   | { type: 'steering'; runId: string; directive: SteeringDirective }
-  | { type: 'done'; runId: string; gate: DoneGateState };
+  | { type: 'done'; runId: string; gate: DoneGateState }
+  | { type: 'changes'; runId: string; changes: TeamChangesEvent };

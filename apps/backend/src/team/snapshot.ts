@@ -9,10 +9,12 @@
 // frontend never has to know about the engine's internals.
 // ---------------------------------------------------------------------------
 
-import type {
-  TeamRunState as EngineTeamRunState,
-  TeamRoleInstance as EngineRole,
-  TeamRoleStatus as EngineRoleStatus,
+import {
+  TeamOrchestrator,
+  computeRunMetrics,
+  type TeamRunState as EngineTeamRunState,
+  type TeamRoleInstance as EngineRole,
+  type TeamRoleStatus as EngineRoleStatus,
 } from './TeamOrchestrator.js';
 import type {
   DoneGateState,
@@ -21,6 +23,9 @@ import type {
   SteeringDirective,
   TeamMessage,
   TeamRunState,
+  TeamSignoffSnapshot,
+  TeamTurnSnapshot,
+  TeamVerificationSnapshot,
 } from './types.js';
 
 /** Map the engine's coarse role status onto the UI role-status vocabulary. */
@@ -53,7 +58,7 @@ function isRoleSignedOff(state: EngineTeamRunState, roleId: string): boolean {
   return state.signoffs.some((signoff) => signoff.roleId === roleId && !signoff.stale);
 }
 
-function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): RoleSnapshot {
+export function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): RoleSnapshot {
   return {
     id: role.id,
     name: role.name,
@@ -62,24 +67,64 @@ function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): RoleSnapsh
     canWriteCode: role.canWriteCode,
     requiredForSignoff: role.requiredForSignoff,
     signedOff: isRoleSignedOff(state, role.id),
-    statusNote: role.status === 'blocked' ? role.name : undefined,
+    statusNote: role.statusNote ?? (role.status === 'blocked' ? role.name : undefined),
     terminalId: role.activeTerminalId,
     turnCount: state.turns.filter((turn) => turn.roleId === role.id).length,
     tasks: role.taskCounts,
   };
 }
 
-/** Compute the done-gate snapshot the UI renders as the completion progress bar. */
+/**
+ * Compute the done-gate snapshot the UI renders. This is the AUTHORITATIVE full completion
+ * gate (every required role signed off AND verification passed AND no pending steering AND
+ * task/finding queues clear AND the per-role board clear AND no open blockers), with the exact
+ * list of open blockers — delegated to {@link TeamOrchestrator.computeDoneGate} so the snapshot
+ * and the run loop agree on a single definition of "done".
+ */
 export function computeDoneGate(state: EngineTeamRunState): DoneGateState {
-  const requiredRoleIds = state.roles.filter((role) => role.requiredForSignoff).map((role) => role.id);
-  const signedOffRoleIds = requiredRoleIds.filter((id) => isRoleSignedOff(state, id));
-  const pendingRoleIds = requiredRoleIds.filter((id) => !signedOffRoleIds.includes(id));
+  return TeamOrchestrator.computeDoneGate(state);
+}
+
+function toTurnSnapshot(turn: EngineTeamRunState['turns'][number], role: EngineRole | undefined): TeamTurnSnapshot {
+  const start = Date.parse(turn.startedAt);
+  const end = turn.endedAt ? Date.parse(turn.endedAt) : NaN;
+  const durationMs = Number.isNaN(start) || Number.isNaN(end) ? undefined : Math.max(0, end - start);
   return {
-    satisfied: requiredRoleIds.length > 0 && pendingRoleIds.length === 0,
-    requiredRoleIds,
-    signedOffRoleIds,
-    pendingRoleIds,
-    evaluatedAt: state.materialChangeAt,
+    id: turn.id,
+    roleId: turn.roleId,
+    roleName: turn.roleName,
+    status: turn.status,
+    round: turn.round,
+    startedAt: turn.startedAt,
+    endedAt: turn.endedAt,
+    reason: turn.reason,
+    terminalId: turn.terminalId,
+    provider: role?.tool,
+    durationMs,
+  };
+}
+
+function toVerificationSnapshot(v: EngineTeamRunState['verifications'][number]): TeamVerificationSnapshot {
+  return {
+    id: v.id,
+    roleId: v.roleId,
+    status: v.status,
+    command: v.command,
+    exitCode: v.exitCode,
+    summary: v.summary,
+    createdAt: v.createdAt,
+    completedAt: v.completedAt,
+  };
+}
+
+function toSignoffSnapshot(s: EngineTeamRunState['signoffs'][number]): TeamSignoffSnapshot {
+  return {
+    id: s.id,
+    roleId: s.roleId,
+    roleName: s.roleName,
+    createdAt: s.createdAt,
+    stale: s.stale,
+    staleReason: s.staleReason,
   };
 }
 
@@ -116,6 +161,10 @@ export function toTeamRunStateDto(
     pendingSteering: toPendingSteering(state),
     tasks: state.tasks,
     findings: state.findings,
+    turns: state.turns.map((turn) => toTurnSnapshot(turn, state.roles.find((role) => role.id === turn.roleId))),
+    verifications: state.verifications.map(toVerificationSnapshot),
+    signoffs: state.signoffs.map(toSignoffSnapshot),
+    metrics: computeRunMetrics(state),
     turnCount: state.turnCount,
     round: state.round,
     message: state.message,

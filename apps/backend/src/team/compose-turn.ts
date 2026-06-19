@@ -220,7 +220,20 @@ Optional task directive block:
 }
 \`\`\`
 
-Allowed task directive actions are: claim, complete, block, request_review, needs_work.
+Allowed task directive actions are: claim, complete, block, request_review, needs_work. These actually drive the task board: \`complete\` files the task done, \`block\`/\`needs_work\` return it to the queue for rework, \`request_review\` routes it to the Lead, and \`claim\` takes a queued task.
+
+Optional verification directive block — emit this when you actually ran a build/test/check, so the result is recorded as objective evidence (preferred over describing it in prose):
+
+\`\`\`VerificationDirective
+{
+  "command": "npm test",
+  "exitCode": 0,
+  "outcome": "passed",
+  "summary": "Unit suite: 312 passed, 0 failed."
+}
+\`\`\`
+
+Allowed verification outcomes are: passed, failed, inconclusive. Report \`passed\` ONLY when the command actually succeeded (e.g. exit code 0) — this is what lets the run satisfy its "objective checks passed" gate.
 
 Optional sign-off directive block:
 

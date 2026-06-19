@@ -223,10 +223,13 @@ export function evaluateCompletion(input: CompletionInput): CompletionResult {
  */
 export function toDoneGateState(result: CompletionResult, evaluatedAt?: string): DoneGateState {
   return {
-    satisfied: result.requiredRoleIds.length > 0 && result.pendingRoleIds.length === 0,
+    // `satisfied` here reflects the FULL gate: it is the same as `complete` (no open
+    // blockers), so the sign-off sub-gate alone can never report the run as done.
+    satisfied: result.complete,
     requiredRoleIds: result.requiredRoleIds,
     signedOffRoleIds: result.freshSignoffRoleIds,
     pendingRoleIds: result.pendingRoleIds,
+    openBlockers: result.blockers.map((blocker) => ({ code: blocker.code, message: blocker.message })),
     evaluatedAt,
   };
 }
