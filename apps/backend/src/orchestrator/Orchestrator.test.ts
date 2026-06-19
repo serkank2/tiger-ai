@@ -126,12 +126,16 @@ function zeroAgentConfig(orch: Orchestrator): StageRunConfig {
   return {
     claudeAgents: 0,
     codexAgents: 0,
+    antigravityAgents: 0,
     claudeModel: d.claudeModel,
     codexModel: d.codexModel,
+    antigravityModel: d.antigravityModel,
     claudeEffort: d.claudeEffort,
     codexEffort: d.codexEffort,
+    antigravityEffort: d.antigravityEffort,
     claudePermission: d.claudePermission,
     codexPermission: d.codexPermission,
+    antigravityPermission: d.antigravityPermission,
     parallel: d.parallel,
     mergeAgent: 'codex',
   };
@@ -471,12 +475,16 @@ function fakeAgentConfig(orch: Orchestrator): StageRunConfig {
   return {
     claudeAgents: 0,
     codexAgents: 1,
+    antigravityAgents: 0,
     claudeModel: d.claudeModel,
     codexModel: 'fake',
+    antigravityModel: d.antigravityModel,
     claudeEffort: d.claudeEffort,
     codexEffort: '',
+    antigravityEffort: '',
     claudePermission: d.claudePermission,
     codexPermission: 'test',
+    antigravityPermission: d.antigravityPermission,
     parallel: false,
     mergeAgent: 'codex',
   };

@@ -38,7 +38,9 @@ function replaceStageConfigs(next: Partial<Record<TigerStageId, TigerStageRunCon
 function stageSummary(id: TigerStageId): string {
   const cfg = stageConfigs[id];
   if (id === 'merge-tasks') return `merge: ${cfg.mergeAgent ?? 'claude'}`;
-  return `${cfg.claudeAgents} Claude, ${cfg.codexAgents} Codex`;
+  const parts = [`${cfg.claudeAgents} Claude`, `${cfg.codexAgents} Codex`];
+  if (cfg.antigravityAgents > 0) parts.push(`${cfg.antigravityAgents} Antigravity`);
+  return parts.join(', ');
 }
 
 function ensureSelection() {

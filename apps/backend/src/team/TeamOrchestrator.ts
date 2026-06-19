@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { AgentType, FindingsSummary, TaskSummary, TigerConfig } from '../orchestrator/types.js';
+import { toAgentTypeOr } from '../orchestrator/types.js';
 import {
   SYSTEM_SENDER,
   USER_SENDER,
@@ -1810,7 +1811,7 @@ function normalizeRoles(roles: Omit<Partial<TeamRoleInstance>, 'status'>[]): Tea
       id: cleanId(role.id) || cleanId(name) || `role-${index + 1}`,
       name,
       templateId: role.templateId,
-      tool: role.tool === 'claude' ? 'claude' : 'codex',
+      tool: toAgentTypeOr(role.tool, 'claude'),
       model: role.model,
       effort: role.effort,
       permission: role.permission,

@@ -31,6 +31,7 @@ import { artifactsFile } from '../team/message-bus.js';
 import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
+import { toAgentTypeOr } from '../orchestrator/types.js';
 
 /** Number of conversation messages seeded into a `/state` snapshot. */
 const RECENT_MESSAGES = 50;
@@ -107,7 +108,7 @@ function roleFromTemplate(role: RoleTemplate, templateId?: string): EngineRoleSe
 function roleFromInput(raw: unknown, index: number): EngineRoleSeed {
   const r = (raw ?? {}) as Record<string, unknown>;
   const name = asString(r.name).trim() || `Role ${index + 1}`;
-  const tool = (r.tool === 'claude' ? 'claude' : 'codex') as AgentType;
+  const tool: AgentType = toAgentTypeOr(r.tool, 'codex');
   return {
     id: slug(asString(r.id)) || slug(name) || `role-${index + 1}`,
     templateId: asString(r.templateId) || undefined,

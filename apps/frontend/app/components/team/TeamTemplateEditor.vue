@@ -13,15 +13,20 @@ const emit = defineEmits<{ saved: [TeamTemplate]; close: [] }>();
 const team = useTeamStore();
 const tiger = useTigerStore();
 
-// Efforts the CLIs accept, per tool ('' = use the CLI default).
+// Efforts the CLIs accept, per tool ('' = use the CLI default). Antigravity has no effort flag.
 const EFFORTS_BY_TOOL: Record<TeamAgentType, string[]> = {
   claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
   codex: ['', 'low', 'medium', 'high', 'xhigh'],
+  antigravity: [''],
 };
 // Default autonomous, write-capable permission per tool. Every team role needs to write
 // its own turn deliverable and must not stall on an approval prompt, so this is the safe
 // default; whether a role edits project source is governed by its persona, not the sandbox.
-const AUTONOMOUS_PERM: Record<TeamAgentType, string> = { claude: 'acceptEdits', codex: 'workspace-write' };
+const AUTONOMOUS_PERM: Record<TeamAgentType, string> = {
+  claude: 'acceptEdits',
+  codex: 'workspace-write',
+  antigravity: 'dangerous',
+};
 
 interface EditableRole {
   id: string;
@@ -198,6 +203,7 @@ async function save() {
             <select v-model="role.tool" @change="onToolChange(role)">
               <option value="claude">claude</option>
               <option value="codex">codex</option>
+              <option value="antigravity">antigravity</option>
             </select>
           </label>
           <label class="mini">

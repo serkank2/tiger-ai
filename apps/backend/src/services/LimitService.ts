@@ -155,6 +155,7 @@ export class LimitService extends EventEmitter {
       providers: {
         claude: providerStatus('claude', latest),
         codex: providerStatus('codex', latest),
+        antigravity: providerStatus('antigravity', latest),
       },
       rules: limits.rules,
       decision: evaluateLimitRules(limits.snapshots, limits.rules, { now, staleAfterMs: this.staleAfterMs }),
@@ -196,7 +197,7 @@ export class LimitService extends EventEmitter {
         checkedAt: latestAny?.checkedAt ?? new Date(0).toISOString(),
       };
     };
-    return { claude: makeProbe('claude'), codex: makeProbe('codex') };
+    return { claude: makeProbe('claude'), codex: makeProbe('codex'), antigravity: makeProbe('antigravity') };
   }
 
   private async refreshInner(): Promise<LimitStatus> {
@@ -209,6 +210,7 @@ export class LimitService extends EventEmitter {
       probes = {
         claude: failedProbe('claude', message, checkedAt),
         codex: failedProbe('codex', message, checkedAt),
+        antigravity: failedProbe('antigravity', message, checkedAt),
       };
     }
 

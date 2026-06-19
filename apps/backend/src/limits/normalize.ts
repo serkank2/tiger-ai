@@ -114,5 +114,9 @@ export function normalizeUsageProbes(
   probes: Record<LimitProvider, UsageProbe>,
   options: NormalizeOptions = {},
 ): LimitSnapshot[] {
-  return [...normalizeUsageProbe(probes.claude, options), ...normalizeUsageProbe(probes.codex, options)];
+  return [
+    ...normalizeUsageProbe(probes.claude, options),
+    ...normalizeUsageProbe(probes.codex, options),
+    ...normalizeUsageProbe(probes.antigravity, options),
+  ];
 }

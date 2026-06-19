@@ -41,7 +41,7 @@ const ruleDraft = reactive({
 });
 const editingRuleId = ref<string | null>(null);
 
-const ruleProviders: QueueRuleProvider[] = ['claude', 'codex', 'mixed', 'any'];
+const ruleProviders: QueueRuleProvider[] = ['claude', 'codex', 'antigravity', 'mixed', 'any'];
 const ruleOperators: QueueRuleOperator[] = ['gte', 'gt', 'lte', 'lt', 'eq'];
 
 let clock: ReturnType<typeof setInterval> | null = null;
@@ -117,6 +117,7 @@ function statusLabel(status: QueueJobStatus | QueueStepStatus): string {
 
 function providerLabel(provider: QueueProvider): string {
   if (provider === 'codex') return 'Codex';
+  if (provider === 'antigravity') return 'Antigravity';
   if (provider === 'mixed') return 'Mixed';
   return 'Claude';
 }
@@ -425,6 +426,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 <select v-model="draft.provider" data-testid="enqueue-provider">
                   <option value="claude">Claude</option>
                   <option value="codex">Codex</option>
+                  <option value="antigravity">Antigravity</option>
                   <option value="mixed">Mixed</option>
                 </select>
               </label>

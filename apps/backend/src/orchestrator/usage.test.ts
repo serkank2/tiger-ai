@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseEntries } from './usage.js';
+import { parseEntries, probeUsage } from './usage.js';
+import type { TerminalManager } from '../terminal/TerminalManager.js';
 
 // Fixtures mirror the real (ANSI-stripped) panels captured from claude /usage and codex /status,
 // including the fragmented line-wrapping and TUI noise the scraper produces.
@@ -74,4 +75,23 @@ test('parseEntries extracts Codex limits (percent left) ignoring /status noise',
 test('parseEntries de-duplicates identical figures', () => {
   const dup = `5h limit:\n97% left\n5h limit:\n97% left`;
   assert.equal(parseEntries(dup).length, 1);
+});
+
+test('probeUsage reports Antigravity as an explicit unsupported probe without launching agy', () => {
+  // The manager must never be touched — antigravity has no usage command, so the probe short-circuits.
+  const trap = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error('probeUsage must not launch agy for the antigravity provider');
+      },
+    },
+  ) as unknown as TerminalManager;
+
+  return probeUsage(trap, 'antigravity').then((probe) => {
+    assert.equal(probe.type, 'antigravity');
+    assert.equal(probe.ok, false);
+    assert.equal(probe.entries.length, 0);
+    assert.match(probe.error ?? '', /no usage\/limit command/i);
+  });
 });

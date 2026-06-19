@@ -1,8 +1,15 @@
-import { TIGER_CLAUDE_EFFORTS, TIGER_CODEX_EFFORTS } from '../orchestrator/config.js';
-import type { AgentType, TigerConfig } from '../orchestrator/types.js';
+import { TIGER_ANTIGRAVITY_EFFORTS, TIGER_CLAUDE_EFFORTS, TIGER_CODEX_EFFORTS } from '../orchestrator/config.js';
+import { AGENT_TYPES, type AgentType, type TigerConfig } from '../orchestrator/types.js';
 
 /** The CLI tools a role may use. Mirrors the orchestrator `AgentType` union. */
-const AGENT_TOOLS: readonly string[] = ['claude', 'codex'];
+const AGENT_TOOLS: readonly string[] = AGENT_TYPES;
+
+/** Valid reasoning-effort values per provider ('' = use the CLI default). */
+const EFFORTS_BY_TOOL: Record<AgentType, readonly string[]> = {
+  claude: TIGER_CLAUDE_EFFORTS,
+  codex: TIGER_CODEX_EFFORTS,
+  antigravity: TIGER_ANTIGRAVITY_EFFORTS,
+};
 
 /**
  * The subset of a role definition this validator inspects. `RoleConfigInput`
@@ -48,7 +55,7 @@ export function validateRoleConfig(role: ValidatableRole, config: TigerConfig): 
   }
 
   // Effort: '' means "use the CLI default"; otherwise it must be valid for the tool.
-  const efforts: readonly string[] = tool === 'claude' ? TIGER_CLAUDE_EFFORTS : TIGER_CODEX_EFFORTS;
+  const efforts: readonly string[] = EFFORTS_BY_TOOL[tool];
   if (typeof role.effort !== 'string' || !efforts.includes(role.effort)) {
     return `role "${role.name}" effort "${role.effort}" is not a valid ${tool} effort`;
   }

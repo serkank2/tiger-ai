@@ -14,6 +14,8 @@ const AGENT_COUNT_MIN = 0;
 const AGENT_COUNT_MAX = 8;
 const CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
+// Antigravity (`agy`) has no reasoning-effort flag; only the CLI default ('') is valid.
+const ANTIGRAVITY_EFFORTS = [''];
 
 const EFFORT_LABEL: Record<string, string> = {
   '': 'Default',
@@ -28,15 +30,17 @@ const effortLabel = (e: string) => EFFORT_LABEL[e] ?? e;
 // Model dropdown options come from config (editable in tiger/config.json), with '' = CLI default.
 const claudeModels = computed(() => ['', ...(props.config.cli.claude.models ?? ['opus', 'sonnet', 'haiku', 'fable'])]);
 const codexModels = computed(() => ['', ...(props.config.cli.codex.models ?? ['gpt-5.5', 'gpt-5-codex', 'gpt-5', 'o3', 'o4-mini'])]);
+const antigravityModels = computed(() => ['', ...(props.config.cli.antigravity?.models ?? [])]);
 
 const claudePerms = computed(() => Object.keys(props.config.cli.claude.permissionModes));
 const codexPerms = computed(() => Object.keys(props.config.cli.codex.permissionModes));
+const antigravityPerms = computed(() => Object.keys(props.config.cli.antigravity?.permissionModes ?? {}));
 
 function clampAgentCount(value: unknown): number {
   return Math.min(AGENT_COUNT_MAX, Math.max(AGENT_COUNT_MIN, Number.isInteger(value) ? Number(value) : AGENT_COUNT_MIN));
 }
 
-function setAgentCount(field: 'claudeAgents' | 'codexAgents', value: unknown) {
+function setAgentCount(field: 'claudeAgents' | 'codexAgents' | 'antigravityAgents', value: unknown) {
   props.cfg[field] = clampAgentCount(value);
 }
 
@@ -84,15 +88,38 @@ watch(
   },
   { immediate: true },
 );
+watch(
+  () => props.cfg.antigravityAgents,
+  (value) => {
+    const next = clampAgentCount(value);
+    if (value !== next) props.cfg.antigravityAgents = next;
+  },
+  { immediate: true },
+);
+watch(
+  () => [props.cfg.antigravityModel, antigravityModels.value.join('\0')],
+  ([model]) => {
+    if (!antigravityModels.value.includes(model ?? '')) props.cfg.antigravityModel = '';
+  },
+  { immediate: true },
+);
+watch(
+  () => props.cfg.antigravityEffort,
+  (effort) => {
+    if (!ANTIGRAVITY_EFFORTS.includes(effort)) props.cfg.antigravityEffort = '';
+  },
+  { immediate: true },
+);
 
 function isDangerous(type: TigerAgentType, perm: string): boolean {
-  const args = props.config.cli[type].permissionModes[perm] ?? [];
+  const args = props.config.cli[type]?.permissionModes[perm] ?? [];
   return args.some(
     (a) => a === '--dangerously-skip-permissions' || a === '--dangerously-bypass-approvals-and-sandbox',
   );
 }
 const claudeDanger = computed(() => isDangerous('claude', props.cfg.claudePermission));
 const codexDanger = computed(() => isDangerous('codex', props.cfg.codexPermission));
+const antigravityDanger = computed(() => isDangerous('antigravity', props.cfg.antigravityPermission));
 
 const PERM_LABEL: Record<string, string> = {
   default: 'Normal (asks)',
@@ -102,6 +129,7 @@ const PERM_LABEL: Record<string, string> = {
   'read-only': 'Read-only',
   'workspace-write': 'Workspace write (auto)',
   yolo: 'Full access (YOLO)',
+  sandbox: 'Sandbox (terminal restricted)',
 };
 const permLabel = (k: string) => PERM_LABEL[k] ?? k;
 </script>
@@ -117,6 +145,7 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
           <select v-model="cfg.mergeAgent" :disabled="disabled">
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            <option value="antigravity">Antigravity</option>
           </select>
         </label>
         <template v-if="cfg.mergeAgent === 'codex'">
@@ -136,6 +165,20 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
             <span>Codex permission</span>
             <select v-model="cfg.codexPermission" :disabled="disabled">
               <option v-for="p in codexPerms" :key="p" :value="p">{{ permLabel(p) }}</option>
+            </select>
+          </label>
+        </template>
+        <template v-else-if="cfg.mergeAgent === 'antigravity'">
+          <label class="field">
+            <span>Antigravity model</span>
+            <select v-model="cfg.antigravityModel" :disabled="disabled">
+              <option v-for="m in antigravityModels" :key="m" :value="m">{{ m || 'default' }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Antigravity permission</span>
+            <select v-model="cfg.antigravityPermission" :disabled="disabled">
+              <option v-for="p in antigravityPerms" :key="p" :value="p">{{ permLabel(p) }}</option>
             </select>
           </label>
         </template>
@@ -160,7 +203,10 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
           </label>
         </template>
       </div>
-      <p v-if="(cfg.mergeAgent === 'codex' ? codexDanger : claudeDanger)" class="danger">
+      <p
+        v-if="cfg.mergeAgent === 'codex' ? codexDanger : cfg.mergeAgent === 'antigravity' ? antigravityDanger : claudeDanger"
+        class="danger"
+      >
         ⚠ Full-access mode bypasses all safety checks for this agent. Use only when you trust the task.
       </p>
     </template>
@@ -241,6 +287,37 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
           </label>
           <p v-if="codexDanger" class="danger">⚠ YOLO bypasses sandbox + approval checks.</p>
         </fieldset>
+
+        <fieldset>
+          <legend>Antigravity agents</legend>
+          <div class="field count-field">
+            <span>Count <b class="count-badge">{{ cfg.antigravityAgents }}</b></span>
+            <input
+              class="slider"
+              type="range"
+              :min="AGENT_COUNT_MIN"
+              :max="AGENT_COUNT_MAX"
+              step="1"
+              :value="cfg.antigravityAgents"
+              :disabled="disabled"
+              @input="setAgentCount('antigravityAgents', Number(($event.target as HTMLInputElement).value))"
+            />
+            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
+          </div>
+          <label class="field">
+            <span>Model</span>
+            <select v-model="cfg.antigravityModel" :disabled="disabled">
+              <option v-for="m in antigravityModels" :key="m" :value="m">{{ m || 'default' }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Permission</span>
+            <select v-model="cfg.antigravityPermission" :disabled="disabled">
+              <option v-for="p in antigravityPerms" :key="p" :value="p">{{ permLabel(p) }}</option>
+            </select>
+          </label>
+          <p v-if="antigravityDanger" class="danger">⚠ Full access skips all permission prompts.</p>
+        </fieldset>
       </div>
 
       <label class="parallel">
@@ -263,7 +340,7 @@ const permLabel = (k: string) => PERM_LABEL[k] ?? k;
 }
 .cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
 }
 fieldset {

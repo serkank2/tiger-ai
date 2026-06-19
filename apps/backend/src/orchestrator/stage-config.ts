@@ -1,10 +1,11 @@
 import {
   TIGER_AGENT_COUNT_MAX,
   TIGER_AGENT_COUNT_MIN,
+  TIGER_ANTIGRAVITY_EFFORTS,
   TIGER_CLAUDE_EFFORTS,
   TIGER_CODEX_EFFORTS,
 } from './config.js';
-import { STAGE_ORDER, type AgentType, type StageId, type StageRunConfig, type TigerConfig } from './types.js';
+import { STAGE_ORDER, isAgentType, type AgentType, type StageId, type StageRunConfig, type TigerConfig } from './types.js';
 
 export function configInputError(message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -17,7 +18,7 @@ function toStr(v: unknown, fallback: string): string {
 }
 
 function toAgentType(v: unknown): AgentType | undefined {
-  return v === 'claude' || v === 'codex' ? v : undefined;
+  return isAgentType(v) ? v : undefined;
 }
 
 export function isStage(v: string): v is StageId {
@@ -58,12 +59,21 @@ export function buildStageConfig(config: TigerConfig, body: Record<string, unkno
   const cfg: StageRunConfig = {
     claudeAgents: toAgentCount(body.claudeAgents, d.claudeAgents, `${prefix}claudeAgents`),
     codexAgents: toAgentCount(body.codexAgents, d.codexAgents, `${prefix}codexAgents`),
+    antigravityAgents: toAgentCount(body.antigravityAgents, d.antigravityAgents, `${prefix}antigravityAgents`),
     claudeModel: toModel(body.claudeModel, d.claudeModel, cli.claude.models, `${prefix}claudeModel`),
     codexModel: toModel(body.codexModel, d.codexModel, cli.codex.models, `${prefix}codexModel`),
+    antigravityModel: toModel(body.antigravityModel, d.antigravityModel, cli.antigravity.models, `${prefix}antigravityModel`),
     claudeEffort: toEffort(body.claudeEffort, d.claudeEffort, TIGER_CLAUDE_EFFORTS, `${prefix}claudeEffort`),
     codexEffort: toEffort(body.codexEffort, d.codexEffort, TIGER_CODEX_EFFORTS, `${prefix}codexEffort`),
+    antigravityEffort: toEffort(
+      body.antigravityEffort,
+      d.antigravityEffort,
+      TIGER_ANTIGRAVITY_EFFORTS,
+      `${prefix}antigravityEffort`,
+    ),
     claudePermission: toStr(body.claudePermission, d.claudePermission),
     codexPermission: toStr(body.codexPermission, d.codexPermission),
+    antigravityPermission: toStr(body.antigravityPermission, d.antigravityPermission),
     parallel: typeof body.parallel === 'boolean' ? body.parallel : d.parallel,
     mergeAgent: toAgentType(body.mergeAgent),
   };
@@ -73,8 +83,13 @@ export function buildStageConfig(config: TigerConfig, body: Record<string, unkno
   if (!cli.codex.permissionModes[cfg.codexPermission]) {
     throw configInputError(`unknown ${prefix}codex permission mode: ${cfg.codexPermission}`);
   }
-  if (cfg.claudeAgents === 0 && cfg.codexAgents === 0) {
-    throw configInputError(`${prefix}claudeAgents and codexAgents cannot both be 0 — at least one agent is required`);
+  if (!cli.antigravity.permissionModes[cfg.antigravityPermission]) {
+    throw configInputError(`unknown ${prefix}antigravity permission mode: ${cfg.antigravityPermission}`);
+  }
+  if (cfg.claudeAgents === 0 && cfg.codexAgents === 0 && cfg.antigravityAgents === 0) {
+    throw configInputError(
+      `${prefix}claudeAgents, codexAgents and antigravityAgents cannot all be 0 — at least one agent is required`,
+    );
   }
   return cfg;
 }

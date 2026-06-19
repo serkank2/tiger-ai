@@ -19,13 +19,18 @@ export async function logStageStart(file: string, stage: StageId, cfg: StageRunC
   const title = STAGE_META[stage].title;
   const lines = [`\n## [${now()}] Stage: ${title} — START`];
   if (STAGE_META[stage].singleAgent) {
-    lines.push(
-      `- Single agent: ${cfg.mergeAgent ?? 'claude'} (model: ${
-        (cfg.mergeAgent ?? 'claude') === 'claude' ? cfg.claudeModel || 'default' : cfg.codexModel || 'default'
-      })`,
-    );
+    const mergeAgent = cfg.mergeAgent ?? 'claude';
+    const mergeModel =
+      mergeAgent === 'claude'
+        ? cfg.claudeModel
+        : mergeAgent === 'codex'
+          ? cfg.codexModel
+          : cfg.antigravityModel;
+    lines.push(`- Single agent: ${mergeAgent} (model: ${mergeModel || 'default'})`);
   } else {
-    lines.push(`- Agents: ${cfg.claudeAgents} claude, ${cfg.codexAgents} codex`);
+    const counts = [`${cfg.claudeAgents} claude`, `${cfg.codexAgents} codex`];
+    if (cfg.antigravityAgents > 0) counts.push(`${cfg.antigravityAgents} antigravity`);
+    lines.push(`- Agents: ${counts.join(', ')}`);
     lines.push(`- Parallel: ${cfg.parallel ? 'yes' : 'no'}`);
   }
   await append(file, lines.join('\n') + '\n');

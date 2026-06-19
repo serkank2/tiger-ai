@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLaunchCommand, isDangerousPermission } from './launch-command.js';
+import { buildLaunchCommand, isDangerousPermission, shellQuote } from './launch-command.js';
 import { defaultTigerConfig } from './config.js';
 
 const cfg = defaultTigerConfig();
@@ -58,4 +58,57 @@ test('isDangerousPermission flags only the unrestricted modes', () => {
   assert.equal(isDangerousPermission(cfg, 'claude', 'acceptEdits'), false);
   assert.equal(isDangerousPermission(cfg, 'codex', 'yolo'), true);
   assert.equal(isDangerousPermission(cfg, 'codex', 'workspace-write'), false);
+});
+
+test('antigravity quotes a space/parenthesis model label as one argument plus the dangerous flag', () => {
+  const cmd = buildLaunchCommand(cfg, 'antigravity', {
+    model: 'Gemini 3.1 Pro (High)',
+    effort: '',
+    permission: 'dangerous',
+  });
+  assert.equal(cmd, 'agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions');
+});
+
+test('antigravity default permission yields agy with just the quoted model, no perm flags', () => {
+  const cmd = buildLaunchCommand(cfg, 'antigravity', {
+    model: 'Claude Opus 4.6 (Thinking)',
+    effort: '',
+    permission: 'default',
+  });
+  assert.equal(cmd, 'agy --model "Claude Opus 4.6 (Thinking)"');
+});
+
+test('antigravity sandbox permission adds --sandbox', () => {
+  const cmd = buildLaunchCommand(cfg, 'antigravity', { model: '', effort: '', permission: 'sandbox' });
+  assert.equal(cmd, 'agy --sandbox');
+});
+
+test('antigravity ignores effort (no effort flag) even if one is passed', () => {
+  const cmd = buildLaunchCommand(cfg, 'antigravity', {
+    model: 'Gemini 3.5 Flash (Low)',
+    effort: 'high',
+    permission: 'default',
+  });
+  assert.equal(cmd, 'agy --model "Gemini 3.5 Flash (Low)"');
+});
+
+test('isDangerousPermission recognizes the antigravity dangerous mode', () => {
+  assert.equal(isDangerousPermission(cfg, 'antigravity', 'dangerous'), true);
+  assert.equal(isDangerousPermission(cfg, 'antigravity', 'sandbox'), false);
+  assert.equal(isDangerousPermission(cfg, 'antigravity', 'default'), false);
+});
+
+test('shellQuote leaves simple flags/identifiers verbatim and quotes only what needs it', () => {
+  assert.equal(shellQuote('--model'), '--model');
+  assert.equal(shellQuote('gpt-5.5'), 'gpt-5.5');
+  assert.equal(shellQuote('model_reasoning_effort=high'), 'model_reasoning_effort=high');
+  assert.equal(shellQuote('Gemini 3.1 Pro (High)'), '"Gemini 3.1 Pro (High)"');
+});
+
+test('shellQuote escapes an embedded quote/backslash so it cannot terminate the argument', () => {
+  // Defense in depth: even if an unvalidated value reaches the quoter, the embedded quote is
+  // escaped rather than closing the string and injecting further tokens.
+  assert.equal(shellQuote('a"b'), '"a\\"b"');
+  assert.equal(shellQuote('a\\b'), '"a\\\\b"');
+  assert.equal(shellQuote('x" ; rm -rf / #'), '"x\\" ; rm -rf / #"');
 });

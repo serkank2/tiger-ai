@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { getDbPool } from '../db/pool.js';
 import { leaseExpiresAt, ownerKey, type ExecutionOwner } from '../orchestrator/persistence.js';
+import { toAgentTypeOr, type AgentType } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
 // Domain unions
@@ -37,7 +38,7 @@ export type TeamMessageKind =
   | 'system'
   | 'blocker';
 
-export type TeamAgentType = 'claude' | 'codex';
+export type TeamAgentType = AgentType;
 
 /** A run lease is owned the same way an execution run is (`type:id`). */
 export type TeamOwner = ExecutionOwner;
@@ -1243,7 +1244,7 @@ function roleFromRow(row: TeamRoleRow): TeamRoleRecord {
     runId: row.run_id,
     roleKey: row.role_key,
     name: row.name,
-    agentType: row.agent_type === 'codex' ? 'codex' : 'claude',
+    agentType: toAgentTypeOr(row.agent_type, 'claude'),
     model: row.model ?? null,
     effort: row.effort ?? null,
     permission: row.permission ?? null,

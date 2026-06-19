@@ -59,13 +59,30 @@ const form = reactive({
   autostart: props.terminal?.autostart ?? false,
   protected: props.terminal?.protected ?? false,
   // AI CLI quick-start presets — build the initial command (still editable below)
-  aiTool: '' as '' | 'claude' | 'codex',
+  aiTool: '' as '' | 'claude' | 'codex' | 'antigravity',
   aiModel: '',
   aiMode: '',
 });
 
-// Preset options (flags verified against `claude --help` / `codex --help`).
+// Preset options (flags verified against `claude --help` / `codex --help` / `agy -h`).
 const CLAUDE_MODELS = ['', 'opus', 'sonnet', 'haiku', 'fable'];
+// Antigravity models are exact labels from `agy models` (they contain spaces/parentheses).
+const ANTIGRAVITY_MODELS = [
+  '',
+  'Gemini 3.5 Flash (Medium)',
+  'Gemini 3.5 Flash (High)',
+  'Gemini 3.5 Flash (Low)',
+  'Gemini 3.1 Pro (Low)',
+  'Gemini 3.1 Pro (High)',
+  'Claude Sonnet 4.6 (Thinking)',
+  'Claude Opus 4.6 (Thinking)',
+  'GPT-OSS 120B (Medium)',
+];
+const ANTIGRAVITY_MODES: { v: string; label: string }[] = [
+  { v: 'default', label: 'Normal — asks each time' },
+  { v: 'sandbox', label: 'Sandbox (terminal restricted)' },
+  { v: 'full', label: 'Full access (skip all permissions)' },
+];
 const CLAUDE_MODES: { v: string; label: string }[] = [
   { v: 'default', label: 'Normal — asks each time' },
   { v: 'plan', label: 'Plan mode' },
@@ -92,6 +109,14 @@ function buildAiCommand(): string {
     else if (form.aiMode) p.push('--sandbox', form.aiMode);
     return p.join(' ');
   }
+  if (form.aiTool === 'antigravity') {
+    const p = ['agy'];
+    // Antigravity model labels contain spaces/parentheses — double-quote so they pass as one arg.
+    if (form.aiModel.trim()) p.push('--model', `"${form.aiModel.trim()}"`);
+    if (form.aiMode === 'full') p.push('--dangerously-skip-permissions');
+    else if (form.aiMode === 'sandbox') p.push('--sandbox');
+    return p.join(' ');
+  }
   return '';
 }
 function rebuildAi() {
@@ -102,7 +127,12 @@ function rebuildAi() {
 }
 function onToolChange() {
   form.aiModel = '';
-  form.aiMode = form.aiTool === 'codex' ? 'workspace-write' : form.aiTool === 'claude' ? 'default' : '';
+  form.aiMode =
+    form.aiTool === 'codex'
+      ? 'workspace-write'
+      : form.aiTool === 'claude' || form.aiTool === 'antigravity'
+        ? 'default'
+        : '';
   rebuildAi();
 }
 
@@ -295,6 +325,7 @@ async function save() {
             <option value="">— none —</option>
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            <option value="antigravity">Antigravity</option>
           </select>
           <template v-if="form.aiTool === 'claude'">
             <select v-model="form.aiModel" aria-label="Claude model" @change="rebuildAi">
@@ -310,9 +341,18 @@ async function save() {
               <option v-for="o in CODEX_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
             </select>
           </template>
+          <template v-else-if="form.aiTool === 'antigravity'">
+            <select v-model="form.aiModel" aria-label="Antigravity model" @change="rebuildAi">
+              <option v-for="m in ANTIGRAVITY_MODELS" :key="m" :value="m">{{ m || 'default model' }}</option>
+            </select>
+            <select v-model="form.aiMode" aria-label="Antigravity permission mode" @change="rebuildAi">
+              <option v-for="o in ANTIGRAVITY_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+            </select>
+          </template>
         </div>
         <p v-if="form.aiMode === 'full'" class="ai-warn">
-          ⚠ Full access bypasses all {{ form.aiTool === 'claude' ? 'permission prompts' : 'sandbox + approval checks' }}.
+          ⚠ Full access bypasses all
+          {{ form.aiTool === 'codex' ? 'sandbox + approval checks' : 'permission prompts' }}.
         </p>
       </div>
 

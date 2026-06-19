@@ -288,6 +288,39 @@ test('prompt generation does not launch provider work when latest provider probe
   );
 });
 
+test('prompt generation rejects an injectable Antigravity model override before launching', async () => {
+  // Review finding 1: an arbitrary model string with quotes/metacharacters must be rejected before
+  // a launch command is built — it must never reach buildLaunchCommand or spawn a terminal.
+  await withService('marker', async ({ service, launched }) => {
+    await assert.rejects(
+      () => service.start({ inputText: 'draft', agentType: 'antigravity', model: 'Gemini 3.1 Pro" ; rm -rf / #' }),
+      /not a valid antigravity model/i,
+    );
+    await assert.rejects(
+      () => service.start({ inputText: 'draft', agentType: 'antigravity', effort: 'high' }),
+      /not a valid antigravity effort/i,
+    );
+    await assert.rejects(
+      () => service.start({ inputText: 'draft', agentType: 'claude', permission: 'no-such-mode' }),
+      /not a known claude permission mode/i,
+    );
+    assert.equal(launched.count, 0);
+  });
+});
+
+test('prompt generation accepts a valid Antigravity model label override', async () => {
+  await withService('marker', async ({ service, launched }) => {
+    const started = await service.start({
+      inputText: 'draft',
+      agentType: 'antigravity',
+      model: 'Gemini 3.1 Pro (High)',
+    });
+    const done = await waitFor(service, started.id, (generation) => generation.status === 'done');
+    assert.equal(done.model, 'Gemini 3.1 Pro (High)');
+    assert.equal(launched.count, 1);
+  });
+});
+
 test('prompt generation records failed status when the agent produces no output', async () => {
   await withService('missing', async ({ service, history, launched }) => {
     const started = await service.start({ inputText: 'rough draft', agentType: 'claude' });

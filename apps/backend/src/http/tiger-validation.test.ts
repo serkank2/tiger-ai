@@ -277,9 +277,15 @@ test('stage run rejects out-of-range agent counts and unknown model or effort va
       { claudeAgents: -1 },
       { codexAgents: -1 },
       { claudeAgents: 0, codexAgents: 0 },
+      { claudeAgents: 0, codexAgents: 0, antigravityAgents: 0 },
       { claudeAgents: 9 },
       { claudeModel: 'unknown-model' },
       { codexEffort: 'turbo' },
+      // Antigravity-specific rejections.
+      { antigravityAgents: 9 },
+      { antigravityModel: 'Not A Real Model' },
+      { antigravityEffort: 'high' }, // antigravity has no effort flag; only '' is valid
+      { antigravityPermission: 'nope' },
     ];
 
     for (const override of cases) {

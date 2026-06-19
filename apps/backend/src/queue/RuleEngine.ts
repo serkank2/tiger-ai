@@ -1,10 +1,30 @@
-import type { QueueJob, QueueLimitSnapshot, QueueProvider, QueueRule, QueueRuleDecision } from './types.js';
+import type { QueueJobConfigSnapshot, QueueJob, QueueLimitSnapshot, QueueProvider, QueueRule, QueueRuleDecision } from './types.js';
 
 type ConcreteProvider = Exclude<QueueProvider, 'mixed'>;
 
+const ALL_CONCRETE_PROVIDERS: ConcreteProvider[] = ['claude', 'codex', 'antigravity'];
+
+/** The concrete providers a job actually uses, derived from the per-stage agent counts. */
+function concreteProvidersFromSnapshot(snapshot: QueueJobConfigSnapshot | undefined): ConcreteProvider[] {
+  const configs = snapshot?.configs;
+  if (!configs) return [];
+  const used = new Set<ConcreteProvider>();
+  for (const cfg of Object.values(configs)) {
+    if (!cfg) continue;
+    if ((cfg.claudeAgents ?? 0) > 0) used.add('claude');
+    if ((cfg.codexAgents ?? 0) > 0) used.add('codex');
+    if ((cfg.antigravityAgents ?? 0) > 0) used.add('antigravity');
+  }
+  return ALL_CONCRETE_PROVIDERS.filter((provider) => used.has(provider));
+}
+
 function providersFor(job: QueueJob): ConcreteProvider[] {
-  if (job.provider === 'mixed') return ['claude', 'codex'];
-  return [job.provider];
+  if (job.provider !== 'mixed') return [job.provider];
+  // A `mixed` job only spans the concrete providers its config snapshot actually uses, so a
+  // Claude+Codex job (antigravityAgents: 0) is never blocked by a missing Antigravity snapshot.
+  // Fall back to every provider only when the snapshot carries no usable agent counts.
+  const used = concreteProvidersFromSnapshot(job.configSnapshot);
+  return used.length > 0 ? used : ALL_CONCRETE_PROVIDERS;
 }
 
 function providerMatches(ruleProvider: QueueRule['provider'], jobProvider: QueueProvider, concreteProvider: ConcreteProvider): boolean {

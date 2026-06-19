@@ -7,7 +7,7 @@ import { StateLimitGate } from '../limits/gate.js';
 import { AgentSession } from '../orchestrator/AgentSession.js';
 import { buildLaunchCommand } from '../orchestrator/launch-command.js';
 import type { AgentRunState, AgentType, TigerConfig, TigerTiming } from '../orchestrator/types.js';
-import { defaultTigerConfig } from '../orchestrator/config.js';
+import { defaultTigerConfig, effortsForProvider, isLaunchSafeModel } from '../orchestrator/config.js';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { TerminalDefinition } from '../store/types.js';
 import type { PersistedState } from '../store/types.js';
@@ -117,6 +117,9 @@ export class PromptGenerationService extends EventEmitter {
     const inputText = normalizeInputText(input.inputText);
     const provider = input.agentType ?? 'claude';
     const cfg = this.getConfig();
+    // Reject invalid/injectable provider overrides BEFORE any launch command is built, so an
+    // arbitrary model/effort/permission string can never reach buildLaunchCommand.
+    validateLaunchOverrides(provider, cfg, input);
     const model = resolveModel(provider, cfg, input.model);
     const project = this.getProjectContext();
     const generation = await this.repository.create({
@@ -364,19 +367,49 @@ function normalizeInputText(inputText: string): string {
   return trimmed;
 }
 
+/**
+ * Validate the optional per-request model/effort/permission overrides against the provider's
+ * configuration before anything is launched. Throws a 400 on an unsafe model (quotes, shell
+ * metacharacters, control characters), an effort the provider does not accept, or an unknown
+ * permission key. Omitted/empty overrides fall back to the provider defaults and are always valid.
+ */
+function validateLaunchOverrides(provider: AgentType, cfg: TigerConfig, input: PromptGenerationStartInput): void {
+  if (typeof input.model === 'string') {
+    const model = input.model.trim();
+    if (!isLaunchSafeModel(provider, model)) {
+      throw httpErr(400, `model is not a valid ${provider} model identifier`);
+    }
+  }
+  if (typeof input.effort === 'string') {
+    const effort = input.effort.trim();
+    if (!effortsForProvider(provider).includes(effort)) {
+      throw httpErr(400, `effort "${effort}" is not a valid ${provider} effort`);
+    }
+  }
+  if (typeof input.permission === 'string') {
+    const permission = input.permission.trim();
+    if (permission !== '' && !Object.prototype.hasOwnProperty.call(cfg.cli[provider].permissionModes, permission)) {
+      throw httpErr(400, `permission "${permission}" is not a known ${provider} permission mode`);
+    }
+  }
+}
+
 function resolveModel(provider: AgentType, cfg: TigerConfig, requested: string | null | undefined): string {
   if (typeof requested === 'string') return requested.trim();
-  return provider === 'claude' ? cfg.defaults.claudeModel : cfg.defaults.codexModel;
+  const d = cfg.defaults;
+  return provider === 'claude' ? d.claudeModel : provider === 'codex' ? d.codexModel : d.antigravityModel;
 }
 
 function resolveEffort(provider: AgentType, cfg: TigerConfig, requested: string | null | undefined): string {
   if (typeof requested === 'string') return requested.trim();
-  return provider === 'claude' ? cfg.defaults.claudeEffort : cfg.defaults.codexEffort;
+  const d = cfg.defaults;
+  return provider === 'claude' ? d.claudeEffort : provider === 'codex' ? d.codexEffort : d.antigravityEffort;
 }
 
 function resolvePermission(provider: AgentType, cfg: TigerConfig, requested: string | null | undefined): string {
   if (typeof requested === 'string') return requested.trim();
-  return provider === 'claude' ? cfg.defaults.claudePermission : cfg.defaults.codexPermission;
+  const d = cfg.defaults;
+  return provider === 'claude' ? d.claudePermission : provider === 'codex' ? d.codexPermission : d.antigravityPermission;
 }
 
 function totalTimeoutMs(timing: TigerTiming): number {

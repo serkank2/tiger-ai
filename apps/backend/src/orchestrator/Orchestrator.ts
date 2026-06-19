@@ -450,12 +450,16 @@ export class Orchestrator extends EventEmitter {
     return {
       claudeAgents: d.claudeAgents,
       codexAgents: d.codexAgents,
+      antigravityAgents: d.antigravityAgents,
       claudeModel: d.claudeModel,
       codexModel: d.codexModel,
+      antigravityModel: d.antigravityModel,
       claudeEffort: d.claudeEffort,
       codexEffort: d.codexEffort,
+      antigravityEffort: d.antigravityEffort,
       claudePermission: d.claudePermission,
       codexPermission: d.codexPermission,
+      antigravityPermission: d.antigravityPermission,
       parallel: d.parallel,
       mergeAgent: 'claude',
     };
@@ -623,6 +627,8 @@ export class Orchestrator extends EventEmitter {
     } else {
       for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) runs.push(this.makeRun(stageId, 'claude', i, cfg));
       for (let i = 1; i <= clampCount(cfg.codexAgents); i++) runs.push(this.makeRun(stageId, 'codex', i, cfg));
+      for (let i = 1; i <= clampCount(cfg.antigravityAgents); i++)
+        runs.push(this.makeRun(stageId, 'antigravity', i, cfg));
     }
     stage.runs = runs;
     for (const r of runs) {
@@ -665,10 +671,11 @@ export class Orchestrator extends EventEmitter {
     }
 
     // Worker type slots. Parallel: one concurrent worker per configured agent. Sequential: a
-    // single worker that round-robins types so both claude and codex are still used.
+    // single worker that round-robins types so every configured provider is still used.
     const types: AgentType[] = [];
     for (let i = 0; i < clampCount(cfg.claudeAgents); i++) types.push('claude');
     for (let i = 0; i < clampCount(cfg.codexAgents); i++) types.push('codex');
+    for (let i = 0; i < clampCount(cfg.antigravityAgents); i++) types.push('antigravity');
     if (types.length === 0) {
       stage.message = 'No agents were configured for this stage.';
       return;
@@ -760,6 +767,8 @@ export class Orchestrator extends EventEmitter {
     const findRuns: AgentRun[] = [];
     for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) findRuns.push(this.makeRun('task-review', 'claude', i, cfg));
     for (let i = 1; i <= clampCount(cfg.codexAgents); i++) findRuns.push(this.makeRun('task-review', 'codex', i, cfg));
+    for (let i = 1; i <= clampCount(cfg.antigravityAgents); i++)
+      findRuns.push(this.makeRun('task-review', 'antigravity', i, cfg));
     stage.runs = findRuns;
     for (const r of findRuns) {
       r.runId = this.activeRunId ?? undefined;
@@ -799,6 +808,7 @@ export class Orchestrator extends EventEmitter {
       const types: AgentType[] = [];
       for (let i = 0; i < clampCount(cfg.claudeAgents); i++) types.push('claude');
       for (let i = 0; i < clampCount(cfg.codexAgents); i++) types.push('codex');
+      for (let i = 0; i < clampCount(cfg.antigravityAgents); i++) types.push('antigravity');
       let counter = findRuns.length; // keep run labels/output files unique within this stage
       const processFinding = async (type: AgentType): Promise<boolean> => {
         const index = ++counter;
@@ -1027,9 +1037,12 @@ export class Orchestrator extends EventEmitter {
   ): AgentRun {
     const id = nanoid();
     const outputPath = this.paths!.outputFile(stage, type, index);
-    const model = type === 'claude' ? cfg.claudeModel : cfg.codexModel;
-    const effort = type === 'claude' ? cfg.claudeEffort : cfg.codexEffort;
-    const permission = type === 'claude' ? cfg.claudePermission : cfg.codexPermission;
+    // Each provider reads its own model/effort/permission so an Antigravity run is never launched
+    // with Codex/Claude values it cannot use.
+    const model = type === 'claude' ? cfg.claudeModel : type === 'codex' ? cfg.codexModel : cfg.antigravityModel;
+    const effort = type === 'claude' ? cfg.claudeEffort : type === 'codex' ? cfg.codexEffort : cfg.antigravityEffort;
+    const permission =
+      type === 'claude' ? cfg.claudePermission : type === 'codex' ? cfg.codexPermission : cfg.antigravityPermission;
     return {
       id,
       runId: this.activeRunId ?? undefined,

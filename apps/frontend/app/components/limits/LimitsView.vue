@@ -21,7 +21,7 @@ const conn = useConnectionStore();
 const limits = useLimitsStore();
 const rawOpen = ref<Record<string, boolean>>({});
 
-const providers: TigerAgentType[] = ['claude', 'codex'];
+const providers: TigerAgentType[] = ['claude', 'codex', 'antigravity'];
 
 const providerCards = computed(() =>
   providers.map((provider) => {
@@ -110,7 +110,7 @@ onMounted(() => {
     <EmptyState
       v-else-if="limits.loaded && !limits.hasData"
       title="No limit snapshots"
-      description="Refresh after Claude or Codex is available."
+      description="Refresh after a provider's usage data is available."
     >
       <button class="empty-refresh" type="button" :disabled="limits.refreshing" @click="refresh">Refresh</button>
     </EmptyState>

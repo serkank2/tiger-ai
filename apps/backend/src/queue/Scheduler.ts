@@ -38,12 +38,16 @@ function defaultStageConfig(config: TigerConfig, stageId: StageId): StageRunConf
   return {
     claudeAgents: d.claudeAgents,
     codexAgents: d.codexAgents,
+    antigravityAgents: d.antigravityAgents,
     claudeModel: d.claudeModel,
     codexModel: d.codexModel,
+    antigravityModel: d.antigravityModel,
     claudeEffort: d.claudeEffort,
     codexEffort: d.codexEffort,
+    antigravityEffort: d.antigravityEffort,
     claudePermission: d.claudePermission,
     codexPermission: d.codexPermission,
+    antigravityPermission: d.antigravityPermission,
     parallel: d.parallel,
     mergeAgent: stageId === 'merge-tasks' ? 'claude' : undefined,
   };

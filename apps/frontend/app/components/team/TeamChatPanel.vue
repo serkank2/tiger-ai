@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useTeamStore } from '~/stores/team';
-import type { TeamMessage, TeamMessageKind } from '~/types';
+import type { TeamMessage, TeamMessageKind, TigerAgentType } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 
 const team = useTeamStore();
@@ -13,12 +13,12 @@ const messages = computed(() => team.messages);
 
 interface SenderInfo {
   label: string;
-  tool: 'codex' | 'claude' | null;
+  tool: TigerAgentType | null;
   kind: 'role' | 'user' | 'system';
 }
 
 const roleById = computed(() => {
-  const map = new Map<string, { name: string; tool: 'codex' | 'claude' }>();
+  const map = new Map<string, { name: string; tool: TigerAgentType }>();
   for (const role of team.state?.roles ?? []) map.set(role.id, { name: role.name, tool: role.tool });
   return map;
 });

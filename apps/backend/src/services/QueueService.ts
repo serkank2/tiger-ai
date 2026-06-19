@@ -70,16 +70,16 @@ function inferProvider(input: EnqueueQueueJobInput): QueueProvider {
   if (input.provider) return input.provider;
   const configs = input.configSnapshot?.configs;
   if (!configs) return 'claude';
-  let claude = false;
-  let codex = false;
+  const used = new Set<Exclude<QueueProvider, 'mixed'>>();
   for (const cfg of Object.values(configs)) {
     if (!cfg) continue;
-    if ((cfg.claudeAgents ?? 0) > 0) claude = true;
-    if ((cfg.codexAgents ?? 0) > 0) codex = true;
+    if ((cfg.claudeAgents ?? 0) > 0) used.add('claude');
+    if ((cfg.codexAgents ?? 0) > 0) used.add('codex');
+    if ((cfg.antigravityAgents ?? 0) > 0) used.add('antigravity');
   }
-  if (claude && codex) return 'mixed';
-  if (codex) return 'codex';
-  return 'claude';
+  if (used.size > 1) return 'mixed';
+  const [only] = used;
+  return only ?? 'claude';
 }
 
 function event(jobId: string | null, type: string, message: string, payload: Record<string, unknown> | null = null): QueueEvent {
@@ -571,6 +571,7 @@ export class QueueService extends EventEmitter {
     const snapshots = {
       claude: await tx.getLatestLimitSnapshot('claude'),
       codex: await tx.getLatestLimitSnapshot('codex'),
+      antigravity: await tx.getLatestLimitSnapshot('antigravity'),
     };
     return this.ruleEngine.evaluate(job, rules, snapshots, new Date(now));
   }

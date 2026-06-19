@@ -18,12 +18,12 @@ function int(v: unknown, fallback = 0): number {
 }
 
 function provider(v: unknown, fallback: QueueProvider = 'claude'): QueueProvider {
-  return v === 'claude' || v === 'codex' || v === 'mixed' ? v : fallback;
+  return v === 'claude' || v === 'codex' || v === 'antigravity' || v === 'mixed' ? v : fallback;
 }
 
 function ruleProvider(v: unknown): QueueRuleProvider {
-  if (v === 'claude' || v === 'codex' || v === 'mixed' || v === 'any') return v;
-  throw badRequest('provider must be claude, codex, mixed, or any');
+  if (v === 'claude' || v === 'codex' || v === 'antigravity' || v === 'mixed' || v === 'any') return v;
+  throw badRequest('provider must be claude, codex, antigravity, mixed, or any');
 }
 
 function operator(v: unknown): QueueRuleOperator {

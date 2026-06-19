@@ -561,6 +561,7 @@ onBeforeUnmount(() => {
               <option value="mixed">Mixed queue</option>
               <option value="claude">Claude queue</option>
               <option value="codex">Codex queue</option>
+              <option value="antigravity">Antigravity queue</option>
             </select>
             <BaseButton variant="secondary" :loading="enqueuing" :disabled="enqueuing" @click="enqueueReusableText">
               Enqueue

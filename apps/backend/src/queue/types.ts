@@ -1,6 +1,6 @@
 import type { StageId, StageRunConfig } from '../orchestrator/types.js';
 
-export type QueueProvider = 'claude' | 'codex' | 'mixed';
+export type QueueProvider = 'claude' | 'codex' | 'antigravity' | 'mixed';
 
 export type QueueJobStatus =
   | 'queued'

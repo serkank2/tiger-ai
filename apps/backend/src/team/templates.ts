@@ -37,6 +37,7 @@ const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const WRITE_CAPABLE_PERMISSIONS: Record<AgentType, readonly string[]> = {
   claude: ['acceptEdits', 'dangerous'],
   codex: ['workspace-write', 'yolo'],
+  antigravity: ['dangerous'],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

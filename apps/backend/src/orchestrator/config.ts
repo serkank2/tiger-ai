@@ -11,8 +11,14 @@ export const TIGER_GROUP_NAME_MAX_CHARS = 80;
 
 export const TIGER_CLAUDE_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const TIGER_CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'] as const;
+// Antigravity (`agy`) exposes no reasoning-effort flag — reasoning level is baked into the
+// model label itself (e.g. "Gemini 3.1 Pro (High)"), so the only valid effort is empty.
+export const TIGER_ANTIGRAVITY_EFFORTS = [''] as const;
 
 type Provider = keyof TigerConfig['cli'];
+
+/** Providers whose model identifiers are human-readable labels with spaces/parentheses (e.g. `agy`). */
+const LABEL_MODEL_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(['antigravity']);
 
 type NumberLimit = {
   min: number;
@@ -73,16 +79,44 @@ export function defaultTigerConfig(): TigerConfig {
           yolo: ['--dangerously-bypass-approvals-and-sandbox'],
         },
       },
+      // Google's Antigravity CLI (`agy`). Models are exact labels reported by `agy models`
+      // (they contain spaces and parentheses), selected with `--model`. There is no
+      // reasoning-effort flag. Permission modes mirror the flags in `agy -h`.
+      antigravity: {
+        executable: 'agy',
+        models: [
+          'Gemini 3.5 Flash (Medium)',
+          'Gemini 3.5 Flash (High)',
+          'Gemini 3.5 Flash (Low)',
+          'Gemini 3.1 Pro (Low)',
+          'Gemini 3.1 Pro (High)',
+          'Claude Sonnet 4.6 (Thinking)',
+          'Claude Opus 4.6 (Thinking)',
+          'GPT-OSS 120B (Medium)',
+        ],
+        modelFlag: '--model',
+        extraArgs: [],
+        permissionModes: {
+          default: [],
+          sandbox: ['--sandbox'],
+          dangerous: ['--dangerously-skip-permissions'],
+        },
+      },
     },
     defaults: {
       claudeAgents: 1,
       codexAgents: 1,
+      // Antigravity is off by default so existing two-provider runs are unchanged; users opt in.
+      antigravityAgents: 0,
       claudeModel: 'opus',
       codexModel: 'gpt-5.5',
+      antigravityModel: 'Gemini 3.1 Pro (High)',
       claudeEffort: 'xhigh',
       codexEffort: 'xhigh',
+      antigravityEffort: '',
       claudePermission: 'dangerous',
       codexPermission: 'yolo',
+      antigravityPermission: 'dangerous',
       parallel: true,
     },
     timing: {
@@ -116,6 +150,7 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
     cli: {
       claude: normalizeCliTool('claude', pcli.claude, def.cli.claude),
       codex: normalizeCliTool('codex', pcli.codex, def.cli.codex),
+      antigravity: normalizeCliTool('antigravity', pcli.antigravity, def.cli.antigravity),
     },
     // Defaults are the seed values for the per-stage run config; keep them source-authoritative
     // so changing them in code applies immediately, without a stale on-disk config.json overriding.
@@ -180,7 +215,7 @@ function normalizeCliTool(type: Provider, raw: unknown, def: CliToolConfig): Cli
   const r = isPlainRecord(raw) ? raw : {};
   const out: CliToolConfig = {
     executable: def.executable,
-    models: normalizeModelList(r.models, def.models),
+    models: normalizeModelList(r.models, def.models, LABEL_MODEL_PROVIDERS.has(type)),
     modelFlag: normalizeOptionalToken(r.modelFlag, def.modelFlag, true) ?? def.modelFlag,
     extraArgs: normalizeTokenArray(r.extraArgs, def.extraArgs ?? []),
     permissionModes: normalizePermissionModes(type, r.permissionModes),
@@ -210,9 +245,9 @@ function normalizeNumberRecord<T extends { [K in keyof T]: number }>(
   return out;
 }
 
-function normalizeModelList(raw: unknown, fallback: string[] | undefined): string[] | undefined {
+function normalizeModelList(raw: unknown, fallback: string[] | undefined, allowLabel: boolean): string[] | undefined {
   if (!Array.isArray(raw)) return fallback;
-  const values = raw.filter((v): v is string => isSafeToken(v) && v.length <= 96);
+  const values = raw.filter((v): v is string => isModelIdentifier(v, allowLabel));
   return values.length > 0 && values.length <= 50 ? values : fallback;
 }
 
@@ -235,9 +270,9 @@ function normalizePermissionModes(type: Provider, raw: unknown): Record<string, 
 
 function validateCliPatch(raw: unknown): string | null {
   if (!isPlainRecord(raw)) return 'cli must be an object';
-  const unknownProvider = unknownKey(raw, ['claude', 'codex']);
+  const unknownProvider = unknownKey(raw, ['claude', 'codex', 'antigravity']);
   if (unknownProvider) return `unknown cli provider: ${unknownProvider}`;
-  for (const provider of ['claude', 'codex'] as const) {
+  for (const provider of ['claude', 'codex', 'antigravity'] as const) {
     if (provider in raw) {
       const msg = validateCliToolPatch(provider, raw[provider]);
       if (msg) return msg;
@@ -257,7 +292,7 @@ function validateCliToolPatch(provider: Provider, raw: unknown): string | null {
     return `cli.${provider}.executable must be ${JSON.stringify(expected.executable)}`;
   }
   if ('models' in raw) {
-    const msg = validateModelList(raw.models, `cli.${provider}.models`);
+    const msg = validateModelList(raw.models, `cli.${provider}.models`, LABEL_MODEL_PROVIDERS.has(provider));
     if (msg) return msg;
   }
   for (const field of ['modelFlag', 'effortFlag', 'effortConfigKey'] as const) {
@@ -281,18 +316,22 @@ function validateDefaultsPatch(raw: unknown, current: TigerConfig): string | nul
   const allowed: (keyof StageDefaults)[] = [
     'claudeAgents',
     'codexAgents',
+    'antigravityAgents',
     'claudeModel',
     'codexModel',
+    'antigravityModel',
     'claudeEffort',
     'codexEffort',
+    'antigravityEffort',
     'claudePermission',
     'codexPermission',
+    'antigravityPermission',
     'parallel',
   ];
   const unknown = unknownKey(raw, allowed);
   if (unknown) return `unknown defaults field: ${unknown}`;
 
-  for (const field of ['claudeAgents', 'codexAgents'] as const) {
+  for (const field of ['claudeAgents', 'codexAgents', 'antigravityAgents'] as const) {
     if (field in raw) {
       const msg = validateIntegerInRange(raw[field], `defaults.${field}`, {
         min: TIGER_AGENT_COUNT_MIN,
@@ -306,17 +345,32 @@ function validateDefaultsPatch(raw: unknown, current: TigerConfig): string | nul
   if ('claudeModel' in raw && claudeModel) return claudeModel;
   const codexModel = validateModelChoice(raw.codexModel, 'defaults.codexModel', current.cli.codex.models);
   if ('codexModel' in raw && codexModel) return codexModel;
+  const antigravityModel = validateModelChoice(
+    raw.antigravityModel,
+    'defaults.antigravityModel',
+    current.cli.antigravity.models,
+  );
+  if ('antigravityModel' in raw && antigravityModel) return antigravityModel;
   if ('claudeEffort' in raw && !setHas(TIGER_CLAUDE_EFFORTS, raw.claudeEffort)) {
     return 'defaults.claudeEffort is not a known Claude effort';
   }
   if ('codexEffort' in raw && !setHas(TIGER_CODEX_EFFORTS, raw.codexEffort)) {
     return 'defaults.codexEffort is not a known Codex effort';
   }
+  if ('antigravityEffort' in raw && !setHas(TIGER_ANTIGRAVITY_EFFORTS, raw.antigravityEffort)) {
+    return 'defaults.antigravityEffort is not a known Antigravity effort';
+  }
   if ('claudePermission' in raw && !setHas(Object.keys(current.cli.claude.permissionModes), raw.claudePermission)) {
     return 'defaults.claudePermission is not a known Claude permission mode';
   }
   if ('codexPermission' in raw && !setHas(Object.keys(current.cli.codex.permissionModes), raw.codexPermission)) {
     return 'defaults.codexPermission is not a known Codex permission mode';
+  }
+  if (
+    'antigravityPermission' in raw &&
+    !setHas(Object.keys(current.cli.antigravity.permissionModes), raw.antigravityPermission)
+  ) {
+    return 'defaults.antigravityPermission is not a known Antigravity permission mode';
   }
   if ('parallel' in raw && typeof raw.parallel !== 'boolean') return 'defaults.parallel must be a boolean';
   return null;
@@ -364,13 +418,15 @@ function validateIntegerInRange(value: unknown, label: string, limit: NumberLimi
   return null;
 }
 
-function validateModelList(value: unknown, label: string): string | null {
+function validateModelList(value: unknown, label: string, allowLabel: boolean): string | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 50) {
     return `${label} must contain 1 to 50 model identifiers`;
   }
   for (const model of value) {
-    if (typeof model !== 'string' || !isSafeToken(model) || model.length > 96) {
-      return `${label} entries must be simple non-empty model identifiers`;
+    if (!isModelIdentifier(model, allowLabel)) {
+      return allowLabel
+        ? `${label} entries must be non-empty model labels without control characters or shell metacharacters`
+        : `${label} entries must be simple non-empty model identifiers`;
     }
   }
   return null;
@@ -412,6 +468,45 @@ function unknownKey(value: Record<string, unknown>, allowed: readonly string[]):
 
 function isSafeToken(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\s"'`;&|<>()[\]{}$\\]/.test(value);
+}
+
+/**
+ * A model "label" identifier: lets a provider expose human-readable model names that contain
+ * spaces and parentheses (e.g. Antigravity's `Gemini 3.1 Pro (High)`), while still rejecting
+ * control characters and any shell metacharacter that could break safe argv quoting. The launch
+ * builder double-quotes such values, so only quote-breaking characters are dangerous.
+ */
+export function isModelLabel(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 96 &&
+    /^[A-Za-z0-9 .()/_+\-]+$/.test(value)
+  );
+}
+
+/** A configured model identifier for a provider — a simple token, or (when allowed) a label. */
+function isModelIdentifier(value: unknown, allowLabel: boolean): value is string {
+  if (allowLabel) return isModelLabel(value);
+  return isSafeToken(value) && (value as string).length <= 96;
+}
+
+/**
+ * Whether a model value is safe to pass to {@link buildLaunchCommand} for the given provider.
+ * Empty means "use the CLI default". Antigravity accepts its label form (spaces/parentheses);
+ * every other provider requires a simple shell-safe token. Used to reject injectable model
+ * overrides (quotes, `$`, `;`, control characters, …) before a launch command is built.
+ */
+export function isLaunchSafeModel(provider: Provider, value: string): boolean {
+  if (value === '') return true;
+  return isModelIdentifier(value, LABEL_MODEL_PROVIDERS.has(provider));
+}
+
+/** The reasoning-effort values valid for a provider ('' = use the CLI default). */
+export function effortsForProvider(provider: Provider): readonly string[] {
+  if (provider === 'codex') return TIGER_CODEX_EFFORTS;
+  if (provider === 'antigravity') return TIGER_ANTIGRAVITY_EFFORTS;
+  return TIGER_CLAUDE_EFFORTS;
 }
 
 function setHas(values: readonly string[], value: unknown): value is string {

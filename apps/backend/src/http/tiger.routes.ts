@@ -229,7 +229,8 @@ export function createTigerRouter(ctx: AppCtx): Router {
     res.json(result);
   });
 
-  // Probe Claude/Codex usage panels (best-effort interactive scrape). Used by the limit widget.
+  // Probe each provider's usage panel (best-effort interactive scrape; Antigravity is an explicit
+  // unsupported probe). Used by the limit widget.
   router.get('/usage', async (_req, res) => {
     const status = await ctx.limits.refresh('legacy');
     res.json(ctx.limits.toLegacyUsage(status));

@@ -10,12 +10,16 @@ import { STAGE_ORDER } from './types.js';
 const BASE: StageRunConfig = {
   claudeAgents: 1,
   codexAgents: 1,
+  antigravityAgents: 0,
   claudeModel: 'opus',
   codexModel: 'gpt-5.5',
+  antigravityModel: 'Gemini 3.1 Pro (High)',
   claudeEffort: 'xhigh',
   codexEffort: 'xhigh',
+  antigravityEffort: '',
   claudePermission: 'dangerous',
   codexPermission: 'yolo',
+  antigravityPermission: 'dangerous',
   parallel: true,
   mergeAgent: 'claude',
 };

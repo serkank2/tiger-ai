@@ -696,12 +696,16 @@ function zeroAgentConfig(): StageRunConfig {
   return {
     claudeAgents: 0,
     codexAgents: 0,
+    antigravityAgents: 0,
     claudeModel: d.claudeModel,
     codexModel: d.codexModel,
+    antigravityModel: d.antigravityModel,
     claudeEffort: d.claudeEffort,
     codexEffort: d.codexEffort,
+    antigravityEffort: d.antigravityEffort,
     claudePermission: d.claudePermission,
     codexPermission: d.codexPermission,
+    antigravityPermission: d.antigravityPermission,
     parallel: false,
     mergeAgent: 'codex',
   };

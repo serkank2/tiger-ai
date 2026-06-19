@@ -57,12 +57,16 @@ function freshCfg(): TigerStageRunConfig {
   return {
     claudeAgents: d?.claudeAgents ?? 1,
     codexAgents: d?.codexAgents ?? 1,
+    antigravityAgents: d?.antigravityAgents ?? 0,
     claudeModel: d?.claudeModel ?? 'opus',
     codexModel: d?.codexModel ?? 'gpt-5.5',
+    antigravityModel: d?.antigravityModel ?? 'Gemini 3.1 Pro (High)',
     claudeEffort: d?.claudeEffort ?? 'xhigh',
     codexEffort: d?.codexEffort ?? 'xhigh',
+    antigravityEffort: d?.antigravityEffort ?? '',
     claudePermission: d?.claudePermission ?? 'dangerous',
     codexPermission: d?.codexPermission ?? 'yolo',
+    antigravityPermission: d?.antigravityPermission ?? 'dangerous',
     parallel: d?.parallel ?? true,
     mergeAgent: 'claude',
   };
@@ -197,7 +201,7 @@ onMounted(() => {
       </div>
       <p class="lead">
         Pick a workspace folder and provide your project prompt. Tiger creates a <code>.tiger/</code> workspace
-        there (system prompts, config, logs) and drives Claude &amp; Codex CLI agents through the full workflow.
+        there (system prompts, config, logs) and drives Claude, Codex &amp; Antigravity CLI agents through the full workflow.
       </p>
       <div class="field">
         <span>Workspace folder</span>

@@ -31,6 +31,32 @@ test('validateRoleConfig accepts a Codex role using CLI-default model and effort
   assert.equal(result, null);
 });
 
+test('validateRoleConfig accepts an Antigravity role with a space/parenthesis model and empty effort', () => {
+  const result = validateRoleConfig(
+    role({ tool: 'antigravity', model: 'Gemini 3.1 Pro (High)', effort: '', permission: 'dangerous' }),
+    config,
+  );
+  assert.equal(result, null);
+});
+
+test('validateRoleConfig rejects a non-empty effort for Antigravity (it has no effort flag)', () => {
+  const msg = validateRoleConfig(
+    role({ tool: 'antigravity', model: 'Gemini 3.1 Pro (High)', effort: 'high', permission: 'dangerous' }),
+    config,
+  );
+  assert.ok(msg, 'expected an error message');
+  assert.match(msg, /effort .* is not a valid antigravity effort/i);
+});
+
+test('validateRoleConfig rejects an unknown Antigravity model', () => {
+  const msg = validateRoleConfig(
+    role({ tool: 'antigravity', model: 'Totally Made Up', effort: '', permission: 'dangerous' }),
+    config,
+  );
+  assert.ok(msg, 'expected an error message');
+  assert.match(msg, /is not a configured antigravity model/i);
+});
+
 test('validateRoleConfig rejects an empty role name with a clear English error', () => {
   const msg = validateRoleConfig(role({ name: '   ' }), config);
   assert.ok(msg, 'expected an error message');

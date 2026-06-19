@@ -4,7 +4,8 @@ import type { TeamAgentType } from '~/types';
 
 const props = defineProps<{ tool: TeamAgentType }>();
 
-const glyph = computed(() => (props.tool === 'claude' ? '✳' : '◆'));
+const GLYPH: Record<TeamAgentType, string> = { claude: '✳', codex: '◆', antigravity: '✦' };
+const glyph = computed(() => GLYPH[props.tool] ?? '◆');
 </script>
 
 <template>
@@ -30,5 +31,9 @@ const glyph = computed(() => (props.tool === 'claude' ? '✳' : '◆'));
 .t-codex {
   color: var(--text-dim);
   background: var(--bg-elev-2);
+}
+.t-antigravity {
+  color: #4285f4;
+  background: rgba(66, 133, 244, 0.16);
 }
 </style>

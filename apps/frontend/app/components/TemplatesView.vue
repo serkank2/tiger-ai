@@ -48,7 +48,9 @@ function templateLabel(template: TigerRunTemplate): string {
 function stageSummary(stage: TigerStageId): string {
   const cfg = form.configs[stage];
   if (stage === 'merge-tasks') return `merge: ${cfg.mergeAgent ?? 'claude'}`;
-  return `${cfg.claudeAgents} Claude, ${cfg.codexAgents} Codex`;
+  const parts = [`${cfg.claudeAgents} Claude`, `${cfg.codexAgents} Codex`];
+  if (cfg.antigravityAgents > 0) parts.push(`${cfg.antigravityAgents} Antigravity`);
+  return parts.join(', ');
 }
 
 function replaceFormConfigs(next: Partial<Record<TigerStageId, TigerStageRunConfig>>) {

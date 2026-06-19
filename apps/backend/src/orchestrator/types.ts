@@ -1,11 +1,25 @@
 // ---------------------------------------------------------------------------
 // Tiger orchestrator domain model. The orchestrator drives a project prompt
 // through 6 workflow stages (7 system prompts — stage 6 splits into 6A/6B) by
-// running interactive Claude/Codex CLI agents, detecting completion, validating
-// their output files, and tracking task status. All generated content is English.
+// running interactive Claude/Codex/Antigravity CLI agents, detecting completion,
+// validating their output files, and tracking task status. All generated content
+// is English.
 // ---------------------------------------------------------------------------
 
-export type AgentType = 'claude' | 'codex';
+export type AgentType = 'claude' | 'codex' | 'antigravity';
+
+/** Canonical ordered list of every supported provider. */
+export const AGENT_TYPES: readonly AgentType[] = ['claude', 'codex', 'antigravity'];
+
+/** Type guard for the provider union — use when narrowing untrusted/persisted values. */
+export function isAgentType(value: unknown): value is AgentType {
+  return value === 'claude' || value === 'codex' || value === 'antigravity';
+}
+
+/** Coerce an untrusted/persisted provider value to a known AgentType, never silently mislabeling. */
+export function toAgentTypeOr(value: unknown, fallback: AgentType): AgentType {
+  return isAgentType(value) ? value : fallback;
+}
 
 /** Workflow stages. Stage 6 is split into task-review (6A) and requesting-code-review (6B). */
 export type StageId =
@@ -68,13 +82,17 @@ export interface CliToolConfig {
 export interface StageDefaults {
   claudeAgents: number;
   codexAgents: number;
+  antigravityAgents: number;
   claudeModel: string;
   codexModel: string;
+  antigravityModel: string;
   claudeEffort: string;
   codexEffort: string;
+  antigravityEffort: string;
   /** Permission-mode keys (must exist in cli.<type>.permissionModes). */
   claudePermission: string;
   codexPermission: string;
+  antigravityPermission: string;
   parallel: boolean;
 }
 
@@ -97,7 +115,7 @@ export interface TigerTiming {
 
 export interface TigerConfig {
   version: number;
-  cli: { claude: CliToolConfig; codex: CliToolConfig };
+  cli: { claude: CliToolConfig; codex: CliToolConfig; antigravity: CliToolConfig };
   defaults: StageDefaults;
   timing: TigerTiming;
   execution: {
@@ -119,12 +137,16 @@ export interface TigerConfig {
 export interface StageRunConfig {
   claudeAgents: number;
   codexAgents: number;
+  antigravityAgents: number;
   claudeModel: string;
   codexModel: string;
+  antigravityModel: string;
   claudeEffort: string;
   codexEffort: string;
+  antigravityEffort: string;
   claudePermission: string;
   codexPermission: string;
+  antigravityPermission: string;
   parallel: boolean;
   /** merge-tasks only: which single agent type performs the merge. */
   mergeAgent?: AgentType;

@@ -14,12 +14,16 @@ function service(): RunTemplateService {
 const stageConfig = {
   claudeAgents: 1,
   codexAgents: 1,
+  antigravityAgents: 0,
   claudeModel: 'sonnet',
   codexModel: 'gpt-5',
+  antigravityModel: 'Gemini 3.1 Pro (High)',
   claudeEffort: 'medium',
   codexEffort: 'medium',
+  antigravityEffort: '',
   claudePermission: 'dangerous',
   codexPermission: 'yolo',
+  antigravityPermission: 'dangerous',
   parallel: true,
   mergeAgent: 'claude' as const,
 };

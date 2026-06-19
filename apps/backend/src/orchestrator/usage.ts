@@ -42,6 +42,10 @@ interface ProbeSpec {
   command: string;
   sendKeys: string;
   captureMs: number;
+  /** When false, the provider exposes no usage/limit command and is reported as an explicit error. */
+  supported?: boolean;
+  /** Reason shown when `supported` is false. */
+  unsupportedReason?: string;
 }
 
 // Configurable defaults. Edit here (or wire to config.json) to match the actual CLI commands.
@@ -49,6 +53,17 @@ interface ProbeSpec {
 const PROBES: Record<AgentType, ProbeSpec> = {
   claude: { command: 'claude', sendKeys: '/usage', captureMs: 5000 },
   codex: { command: 'codex --no-alt-screen', sendKeys: '/status', captureMs: 6000 },
+  // Antigravity's documented surface (`agy -h`, `agy models`) exposes no usage/limit command,
+  // so we never launch `agy` to guess at one or fabricate percentages — we report an explicit
+  // unsupported probe. If a project-safe limit command is later verified, fill in command/sendKeys
+  // and set supported:true; the existing used/left parser then applies unchanged.
+  antigravity: {
+    command: 'agy',
+    sendKeys: '',
+    captureMs: 0,
+    supported: false,
+    unsupportedReason: 'Antigravity (agy) exposes no usage/limit command; no limit data is available.',
+  },
 };
 
 const READY_IDLE_MS = 1200;
@@ -168,6 +183,18 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 export async function probeUsage(manager: TerminalManager, type: AgentType, cwd?: string): Promise<UsageProbe> {
   const spec = PROBES[type];
   const checkedAt = new Date().toISOString();
+  // Providers with no usage command are reported as an explicit error rather than launched.
+  if (spec.supported === false) {
+    return {
+      type,
+      ok: false,
+      entries: [],
+      raw: '',
+      highlights: [],
+      error: spec.unsupportedReason ?? `${type} exposes no usage/limit command.`,
+      checkedAt,
+    };
+  }
   const termId = `usage-${type}-${nanoid(8)}`;
   const workdir = cwd && cwd.trim() ? cwd : os.homedir();
 
@@ -250,11 +277,15 @@ export async function probeUsage(manager: TerminalManager, type: AgentType, cwd?
   }
 }
 
-/** Probe both CLIs concurrently. */
+/** Probe every CLI concurrently (Antigravity short-circuits to an explicit unsupported probe). */
 export async function probeAllUsage(
   manager: TerminalManager,
   cwd?: string,
-): Promise<{ claude: UsageProbe; codex: UsageProbe }> {
-  const [claude, codex] = await Promise.all([probeUsage(manager, 'claude', cwd), probeUsage(manager, 'codex', cwd)]);
-  return { claude, codex };
+): Promise<Record<AgentType, UsageProbe>> {
+  const [claude, codex, antigravity] = await Promise.all([
+    probeUsage(manager, 'claude', cwd),
+    probeUsage(manager, 'codex', cwd),
+    probeUsage(manager, 'antigravity', cwd),
+  ]);
+  return { claude, codex, antigravity };
 }

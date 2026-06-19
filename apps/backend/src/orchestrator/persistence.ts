@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import type {
   AgentRun,
   AgentRunState,
+  AgentType,
   ExecutionStatus,
   FindingStatus,
   ReviewStatus,
@@ -13,6 +14,7 @@ import type {
   StageStatus,
   TaskRecord,
 } from './types.js';
+import { toAgentTypeOr } from './types.js';
 import type { FindingRecord } from './findings.js';
 
 export type ExecutionOwnerType = 'manual' | 'queue';
@@ -108,7 +110,7 @@ export interface PersistedAgentRunRecord {
   id: string;
   terminalId: string;
   stage: StageId;
-  type: 'claude' | 'codex';
+  type: AgentType;
   index: number;
   label: string;
   outputPath: string;
@@ -1221,7 +1223,8 @@ function agentFromRow(row: AgentRow): PersistedAgentRunRecord {
     id: row.id,
     terminalId: row.terminal_id,
     stage: row.stage_id as StageId,
-    type: row.agent_type === 'claude' ? 'claude' : 'codex',
+    // Preserve the persisted provider exactly; never coerce an unknown value to claude/codex.
+    type: toAgentTypeOr(row.agent_type, 'claude'),
     index: row.agent_index,
     label: row.label,
     outputPath: row.output_path,

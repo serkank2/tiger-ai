@@ -183,14 +183,14 @@ function cleanHistoryFilters(filters: PromptHistoryFilters): PromptHistoryFilter
 
 function asAgentType(value: unknown): AgentType | undefined {
   if (value === undefined || value === null || value === '') return undefined;
-  if (value === 'claude' || value === 'codex') return value;
-  throw httpErr(400, 'agentType must be claude or codex');
+  if (value === 'claude' || value === 'codex' || value === 'antigravity') return value;
+  throw httpErr(400, 'agentType must be claude, codex, or antigravity');
 }
 
 function asQueueProvider(value: unknown): QueueProvider | undefined {
   if (value === undefined || value === null || value === '') return undefined;
-  if (value === 'claude' || value === 'codex' || value === 'mixed') return value;
-  throw httpErr(400, 'provider must be claude, codex, or mixed');
+  if (value === 'claude' || value === 'codex' || value === 'antigravity' || value === 'mixed') return value;
+  throw httpErr(400, 'provider must be claude, codex, antigravity, or mixed');
 }
 
 function optionalInteger(value: unknown): number | undefined {

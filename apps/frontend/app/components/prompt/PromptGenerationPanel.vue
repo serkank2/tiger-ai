@@ -63,6 +63,7 @@ function submit(): void {
         <select v-model="agentType" aria-label="Generation agent">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
+          <option value="antigravity">Antigravity</option>
         </select>
         <input v-model="model" placeholder="Model override" spellcheck="false" />
         <input v-model="effort" placeholder="Effort override" spellcheck="false" />

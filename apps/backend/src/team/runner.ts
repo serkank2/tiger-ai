@@ -264,17 +264,22 @@ function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string
 function roleLaunchParams(opts: RunRoleTurnOptions): LaunchParams {
   const defaults = opts.config.defaults;
   const role = normalizeTeamRole(opts.role);
-  if (role.agentType === 'claude') {
-    return {
-      model: opts.model ?? roleAgentString(opts.role, 'model') ?? defaults.claudeModel,
-      effort: opts.effort ?? roleAgentString(opts.role, 'effort') ?? defaults.claudeEffort,
-      permission: opts.permission ?? roleAgentString(opts.role, 'permission') ?? defaults.claudePermission,
-    };
-  }
+  // Fall back to the defaults of the role's actual provider so an Antigravity role never
+  // inherits Codex/Claude model/effort/permission values it cannot use.
+  const providerDefaults =
+    role.agentType === 'claude'
+      ? { model: defaults.claudeModel, effort: defaults.claudeEffort, permission: defaults.claudePermission }
+      : role.agentType === 'antigravity'
+        ? {
+            model: defaults.antigravityModel,
+            effort: defaults.antigravityEffort,
+            permission: defaults.antigravityPermission,
+          }
+        : { model: defaults.codexModel, effort: defaults.codexEffort, permission: defaults.codexPermission };
   return {
-    model: opts.model ?? roleAgentString(opts.role, 'model') ?? defaults.codexModel,
-    effort: opts.effort ?? roleAgentString(opts.role, 'effort') ?? defaults.codexEffort,
-    permission: opts.permission ?? roleAgentString(opts.role, 'permission') ?? defaults.codexPermission,
+    model: opts.model ?? roleAgentString(opts.role, 'model') ?? providerDefaults.model,
+    effort: opts.effort ?? roleAgentString(opts.role, 'effort') ?? providerDefaults.effort,
+    permission: opts.permission ?? roleAgentString(opts.role, 'permission') ?? providerDefaults.permission,
   };
 }
 

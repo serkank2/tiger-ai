@@ -119,6 +119,10 @@ const stateClass = computed(() => `s-${props.run.state}`);
   color: var(--blue);
   border-color: var(--blue);
 }
+.type.antigravity {
+  color: #4285f4;
+  border-color: #4285f4;
+}
 .task {
   font-family: var(--font-mono);
   font-size: 10px;

@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import type { AppSettings, PersistedState, ShellSpec } from './types.js';
 import { defaultLimitRules } from '../limits/types.js';
 import type { LimitRule, LimitRuleDecision, LimitSnapshot, LimitsPersistedState } from '../limits/types.js';
+import { isAgentType } from '../orchestrator/types.js';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -95,7 +96,8 @@ function normalize(parsed: unknown): PersistedState {
   };
 }
 
-function parseAndNormalize(raw: string): PersistedState {
+/** Parse + normalize a raw state.json string (exported so reload normalization is unit-testable). */
+export function parseAndNormalize(raw: string): PersistedState {
   const parsed = JSON.parse(raw); // throws SyntaxError on corruption
   const ver = (parsed as { schemaVersion?: unknown })?.schemaVersion;
   if (typeof ver === 'number' && ver > SCHEMA_VERSION) {
@@ -123,7 +125,7 @@ function isValidLimitSnapshot(value: unknown): value is LimitSnapshot {
   const raw = value as Record<string, unknown>;
   return (
     typeof raw.id === 'string' &&
-    (raw.provider === 'claude' || raw.provider === 'codex') &&
+    isAgentType(raw.provider) &&
     typeof raw.windowKey === 'string' &&
     typeof raw.label === 'string' &&
     (raw.percentUsed === null || (typeof raw.percentUsed === 'number' && Number.isFinite(raw.percentUsed))) &&
@@ -143,7 +145,7 @@ function isValidLimitRule(value: unknown): value is LimitRule {
   const raw = value as Record<string, unknown>;
   return (
     typeof raw.id === 'string' &&
-    (raw.provider === 'claude' || raw.provider === 'codex') &&
+    isAgentType(raw.provider) &&
     typeof raw.windowKey === 'string' &&
     typeof raw.thresholdPercent === 'number' &&
     Number.isFinite(raw.thresholdPercent) &&

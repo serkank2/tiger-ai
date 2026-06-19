@@ -119,7 +119,7 @@ export type TigerStageId =
   | 'task-review'
   | 'requesting-code-review';
 
-export type TigerAgentType = 'claude' | 'codex';
+export type TigerAgentType = 'claude' | 'codex' | 'antigravity';
 export type AgentRunState =
   | 'pending'
   | 'starting'
@@ -248,12 +248,16 @@ export interface TigerCliToolConfig {
 export interface TigerStageDefaults {
   claudeAgents: number;
   codexAgents: number;
+  antigravityAgents: number;
   claudeModel: string;
   codexModel: string;
+  antigravityModel: string;
   claudeEffort: string;
   codexEffort: string;
+  antigravityEffort: string;
   claudePermission: string;
   codexPermission: string;
+  antigravityPermission: string;
   parallel: boolean;
 }
 
@@ -268,7 +272,7 @@ export interface TigerExecutionConfig {
 
 export interface TigerConfig {
   version: number;
-  cli: { claude: TigerCliToolConfig; codex: TigerCliToolConfig };
+  cli: { claude: TigerCliToolConfig; codex: TigerCliToolConfig; antigravity: TigerCliToolConfig };
   defaults: TigerStageDefaults;
   timing: Record<string, number>;
   execution: TigerExecutionConfig;
@@ -298,6 +302,7 @@ export interface TigerUsageProbe {
 export interface TigerUsage {
   claude: TigerUsageProbe;
   codex: TigerUsageProbe;
+  antigravity: TigerUsageProbe;
 }
 
 export interface LimitSnapshot {
@@ -365,12 +370,16 @@ export interface LimitStatus {
 export interface TigerStageRunConfig {
   claudeAgents: number;
   codexAgents: number;
+  antigravityAgents: number;
   claudeModel: string;
   codexModel: string;
+  antigravityModel: string;
   claudeEffort: string;
   codexEffort: string;
+  antigravityEffort: string;
   claudePermission: string;
   codexPermission: string;
+  antigravityPermission: string;
   parallel: boolean;
   mergeAgent?: TigerAgentType;
 }
@@ -672,7 +681,7 @@ export interface HealthStatus {
 
 // --- Autonomous queue (mirror of apps/backend/src/queue/types.ts) ---
 
-export type QueueProvider = 'claude' | 'codex' | 'mixed';
+export type QueueProvider = 'claude' | 'codex' | 'antigravity' | 'mixed';
 export type QueueRuleProvider = QueueProvider | 'any';
 export type QueueRuleOperator = 'gte' | 'gt' | 'lte' | 'lt' | 'eq';
 export type QueueRuleAction = 'block_dispatch';

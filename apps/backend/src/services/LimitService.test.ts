@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { PersistedState } from '../store/types.js';
 import type { UsageProbe } from '../orchestrator/usage.js';
+import type { AgentType } from '../orchestrator/types.js';
 import { defaultLimitRules, type LimitSnapshot } from '../limits/types.js';
 import { evaluateLimitRules, LimitService } from './LimitService.js';
 
@@ -121,7 +122,7 @@ test('evaluateLimitRules blocks conservatively when the latest provider probe fa
 test('LimitService.refresh persists normalized snapshots into state', async () => {
   const persisted = state();
   let saves = 0;
-  const probe = async (): Promise<Record<'claude' | 'codex', UsageProbe>> => ({
+  const probe = async (): Promise<Record<AgentType, UsageProbe>> => ({
     claude: {
       type: 'claude',
       ok: true,
@@ -138,6 +139,15 @@ test('LimitService.refresh persists normalized snapshots into state', async () =
       highlights: [],
       checkedAt: NOW.toISOString(),
     },
+    antigravity: {
+      type: 'antigravity',
+      ok: false,
+      entries: [],
+      raw: '',
+      highlights: [],
+      error: 'Antigravity (agy) exposes no usage/limit command; no limit data is available.',
+      checkedAt: NOW.toISOString(),
+    },
   });
   const service = new LimitService({
     manager: {} as TerminalManager,
@@ -152,7 +162,9 @@ test('LimitService.refresh persists normalized snapshots into state', async () =
 
   const status = await service.refresh('manual');
   assert.equal(saves, 1);
-  assert.equal(persisted.limits?.snapshots.length, 2);
+  // claude + codex parsed windows, plus an explicit unsupported Antigravity probe snapshot.
+  assert.equal(persisted.limits?.snapshots.length, 3);
   assert.equal(status.latest.find((item) => item.provider === 'codex')?.percentUsed, 92);
+  assert.equal(status.providers.antigravity.ok, false);
   assert.equal(status.decision.allowed, false);
 });
