@@ -167,6 +167,16 @@ export const config = {
     worktreePerTask: envBool('KAPLAN_WORKTREE_PER_TASK', false),
   },
 
+  // Cue — event-driven orchestration engine. OFF by default: when enabled (KAPLAN_CUE_ENABLED=1)
+  // the engine loads a per-project `.kaplan/cue.json` and wakes agents into self-running pipelines
+  // (file changes / schedules / agent completions / manual triggers → queue jobs or team steering).
+  // Disabled means the engine is never constructed, so a normal boot is byte-for-byte unchanged.
+  cue: {
+    enabled: envBool('KAPLAN_CUE_ENABLED', false),
+    // Optional explicit workspace. Empty => use the active Tiger project's workspace.
+    workspace: process.env.KAPLAN_CUE_WORKSPACE?.trim() || '',
+  },
+
   // Basic abuse guard on the HTTP API (per-IP fixed window). Generous for a local tool.
   rateLimit: {
     enabled: envBool('KAPLAN_RATE_LIMIT', true),

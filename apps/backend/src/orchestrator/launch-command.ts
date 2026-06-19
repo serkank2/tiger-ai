@@ -1,5 +1,7 @@
 import type { AgentType, TigerConfig } from './types.js';
 import { config } from '../config.js';
+import { getAdapter } from '../executors/registry.js';
+import { quoteInvocation, shellQuote as shellQuoteImpl, isDangerousPermissionArgv } from '../executors/shell.js';
 
 export interface LaunchParams {
   model: string;
@@ -37,60 +39,28 @@ export function buildLaunchCommand(
   opts?: LaunchOptions,
 ): string {
   const tool = cfg.cli[type];
-  const args: string[] = [tool.executable];
-
-  const model = params.model.trim();
-  if (model && tool.modelFlag) args.push(tool.modelFlag, model);
-
-  const effort = params.effort.trim();
-  if (effort) {
-    if (type === 'claude' && tool.effortFlag) {
-      args.push(tool.effortFlag, effort);
-    } else if (type === 'codex' && tool.effortConfigKey) {
-      // codex applies reasoning effort via a -c override (TOML or literal fallback).
-      args.push('-c', `${tool.effortConfigKey}=${effort}`);
-    }
-    // Antigravity has no effort flag; reasoning level is part of the model label.
-  }
-
-  const perm = tool.permissionModes[params.permission];
   // Gate the blanket dangerous flag: it is applied only when explicitly allowed.
   // Default the gate from config so callers that don't pass opts (Orchestrator, prompt
   // generation, team runner) get the safe behavior without any wiring change.
   const allowDangerous = opts?.allowDangerous ?? config.security.allowDangerousAgentPermissions;
-  if (perm && perm.length) {
-    if (!allowDangerous && isDangerousPermission(cfg, type, params.permission)) {
-      // Dangerous blanket mode requested but not opted in: fall back to the CLI's own
-      // default guardrails (no permission flags) rather than disabling all approvals.
-    } else {
-      args.push(...perm);
-    }
-  }
 
-  if (tool.extraArgs && tool.extraArgs.length) args.push(...tool.extraArgs);
-
-  return args.map(shellQuote).join(' ');
+  // Resolve the provider adapter from the registry and delegate. Each adapter owns its own flag
+  // layout (model/effort/permission); the dangerous-mode opt-in gate and safe shell quoting are
+  // applied by the shared executor helpers, so behavior is byte-for-byte identical to before.
+  const adapter = getAdapter(type);
+  const { command, args } = adapter.buildLaunch({ cfg, tool, params, allowDangerous });
+  return quoteInvocation(command, args);
 }
 
 /**
- * Quote a single argv token for a shell command line. Tokens made only of safe characters
- * (letters, digits, and `-._/=:,` — every flag/identifier Claude and Codex use) are returned
- * verbatim so existing commands are byte-for-byte unchanged. Anything else (a model label with
- * spaces or parentheses) is wrapped in double quotes, with any embedded backslash or double quote
- * escaped so a stray quote cannot terminate the argument or inject further tokens. Callers should
- * still validate untrusted model values upstream (see `isLaunchSafeModel`); this escaping is
- * defense in depth, not a substitute for validation.
+ * Quote a single argv token for a shell command line. Re-exported from the executor layer so the
+ * public API stays stable for existing importers. See `executors/shell.ts` for the implementation.
  */
 export function shellQuote(token: string): string {
-  if (token.length > 0 && /^[A-Za-z0-9._/=:,-]+$/.test(token)) return token;
-  return `"${token.replace(/([\\"])/g, '\\$1')}"`;
+  return shellQuoteImpl(token);
 }
 
 /** True if the permission key resolves to a documented dangerous/unrestricted mode. */
 export function isDangerousPermission(cfg: TigerConfig, type: AgentType, permission: string): boolean {
-  const perm = cfg.cli[type].permissionModes[permission];
-  if (!perm) return false;
-  return perm.some(
-    (a) => a === '--dangerously-skip-permissions' || a === '--dangerously-bypass-approvals-and-sandbox',
-  );
+  return isDangerousPermissionArgv(cfg.cli[type].permissionModes[permission]);
 }

@@ -22,6 +22,8 @@ import { createTigerRouter } from './http/tiger.routes.js';
 import { createLimitsRouter } from './http/limits.routes.js';
 import { createQueueRouter } from './http/queue.routes.js';
 import { createTeamRouter } from './http/team.routes.js';
+import { createCueRouter } from './http/cue.routes.js';
+import { CueEngine } from './cue/CueEngine.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
 import { Orchestrator } from './orchestrator/Orchestrator.js';
@@ -212,6 +214,14 @@ app.use('/api/settings', createSettingsRouter(ctx));
 app.use('/api/fs', createFsRouter(ctx));
 app.use('/api/limits', createLimitsRouter(ctx));
 
+// Cue — event-driven orchestration engine. Config-gated (OFF by default). The engine is only
+// constructed when enabled; the route is only mounted then too, so a normal boot is unchanged.
+let cueEngine: CueEngine | null = null;
+if (config.cue.enabled) {
+  cueEngine = new CueEngine({ ctx, workspace: config.cue.workspace || null });
+  app.use('/api/cue', createCueRouter(ctx, () => cueEngine));
+}
+
 // Central error handler (Express 5 forwards rejected async handlers here).
 app.use(errorHandler());
 
@@ -244,6 +254,8 @@ server.listen(config.port, config.host, () => {
   });
   limits.start();
   autostartDone = manager.autostartAll();
+  // Start the Cue engine (config-gated above). Failure here must never take down the server.
+  if (cueEngine) void cueEngine.start().catch((err) => logger.error('cue engine failed to start', { err }));
 });
 
 // Optional MCP (Model Context Protocol) board server — config-gated, OFF by default
@@ -257,6 +269,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   logger.info('shutting down — killing terminals', { signal });
   queueScheduler.stop();
+  if (cueEngine) await cueEngine.stop().catch(() => {});
   if (mcp) await mcp.close().catch(() => {});
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
   if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});

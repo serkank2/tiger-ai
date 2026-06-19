@@ -47,6 +47,8 @@ import type {
   TeamCommitResult,
   TeamPrInput,
   TeamPrResult,
+  CueEngineStatus,
+  CueSubscriptionStatus,
 } from '~/types';
 
 /**
@@ -309,5 +311,16 @@ export function useApi() {
     getPromptGeneration: (id: string) => req<PromptGenerationState>(`/api/prompts/generate/${id}`),
     reusePromptGeneration: (id: string, action: PromptGenerationReuseAction, body: Record<string, unknown> = {}) =>
       req<Record<string, unknown>>(`/api/prompts/generate/${id}/reuse`, { method: 'POST', body: { ...body, action } }),
+
+    // --- Cue (event-driven orchestration engine) ---
+    getCueStatus: () => req<CueEngineStatus>('/api/cue/status'),
+    listCueSubscriptions: () =>
+      req<{ subscriptions: CueSubscriptionStatus[] }>('/api/cue/subscriptions'),
+    reloadCue: () => req<CueEngineStatus>('/api/cue/reload', { method: 'POST' }),
+    triggerCue: (id: string, vars?: Record<string, string>) =>
+      req<CueSubscriptionStatus>(`/api/cue/trigger/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        body: vars ? { vars } : {},
+      }),
   };
 }

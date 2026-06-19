@@ -26,6 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: 'projects', to: '/tiger', label: 'Projects', labelKey: 'nav.projects', icon: '🐅', hint: 'Tiger AI software-team orchestrator' },
   { key: 'team', to: '/team', label: 'Team', labelKey: 'nav.team', icon: '👥', hint: 'AI Team — role agents that converse, build, and sign off' },
   { key: 'queue', to: '/queue', label: 'Queue', labelKey: 'nav.queue', icon: '📥', hint: 'Autonomous job queue with limit-aware dispatch' },
+  { key: 'cue', to: '/cue', label: 'Cue', labelKey: 'nav.cue', icon: '🎬', hint: 'Event-driven orchestration — agents wake each other into pipelines' },
   { key: 'prompts', to: '/prompts', label: 'Prompts', labelKey: 'nav.prompts', icon: '💬', hint: 'Prompt history and generation' },
   { key: 'templates', to: '/templates', label: 'Templates', labelKey: 'nav.templates', icon: '🧩', hint: 'Run-all templates and presets' },
   { key: 'limits', to: '/limits', label: 'Limits', labelKey: 'nav.limits', icon: '📊', hint: 'Provider usage and limit management' },

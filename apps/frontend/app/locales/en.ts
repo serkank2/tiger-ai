@@ -20,6 +20,7 @@ export default {
     projects: 'Projects',
     team: 'Team',
     queue: 'Queue',
+    cue: 'Cue',
     prompts: 'Prompts',
     templates: 'Templates',
     limits: 'Limits',

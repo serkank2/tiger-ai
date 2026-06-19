@@ -1132,3 +1132,34 @@ export interface ServerMessage {
   directive?: SteeringDirective;
   changes?: TeamChangesEvent;
 }
+
+// --- Cue (event-driven orchestration engine) ---
+
+export type CueEventType =
+  | 'file.changed'
+  | 'time.scheduled'
+  | 'time.once'
+  | 'agent.completed'
+  | 'cli.trigger';
+
+export type CueTargetKind = 'queue' | 'team';
+
+export interface CueSubscriptionStatus {
+  id: string;
+  name: string | null;
+  event: CueEventType;
+  target: CueTargetKind;
+  enabled: boolean;
+  lastFiredAt: string | null;
+  fireCount: number;
+  lastError: string | null;
+  pendingSources?: string[];
+}
+
+export interface CueEngineStatus {
+  enabled: boolean;
+  running: boolean;
+  workspace: string | null;
+  configPath: string | null;
+  subscriptions: CueSubscriptionStatus[];
+}
