@@ -213,7 +213,7 @@ const MIGRATIONS: Migration[] = [
         completed_at DATETIME(3) NULL,
         INDEX idx_prompt_generations_project_created (project_id, created_at),
         INDEX idx_prompt_generations_status_updated (status, updated_at)
-      )`,
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
       `CREATE TABLE IF NOT EXISTS prompt_history_events (
         id VARCHAR(32) PRIMARY KEY,
         project_id VARCHAR(512) NULL,
@@ -225,7 +225,20 @@ const MIGRATIONS: Migration[] = [
         created_at DATETIME(3) NOT NULL,
         INDEX idx_prompt_history_project_created (project_id, created_at),
         INDEX idx_prompt_history_generation (generation_id)
-      )`,
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ],
+  },
+  {
+    // Migration 008 originally created these two tables WITHOUT an explicit
+    // `DEFAULT CHARSET=utf8mb4` clause (every other table specifies it), so on a server
+    // whose default charset is not utf8mb4 they could silently truncate or reject 4-byte
+    // characters (emoji, many CJK/supplementary code points). Convert any already-created
+    // tables to utf8mb4 to match the rest of the schema. CONVERT TO is a no-op when the
+    // table is already utf8mb4_unicode_ci, so this is safe to run on fresh installs too.
+    id: '009_prompt_tables_utf8mb4',
+    statements: [
+      `ALTER TABLE prompt_generations CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      `ALTER TABLE prompt_history_events CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
     ],
   },
   EXECUTION_CHECKPOINT_MIGRATION,

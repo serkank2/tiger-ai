@@ -132,7 +132,7 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
       } else if (block.kind === 'TaskDirective') {
         parsed.taskDirectives.push(normalizeTaskDirective(item));
       } else {
-        parsed.signOffDirectives.push(normalizeSignOffDirective(item));
+        parsed.signOffDirectives.push(normalizeSignOffDirective(item, defaults.roleId));
       }
     }
   }
@@ -199,8 +199,13 @@ function normalizeMessage(raw: unknown, defaults: ParseTeamOutputDefaults, times
   const body = (stringField(raw, 'body') || stringField(raw, 'content')).trim();
   if (!body) throw new Error('TeamMessage.body is required');
   const kind = parseMessageKind(stringField(raw, 'kind') || stringField(raw, 'type', 'chat'));
-  const roleId = stringField(raw, 'roleId', defaults.roleId).trim() || defaults.roleId;
-  const roleName = stringField(raw, 'roleName', defaults.roleName).trim() || defaults.roleName;
+  // SECURITY / trust boundary: an agent's output may only ever speak AS ITSELF. The sender
+  // identity is forced to the executing role and is NEVER read from an agent-supplied
+  // `roleId`/`roleName`. Otherwise a worker could emit a message with `roleId: "<lead>"` and
+  // impersonate the Lead — the orchestrator treats `from === leadId` as authorization to
+  // queue executable work and to delegate, so a forged `from` would bypass Lead-owned
+  // sequencing entirely. `to` (the recipient) stays agent-controlled; only `from` is locked.
+  const from = defaults.roleId;
   const taskId = optionalString(raw, 'taskId');
   const to = stringField(raw, 'to') || stringArrayField(raw, 'to', ['all'])[0] || 'all';
   return {
@@ -208,7 +213,7 @@ function normalizeMessage(raw: unknown, defaults: ParseTeamOutputDefaults, times
     runId: defaults.runId,
     turnId: defaults.turnId,
     seq: defaults.startingSeq ?? 0,
-    from: roleId,
+    from,
     to,
     channel: optionalString(raw, 'channel'),
     kind,
@@ -226,14 +231,15 @@ function normalizeTaskDirective(raw: unknown): TaskDirective {
   return { kind: 'task', taskId, action, summary: optionalString(raw, 'summary') };
 }
 
-function normalizeSignOffDirective(raw: unknown): SignOffDirective {
+function normalizeSignOffDirective(raw: unknown, executingRoleId: string): SignOffDirective {
   if (!isRecord(raw)) throw new Error('SignOffDirective block must contain a JSON object');
-  const roleId = stringField(raw, 'roleId').trim();
-  if (!roleId) throw new Error('SignOffDirective.roleId is required');
   const status = parseSignOffStatus(stringField(raw, 'status'));
   const summary = stringField(raw, 'summary').trim();
   if (!summary) throw new Error('SignOffDirective.summary is required');
-  return { kind: 'signoff', roleId, status, summary };
+  // Trust boundary: a turn can only sign off for ITSELF. The directive's identity is forced
+  // to the executing role and any agent-supplied `roleId` is ignored, so one agent can never
+  // sign off on behalf of another required role and falsely satisfy the done-gate.
+  return { kind: 'signoff', roleId: executingRoleId, status, summary };
 }
 
 function parseMessageKind(value: string): TeamMessageKind {

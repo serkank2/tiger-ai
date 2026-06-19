@@ -15,6 +15,7 @@ import type {
   QueueRule,
   QueueState,
   CreateTeamRunResponse,
+  TeamChanges,
   SteerResponse,
   TeamArtifact,
   TeamMessageHistoryParams,
@@ -191,6 +192,8 @@ export function useApi() {
       req<{ path: string; content: string; artifact?: TeamArtifact }>(
         `/api/team/runs/${encodeURIComponent(runId)}/artifacts/file?path=${encodeURIComponent(path)}`,
       ),
+    getTeamChanges: (runId: string) =>
+      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/changes`),
     submitTeamSteering: (id: string, body: TeamSteeringInput) =>
       req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
 

@@ -41,6 +41,10 @@ export const useLimitsStore = defineStore('limits', () => {
       applyState(await useApi().getLimits());
     } catch (error) {
       loadError.value = errText(error);
+      // Mark the page resolved even on failure so it renders the error notice + empty state
+      // (with the header Refresh as a working retry) instead of stranding on a blank body —
+      // `loaded` gates every render branch, so leaving it false hides the whole view.
+      loaded.value = true;
     } finally {
       loading.value = false;
     }

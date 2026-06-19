@@ -246,6 +246,7 @@ async function doSend() {
     const date = today();
     let delivered = false;
     let deliveryFailureMessage: string | null = null;
+    let failedCount = 0;
     if (perTerminal.value) {
       for (const id of ids) {
         const t = terminals.byId[id];
@@ -256,6 +257,7 @@ async function doSend() {
           if (r.written > 0) delivered = true;
         } else {
           deliveryFailureMessage = broadcastFailureMessage(r);
+          failedCount += 1;
         }
       }
     } else {
@@ -270,6 +272,13 @@ async function doSend() {
     // Surface cases the per-send toast cannot fully cover.
     if (!delivered) {
       notices.push(deliveryFailureMessage ?? 'Not sent: no eligible terminal received it.', 'error');
+    } else if (failedCount > 0) {
+      // Partial fan-out failure: some terminals got it, others did not. Without this the user
+      // would be told nothing failed while part of the per-terminal send was silently lost.
+      notices.push(
+        `Sent to some terminals, but ${failedCount} failed: ${deliveryFailureMessage ?? 'delivery failed'}.`,
+        'error',
+      );
     }
     showPreview.value = false;
   } finally {

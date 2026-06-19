@@ -185,6 +185,12 @@ export interface TeamRunState {
   endedAt?: string;
   message?: string;
   pauseRequested?: boolean;
+  /**
+   * True once the run has been Closed: its persistent CLI sessions were killed, so its
+   * context is gone and it can never resume. Distinct from a Stopped run (sessions left
+   * alive, resumable). Set only by {@link TeamOrchestrator.close}.
+   */
+  closed?: boolean;
   lease?: {
     executionRunId: string;
     owner: string;
@@ -598,14 +604,34 @@ class DefaultCompletionGate implements TeamCompletionGate {
       maxRounds: this.limits.maxRounds,
       maxCorrectionCycles: DISABLED_GUARD,
     });
-    if (evaluation.complete) return { complete: true, reasons: [] };
-    if (evaluation.status === 'running') return { complete: false, reasons: evaluation.reasons };
+    // The pure done-gate reads the shared Tiger task summary, which does NOT include the
+    // team's per-role file task board. Lead-assigned work that is still queued (todo) or in
+    // progress must also block completion — otherwise a Lead turn that assigns a task and
+    // then signs off (with a passed verification present) could complete the run while a
+    // worker task it just queued is still unstarted. Account for the board here.
+    const boardPending = teamBoardPending(state);
+    const boardReason = `${boardPending} Lead-assigned task(s) are still queued or in progress on the team task board.`;
+    if (evaluation.complete) {
+      return boardPending === 0 ? { complete: true, reasons: [] } : { complete: false, reasons: [boardReason] };
+    }
+    const reasons = boardPending > 0 ? [...evaluation.reasons, boardReason] : evaluation.reasons;
+    if (evaluation.status === 'running') return { complete: false, reasons };
     return {
       complete: false,
-      reasons: evaluation.reasons,
+      reasons,
       terminalStatus: evaluation.status === 'failed' ? 'failed' : 'blocked',
     };
   }
+}
+
+/** Count Lead-assigned tasks still queued (todo) or in progress across every role's board. */
+function teamBoardPending(state: TeamRunState): number {
+  let pending = 0;
+  for (const role of state.roles) {
+    const counts = role.taskCounts;
+    if (counts) pending += (counts.todo ?? 0) + (counts.inProgress ?? 0);
+  }
+  return pending;
 }
 
 class MissingTeamTurnRunner implements TeamTurnRunner {
@@ -707,6 +733,13 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         persistTranscript: false,
       });
 
+      // A session that died this turn (CLI exited, or a hard timeout poisoned it) must not be
+      // reused — evict it so the next turn for this role spawns a fresh CLI instead of writing
+      // into an unknown live state.
+      if (!session.isAlive) {
+        sessions.delete(key);
+        return mapRunnerResult(result);
+      }
       // When this role has fed its CLI a lot of context, ask it to compact before the
       // next turn so the live session stays efficient instead of growing unbounded.
       if (session.shouldCompact(COMPACT_THRESHOLD_CHARS)) {
@@ -909,6 +942,8 @@ export class TeamOrchestrator extends EventEmitter {
   private paths: TeamPaths | null = null;
   private abort: AbortController | null = null;
   private loop: Promise<void> | null = null;
+  /** In-flight start/resume, so concurrent start()/resume() calls cannot launch two loops. */
+  private starting: Promise<TeamRunState> | null = null;
   private activeExecutionRunId: string | null = null;
   private runLeaseHeartbeat: NodeJS.Timeout | null = null;
   private runLeaseRefresh: Promise<void> | null = null;
@@ -952,6 +987,16 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   async createTeamRun(input: CreateTeamRunInput): Promise<TeamRunState> {
+    // Guard against replacing the in-memory run while a previous run's loop is still alive:
+    // createTeamRun reassigns `this.state`, and a live loop would then drive against the new
+    // run's state — mixing two runs and corrupting persistence/messages, and making
+    // stop/close target the wrong execution. Require the active run to be halted first.
+    if (this.loop) {
+      throw httpError(
+        409,
+        `a team run (${this.state?.status ?? 'active'}) is still running; stop or close it before starting a new one`,
+      );
+    }
     const workspace = path.resolve(input.workspace);
     const goal = input.goal.trim();
     if (!goal) throw httpError(400, 'team goal is required');
@@ -1059,6 +1104,12 @@ export class TeamOrchestrator extends EventEmitter {
       await this.finishRun('stopped', reason);
     }
     await this.runner.disposeRun?.(state.runId, { kill: true }).catch(() => undefined);
+    // Mark the run permanently closed: its sessions are gone, so it must not resume into a
+    // dead context. `resume()` rejects a closed run; the UI surfaces this via the DTO.
+    state.closed = true;
+    state.message = reason;
+    await this.persistState();
+    this.emitState();
     return this.getState();
   }
 
@@ -1083,6 +1134,11 @@ export class TeamOrchestrator extends EventEmitter {
     // re-enters the same run context. 'paused'/'interrupted'/'blocked' also remain resumable.
     if (state.status === 'completed' || state.status === 'failed') {
       throw httpError(409, `cannot resume a ${state.status} team run`);
+    }
+    // A Closed run killed its persistent sessions — there is no context to re-enter, so it
+    // cannot resume (Stop is the resumable halt; Close ends the run).
+    if (state.closed) {
+      throw httpError(409, 'cannot resume a closed team run; start a new run instead');
     }
     return this.startLoop('running');
   }
@@ -1177,7 +1233,19 @@ export class TeamOrchestrator extends EventEmitter {
     return this.messageBus.list(paths, afterSeq);
   }
 
-  private async startLoop(status: 'running'): Promise<TeamRunState> {
+  private startLoop(status: 'running'): Promise<TeamRunState> {
+    // Serialize concurrent start()/resume(): without this, two callers could both pass the
+    // `if (!this.loop)` check below before either assigns `this.loop`, launching two runLoop()
+    // instances against the same mutable state (duplicate turns, double task claims, racing
+    // round/turnCount). One in-flight start wins; the rest await its result.
+    if (this.starting) return this.starting;
+    this.starting = this.startLoopInner(status).finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  private async startLoopInner(status: 'running'): Promise<TeamRunState> {
     const state = this.requireState();
     await this.reconcileCurrentRun();
     await this.acquireRunLease();
@@ -1264,7 +1332,7 @@ export class TeamOrchestrator extends EventEmitter {
       // batch that includes the Lead, so a worker turn never absorbs a user directive
       // meant for the Lead. Worker turns run with no applied steering.
       if (leadId && turns.some((turn) => turn.roleId === leadId)) {
-        await this.drainSteeringAtBoundary();
+        this.drainSteeringAtBoundary();
       } else {
         this.lastBoundarySteering = [];
       }
@@ -1277,8 +1345,10 @@ export class TeamOrchestrator extends EventEmitter {
       // A turn (or a concurrent stop()) may have already driven the run to a terminal
       // state. Bail before mutating/re-persisting it or re-evaluating the completion gate,
       // so a terminal status is never overwritten with a misleading `completed`.
+      // Steering directives are marked applied inside applyTurnResult, but ONLY when the
+      // Lead turn that received them completed — so a failed Lead turn re-delivers the
+      // prompt next round instead of dropping it.
       if (this.requireState().status !== 'running') return;
-      await this.markBoundarySteeringApplied();
       if (await this.completeOrStopFromGate()) return;
     }
     if (this.state?.status === 'running') await this.finishRun('stopped', 'Stopped by user.');
@@ -1456,6 +1526,20 @@ export class TeamOrchestrator extends EventEmitter {
     // stalled Lead eventually idles instead of looping to the round cap.
     if (isLeadTurn) {
       state.leadReviewPending = false;
+      // A user prompt is consumed only when the Lead turn that received it COMPLETES. Mark
+      // those directives applied now; on a failed/interrupted Lead turn we leave them pending
+      // so they are re-delivered to the Lead next round instead of being silently dropped.
+      if (result.status === 'completed' && turn.appliedDirectiveIds.length > 0) {
+        const applied = new Set(turn.appliedDirectiveIds);
+        const appliedAt = nowIso();
+        for (const directive of state.directives) {
+          if (!applied.has(directive.id) || directive.status === 'applied') continue;
+          directive.status = 'applied';
+          directive.acknowledgedAt ??= appliedAt;
+          directive.appliedAt = appliedAt;
+        }
+        state.pendingSteeringCount = this.countPendingSteering();
+      }
       const productive =
         leadHadPendingWork || state.materialChangeAt !== materialBefore || signoffsRecorded > 0 || tasksEnqueued > 0;
       state.consecutiveIdleLeadTurns = productive ? 0 : (state.consecutiveIdleLeadTurns ?? 0) + 1;
@@ -1522,35 +1606,16 @@ export class TeamOrchestrator extends EventEmitter {
     return true;
   }
 
-  private async drainSteeringAtBoundary(): Promise<void> {
+  /**
+   * Capture the currently-pending user prompts so this turn's Lead sees them in its prompt.
+   * The directives are NOT marked acknowledged/applied here: a prompt is "handled" only once
+   * the Lead turn that received it COMPLETES (see {@link applyTurnResult}). If that turn fails
+   * or is interrupted, the directives stay pending and are re-delivered next round, so a user
+   * prompt is never silently dropped on a failed Lead turn.
+   */
+  private drainSteeringAtBoundary(): void {
     const state = this.requireState();
-    const pending = state.directives.filter((directive) => directive.status === 'pending');
-    this.lastBoundarySteering = pending;
-    if (pending.length === 0) return;
-    const ts = nowIso();
-    for (const directive of pending) {
-      directive.status = 'acknowledged';
-      directive.acknowledgedAt = ts;
-    }
-    state.pendingSteeringCount = this.countPendingSteering();
-    await this.persistState();
-    this.emitState();
-  }
-
-  private async markBoundarySteeringApplied(): Promise<void> {
-    if (this.lastBoundarySteering.length === 0) return;
-    const state = this.requireState();
-    const appliedAt = nowIso();
-    const ids = new Set(this.lastBoundarySteering.map((directive) => directive.id));
-    for (const directive of state.directives) {
-      if (!ids.has(directive.id) || directive.status === 'applied') continue;
-      directive.status = 'applied';
-      directive.appliedAt = appliedAt;
-    }
-    this.lastBoundarySteering = [];
-    state.pendingSteeringCount = this.countPendingSteering();
-    await this.persistState();
-    this.emitState();
+    this.lastBoundarySteering = state.directives.filter((directive) => directive.status === 'pending');
   }
 
   private async checkLimits(role: TeamRoleInstance): Promise<LimitRuleDecision> {
@@ -1650,13 +1715,27 @@ export class TeamOrchestrator extends EventEmitter {
   private async claimNextAgentTask(excludeRoleId?: string): Promise<{ roleId: string; task: AgentTask } | null> {
     if (!this.taskBoard) return null;
     const state = this.requireState();
-    const now = nowIso();
+    // Claim the globally OLDEST queued task across all worker roles (true FIFO across the
+    // board), not just the first role that happens to have work. Scanning roles in fixed
+    // order and taking the first non-empty queue would let a role whose queue is continually
+    // replenished starve the others; comparing each role's head task by `createdAt` (with the
+    // FIFO task id as a tiebreaker) is fair regardless of role order.
+    let best: { roleId: string; head: AgentTask } | null = null;
     for (const role of state.roles) {
       if (excludeRoleId && role.id === excludeRoleId) continue;
-      const task = await this.taskBoard.claimNext(role.id, now);
-      if (task) return { roleId: role.id, task };
+      const head = (await this.taskBoard.listTodo(role.id))[0];
+      if (!head) continue;
+      if (
+        !best ||
+        head.createdAt < best.head.createdAt ||
+        (head.createdAt === best.head.createdAt && head.id < best.head.id)
+      ) {
+        best = { roleId: role.id, head };
+      }
     }
-    return null;
+    if (!best) return null;
+    const task = await this.taskBoard.claimNext(best.roleId, nowIso());
+    return task ? { roleId: best.roleId, task } : null;
   }
 
   /** Derive a concise task title from an assignment message body. */
@@ -1759,6 +1838,12 @@ export class TeamOrchestrator extends EventEmitter {
       owner: this.owner,
       ttlMs: this.lockTtlMs,
     });
+    // A run interrupted mid-turn may have left a board task in `in-progress`. Return those to
+    // `todo` so they are re-claimed and re-run; otherwise they could never reach `done` and
+    // would block completion forever (the done-gate's board check would never clear).
+    if (this.taskBoard) {
+      await this.taskBoard.requeueInProgress(this.requireState().roles.map((role) => role.id)).catch(() => 0);
+    }
     await this.refreshWorkQueues();
     if (reclaimedTasks.length > 0 || reclaimedFindings.length > 0) {
       this.requireState().message =
@@ -1994,6 +2079,7 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     tasks: value.tasks ?? null,
     findings: value.findings ?? null,
     currentTurn: value.currentTurn ?? null,
+    closed: value.closed === true,
     leadReviewPending: value.leadReviewPending === true,
     consecutiveIdleLeadTurns:
       typeof value.consecutiveIdleLeadTurns === 'number' ? value.consecutiveIdleLeadTurns : 0,
@@ -2034,7 +2120,10 @@ function turnStatusToRunStatus(status: TeamTurnStatus): TeamRunStatus {
 
 function teamStatusToExecutionStatus(status: TeamRunStatus): ExecutionRunStatus {
   if (status === 'completed') return 'completed';
-  if (status === 'stopped' || status === 'paused') return 'stopped';
+  // 'blocked' is a resumable waiting halt (idle with no Lead work, a provider limit, or a
+  // blocked done-gate) — the run keeps its sessions alive and can resume — so it maps to
+  // 'stopped', not 'failed'. Recording it as failed would mislead execution status history.
+  if (status === 'stopped' || status === 'paused' || status === 'blocked') return 'stopped';
   if (status === 'interrupted') return 'interrupted';
   return 'failed';
 }
@@ -2072,10 +2161,22 @@ function teamTerminalId(runId: string, turnId: string): string {
   return `team-${runId}-${turnId}`.replace(/[^a-zA-Z0-9._-]/g, '-');
 }
 
-/** Infer a verification outcome from a role's verification message text. */
+/**
+ * Infer a verification outcome from a role's verification message text. Failure words are
+ * only decisive when NOT negated: a passing report like "build passed, 0 errors, no failures"
+ * must not be misread as a failure just because it contains the substrings "error"/"fail".
+ * We first neutralize "no/0/zero/without <failure-word>" phrasing, then look for a real
+ * failure signal in what remains.
+ */
 function inferVerificationOutcome(body: string): TeamVerificationStatus {
-  return /\b(fail|failed|failing|error|errors|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/i.test(
-    body,
+  const neutralized = body
+    .toLowerCase()
+    // "0 errors", "no failures", "zero warnings", "without errors", "free of regressions"
+    .replace(/\b(?:0|no|zero|without|free\s+of|free\s+from)\s+(?:open\s+)?(?:errors?|failures?|failing|warnings?|regressions?|issues?)\b/g, ' ')
+    // "all tests pass", "did pass", "tests passed" — keep positive phrasing from tripping fail words
+    .replace(/\b(?:all\s+)?(?:tests?|checks?|builds?)\s+pass(?:ed|ing)?\b/g, ' ');
+  return /\b(fail|failed|failing|failure|error|errored|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/.test(
+    neutralized,
   )
     ? 'failed'
     : 'passed';

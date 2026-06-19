@@ -215,7 +215,13 @@ export class RoleCliSession {
       }
 
       if (Date.now() - runStart >= timing.agentTimeoutMs) {
-        return { state: 'failed', error: 'agent timed out before signaling completion', alive: this.isAlive };
+        // The CLI is still chewing on this prompt past the hard timeout. Reusing this session
+        // for the next turn would let the stale, in-flight response (and its late marker)
+        // bleed into the following turn, cross-attributing output. Poison the session: tear
+        // the CLI down and report it dead so the pool discards it and the next turn starts a
+        // fresh CLI.
+        await this.dispose().catch(() => {});
+        return { state: 'failed', error: 'agent timed out before signaling completion', alive: false };
       }
     }
   }
@@ -237,6 +243,10 @@ export class RoleCliSession {
    */
   async compact(signal: AbortSignal): Promise<boolean> {
     if (!this.isAlive || signal.aborted) return false;
+    // Only Claude and Codex expose a `/compact` slash command. For other CLIs (e.g.
+    // Antigravity) typing `/compact` would be sent as ordinary prompt text and pollute the
+    // live session, so skip compaction there until a real command is verified.
+    if (this.o.tool !== 'claude' && this.o.tool !== 'codex') return false;
     try {
       this.o.manager.write(this.o.termId, '/compact');
       await sleep(this.o.timing.submitDelayMs, signal);

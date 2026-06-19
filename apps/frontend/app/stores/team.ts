@@ -11,6 +11,7 @@ import type {
   SteerResponse,
   SteeringDirective,
   TeamArtifact,
+  TeamChanges,
   TeamMessage,
   TeamMessageEvent,
   TeamMessageHistoryParams,
@@ -116,6 +117,8 @@ export const useTeamStore = defineStore('team', () => {
   const state = ref<TeamRunState | null>(null);
   const messages = ref<TeamMessage[]>([]);
   const artifacts = ref<TeamArtifact[]>([]);
+  const changes = ref<TeamChanges | null>(null);
+  const changesLoading = ref(false);
   const transcriptRunId = ref<string | null>(null);
   const nextCursor = ref<string | null>(null);
   const hasMoreMessages = ref(false);
@@ -307,8 +310,15 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = true;
     try {
       const next = normalizeStateResponse(await api.getTeamState() as StateResponse);
-      if (next) applyState(next);
-      else resetTranscript(null);
+      if (next) {
+        applyState(next);
+      } else {
+        // No active run server-side: clear any previously-shown run so the view does not keep
+        // rendering a stale run (and cannot send stop/resume/steer against a dead run id).
+        state.value = null;
+        resetTranscript(null);
+        loaded.value = true;
+      }
       actionError.value = null;
     } catch (error) {
       loadError.value = errText(error);
@@ -373,6 +383,24 @@ export const useTeamStore = defineStore('team', () => {
       throw error;
     } finally {
       artifactsLoading.value = false;
+    }
+  }
+
+  /** Load the run's real product changes (git working-tree diff vs HEAD) for the Changes view. */
+  async function loadChanges(runId = activeRunId.value): Promise<void> {
+    if (!runId) {
+      changes.value = null;
+      return;
+    }
+    changesLoading.value = true;
+    try {
+      changes.value = await api.getTeamChanges(runId);
+    } catch (error) {
+      loadError.value = errText(error);
+      notices.push(`Team changes: ${loadError.value}`, 'error');
+      throw error;
+    } finally {
+      changesLoading.value = false;
     }
   }
 
@@ -544,6 +572,8 @@ export const useTeamStore = defineStore('team', () => {
     state,
     messages,
     artifacts,
+    changes,
+    changesLoading,
     transcriptRunId,
     nextCursor,
     hasMoreMessages,
@@ -575,6 +605,7 @@ export const useTeamStore = defineStore('team', () => {
     duplicateTemplate,
     deleteTemplate,
     loadState,
+    loadChanges,
     loadMessages,
     loadMoreMessages,
     loadArtifacts,

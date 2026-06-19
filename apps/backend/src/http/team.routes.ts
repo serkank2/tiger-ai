@@ -28,6 +28,7 @@ import { ensureScaffold } from '../orchestrator/scaffold.js';
 import { resolveExistingDir } from '../util/paths.js';
 import { TeamTemplateServiceError } from '../services/team-templates.js';
 import { artifactsFile } from '../team/message-bus.js';
+import { computeTeamChanges } from '../team/changes.js';
 import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
@@ -376,6 +377,29 @@ export function createTeamRouter(ctx: AppCtx): Router {
       return;
     }
     res.json(await readArtifacts(workspace, req.params.id));
+  });
+
+  // The real product changes the team made in its workspace (git working-tree diff vs HEAD).
+  // This is the "what did the agents actually change?" view — distinct from `/artifacts`,
+  // which lists the run's .tiger bookkeeping files.
+  router.get('/runs/:id/changes', async (_req, res) => {
+    const state = orch.tryGetState();
+    const workspace = state?.workspace ?? knownWorkspace(ctx);
+    if (!workspace) {
+      res.json({
+        isGitRepo: false,
+        head: null,
+        branch: null,
+        files: [],
+        diff: '',
+        diffTruncated: false,
+        summary: { files: 0, insertions: 0, deletions: 0 },
+        generatedAt: new Date().toISOString(),
+        note: 'No team workspace is known yet.',
+      });
+      return;
+    }
+    res.json(await computeTeamChanges(workspace, new Date().toISOString()));
   });
 
   return router;

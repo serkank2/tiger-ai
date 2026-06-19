@@ -168,6 +168,23 @@ export class TaskBoard {
     await fs.rm(this.file('in-progress', task), { force: true });
   }
 
+  /**
+   * Return every role's `in-progress/` task to its `todo/` queue. Used on boot/resume: a
+   * task left in-progress by a crashed or interrupted run would otherwise block forever
+   * (it can never reach `done`, so the completion gate's board check never clears). Returns
+   * how many tasks were requeued.
+   */
+  async requeueInProgress(roleIds: string[]): Promise<number> {
+    let requeued = 0;
+    for (const roleId of roleIds) {
+      for (const task of await this.listInProgress(roleId)) {
+        await this.requeue(task);
+        requeued += 1;
+      }
+    }
+    return requeued;
+  }
+
   /** All task titles for a role across every state (used to dedupe re-assignments). */
   async titles(roleId: string): Promise<Set<string>> {
     const all = await Promise.all([

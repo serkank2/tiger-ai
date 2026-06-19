@@ -381,6 +381,11 @@ export interface TeamRunState {
    * screen can explain WHY a run is waiting/blocked without a separate question/reply model.
    */
   message?: string;
+  /**
+   * True once the run was Closed: its persistent CLI sessions were killed, so it cannot
+   * resume (Stop is the resumable halt). The UI hides Resume/Close once this is set.
+   */
+  closed?: boolean;
   updatedAt?: string;
 }
 

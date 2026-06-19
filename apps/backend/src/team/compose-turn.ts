@@ -65,12 +65,23 @@ export async function composeRoleTurnPrompt(opts: ComposeRoleTurnOptions): Promi
   });
   const budget = new ContextBudget();
 
+  // Spend the shared context budget in PRIORITY order, independent of display order: the
+  // role's own persona first, then THIS turn's assignment and the open completion gates
+  // (the agent must always see what it was scheduled to do and what still blocks the run),
+  // and only THEN the bulky project prompt and transcript history with whatever remains.
+  // Computing the budgeted strings here — before the transcript — guarantees a large
+  // transcript can never starve the per-turn assignment down to nothing.
+  const personaBlock = roleSection(normalized, budget);
+  const assignedBlock = assignedContextSection(normalized, budget);
+  const projectPromptText = budget.take('original project prompt', projectPrompt || '(project prompt not found)');
+  const transcriptText = transcript.trim() ? budget.take('team transcript', transcript) : '(no prior team messages)';
+
   const sections = [
     automationPreamble(normalized),
-    roleSection(normalized, budget),
-    `---\n\n# ORIGINAL PROJECT PROMPT\n\nThis is the user's original request. Treat it as the source of truth for the project goal. It may be in any language; your own output must still be in English.\n\n<<<PROJECT_PROMPT\n${budget.take('original project prompt', projectPrompt || '(project prompt not found)')}\n>>>`,
-    `---\n\n# TEAM TRANSCRIPT WINDOW\n\n${transcript.trim() ? budget.take('team transcript', transcript) : '(no prior team messages)'}`,
-    assignedContextSection(normalized, budget),
+    personaBlock,
+    `---\n\n# ORIGINAL PROJECT PROMPT\n\nThis is the user's original request. Treat it as the source of truth for the project goal. It may be in any language; your own output must still be in English.\n\n<<<PROJECT_PROMPT\n${projectPromptText}\n>>>`,
+    `---\n\n# TEAM TRANSCRIPT WINDOW\n\n${transcriptText}`,
+    assignedBlock,
     outputContractSection(normalized),
   ];
 

@@ -573,10 +573,36 @@ export interface TeamRunState {
   round?: number;
   /** Human-readable status/intent line (e.g. a waiting reason when the Lead has idled). */
   message?: string;
+  /**
+   * True once the run was Closed: its persistent CLI sessions were killed, so it cannot
+   * resume (Stop is the resumable halt). The UI hides Resume/Close once this is set.
+   */
+  closed?: boolean;
   updatedAt?: string;
 }
 
 export type TeamState = TeamRunState;
+
+export type TeamChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unknown';
+
+export interface TeamChangeFile {
+  path: string;
+  status: TeamChangeStatus;
+  oldPath?: string;
+}
+
+/** The real product changes a team run made in its workspace (git working-tree diff vs HEAD). */
+export interface TeamChanges {
+  isGitRepo: boolean;
+  head: string | null;
+  branch: string | null;
+  files: TeamChangeFile[];
+  diff: string;
+  diffTruncated: boolean;
+  summary: { files: number; insertions: number; deletions: number };
+  generatedAt: string;
+  note?: string;
+}
 
 export interface RoleConfigInput {
   templateId?: string;

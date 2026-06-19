@@ -119,6 +119,7 @@ export function toTeamRunStateDto(
     turnCount: state.turnCount,
     round: state.round,
     message: state.message,
+    closed: state.closed,
     updatedAt: state.materialChangeAt,
   };
 }

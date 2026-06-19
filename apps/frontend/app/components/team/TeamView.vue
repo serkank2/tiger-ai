@@ -10,6 +10,7 @@ import TeamChatPanel from './TeamChatPanel.vue';
 import TeamDoneGate from './TeamDoneGate.vue';
 import TeamSteerBar from './TeamSteerBar.vue';
 import TeamTerminalPane from './TeamTerminalPane.vue';
+import TeamChangesPanel from './TeamChangesPanel.vue';
 
 const emit = defineEmits<{ back: [] }>();
 
@@ -42,27 +43,33 @@ const turnsLabel = computed(() => {
 // The role whose live terminal is open. Tracked by id so the pane follows the role's
 // latest turn terminal as new turns start.
 const selectedRoleId = ref<string | null>(null);
+const showChanges = ref(false);
 const terminalRole = computed(
   () => state.value?.roles.find((r) => r.id === selectedRoleId.value && r.terminalId) ?? null,
 );
 const isActive = computed(() => status.value === 'running' || status.value === 'paused' || status.value === 'blocked');
 const connected = computed(() => connection.status === 'connected');
 
+// A Closed run had its persistent CLI sessions killed: it can neither Resume (no context to
+// re-enter) nor be Closed again. `closed` overrides the status-based guesses below — a closed
+// run keeps status 'stopped', which would otherwise still offer both.
+const closed = computed(() => state.value?.closed === true);
 const canPause = computed(() => status.value === 'running');
 // Stop is a resumable halt (role sessions stay alive), so a stopped run can Resume into the
 // same context; Close (hasLiveSessions) remains available to end those retained sessions.
 const canResume = computed(
   () =>
-    status.value === 'paused' ||
-    status.value === 'blocked' ||
-    status.value === 'interrupted' ||
-    status.value === 'stopped',
+    !closed.value &&
+    (status.value === 'paused' ||
+      status.value === 'blocked' ||
+      status.value === 'interrupted' ||
+      status.value === 'stopped'),
 );
 const canStop = computed(() => isActive.value || status.value === 'interrupted');
 // Persistent CLI terminals stay alive until the run completes/fails or is Closed, so a
-// Close (kill terminals) is offered for any non-terminal-and-done run.
+// Close (kill terminals) is offered for any non-terminal-and-done run that isn't already closed.
 const hasLiveSessions = computed(
-  () => status.value != null && status.value !== 'completed' && status.value !== 'failed',
+  () => !closed.value && status.value != null && status.value !== 'completed' && status.value !== 'failed',
 );
 
 const STATUS_LABEL: Record<string, string> = {
@@ -137,6 +144,12 @@ async function reset() {
           title="End the run and kill the agent terminals"
           @click="team.close(state.id)"
         >Close</BaseButton>
+        <BaseButton
+          size="sm"
+          variant="ghost"
+          title="See the real code changes the agents made (git diff)"
+          @click="showChanges = true"
+        >⌥ Changes</BaseButton>
         <BaseButton v-if="!isActive" size="sm" variant="ghost" @click="reset">New run</BaseButton>
       </div>
     </header>
@@ -183,6 +196,8 @@ async function reset() {
       :title="terminalRole.name"
       @close="selectedRoleId = null"
     />
+
+    <TeamChangesPanel v-if="showChanges" @close="showChanges = false" />
   </div>
 </template>
 
