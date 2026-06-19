@@ -577,6 +577,36 @@ export interface RoleSnapshot {
   turnCount?: number;
   /** This role's task-board counts (todo/in-progress/done). */
   tasks?: { todo: number; inProgress: number; done: number };
+  /** Messages waiting in this role's inbox (delivered via a `sendMessage` coordination verb). */
+  inbox?: number;
+}
+
+/** A handoff dependency (CAO `handoff` verb): a blocking sync delegation between two roles. */
+export interface HandoffDependencySnapshot {
+  id: string;
+  fromRoleId: string;
+  toRoleId: string;
+  taskId: string;
+  title: string;
+  /** True while still blocking (the target's task is not yet completed). */
+  pending: boolean;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+/** Lifecycle of a per-task git worktree (Part B). */
+export type TeamTaskWorktreeStatus = 'active' | 'merged' | 'conflict' | 'failed';
+
+/** A per-task git worktree the team created (or kept un-merged on a conflict). */
+export interface TeamTaskWorktreeSnapshot {
+  taskId: string;
+  roleId: string;
+  branch: string;
+  status: TeamTaskWorktreeStatus;
+  summary?: TeamAttemptSummary | null;
+  note?: string;
+  createdAt: string;
+  mergedAt?: string;
 }
 
 export type TeamTurnSnapshotStatus =
@@ -734,6 +764,10 @@ export interface TeamRunState {
   currentAttemptId?: string | null;
   /** The promoted attempt id, if one has been promoted into the base branch. */
   promotedAttemptId?: string | null;
+  /** Open + resolved handoff dependencies (CAO `handoff` verb). */
+  handoffs?: HandoffDependencySnapshot[];
+  /** Per-task git worktree branches (Part B); un-merged ones can be merged/cleaned from the UI. */
+  taskWorktrees?: TeamTaskWorktreeSnapshot[];
   turnCount?: number;
   round?: number;
   /** Human-readable status/intent line (e.g. a waiting reason when the Lead has idled). */

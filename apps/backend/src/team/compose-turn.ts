@@ -43,6 +43,8 @@ export interface ComposeRoleTurnOptions {
   finding?: TeamContextBlock;
   steering?: string[];
   verification?: string[];
+  /** Inbox messages (from `sendMessage` coordination verbs) addressed to this role. */
+  inbox?: string[];
   /** The exact gates still keeping the run open (so the role knows what "done" needs). */
   completionStatus?: string[];
   transcriptMaxMessages?: number;
@@ -183,6 +185,12 @@ function assignedContextSection(opts: NormalizedComposeRoleTurnOptions, budget: 
     );
   }
 
+  if (opts.inbox?.length) {
+    parts.push(
+      `## Your Inbox (messages sent directly to you)\n\nAnother role used \`sendMessage\` to reach you. Read these and act on them this turn:\n\n${budget.take('inbox', opts.inbox.map((s) => `- ${s}`).join('\n'))}`,
+    );
+  }
+
   if (opts.completionStatus?.length) {
     parts.push(
       `## What The Run Still Needs To Complete\n\nThe run will not finish until every item below is resolved. ` +
@@ -246,6 +254,23 @@ Optional sign-off directive block:
 \`\`\`
 
 Allowed sign-off statuses are: done, blocked, pending. You are recorded as signed off ONLY when you emit a \`SignOffDirective\` with \`"status": "done"\` — a \`signoff\` chat message, or status \`pending\`/\`blocked\`, does NOT mark you done. Emit \`done\` only when your role's responsibilities are genuinely met with evidence.
+
+Optional coordination directive block — explicit, first-class coordination verbs (typically used by the Lead). The system applies these on top of the task board:
+
+\`\`\`CoordinationDirective
+{
+  "verb": "handoff",
+  "to": "tester",
+  "title": "Verify the login flow",
+  "body": "Run the end-to-end login tests and report pass/fail with the command + output."
+}
+\`\`\`
+
+Allowed verbs are: handoff, assign, sendMessage.
+- \`handoff\` (SYNCHRONOUS): delegate a scoped task to \`to\` and BLOCK on it — the run is not done until \`to\` completes the handed-off task. Use when you cannot finish your own work until they finish theirs.
+- \`assign\` (ASYNCHRONOUS): delegate a scoped task to \`to\` fire-and-forget — they report back via a normal message when done; you are NOT blocked. Use to parallelize independent work.
+- \`sendMessage\` (INBOX): deliver a message to \`to\`'s inbox; it is surfaced to them at their next turn. Use to inform/ask without assigning a task.
+Only the Lead may \`handoff\`/\`assign\` executable work (a non-Lead attempt is flagged for Lead review, not run); any role may \`sendMessage\`. The delegating identity is always recorded as YOU — you cannot send as another role.
 
 Communication discipline (this is a real team — make every message earn its place):
 - Post only substantive messages that move the work forward. Do NOT narrate, restate what others already said, or pad. One sharp message beats five vague ones.

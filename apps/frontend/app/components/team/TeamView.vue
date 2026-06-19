@@ -16,6 +16,7 @@ import TeamAttemptsPanel from './TeamAttemptsPanel.vue';
 import TeamRunHistory from './TeamRunHistory.vue';
 import TeamRoleControls from './TeamRoleControls.vue';
 import TeamVerifications from './TeamVerifications.vue';
+import TeamCoordinationPanel from './TeamCoordinationPanel.vue';
 
 const emit = defineEmits<{ back: [] }>();
 
@@ -223,6 +224,7 @@ async function reset() {
 
         <TeamMetricsPanel :metrics="team.metrics" />
         <TeamAttemptsPanel @view-diff="showChanges = true" />
+        <TeamCoordinationPanel />
         <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
 
         <details v-if="team.artifacts.length" class="artifacts">

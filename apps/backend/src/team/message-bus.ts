@@ -44,11 +44,33 @@ export interface VerificationDirective {
   summary?: string;
 }
 
+export type CoordinationVerb = 'handoff' | 'assign' | 'sendMessage';
+
+/**
+ * A parsed coordination directive (CAO `handoff` / `assign` / `sendMessage`). The delegating
+ * identity (`fromRoleId`) is FORCED to the executing role — same trust boundary as sign-offs /
+ * verification — so a worker can never forge a delegation as the Lead. The target (`toRoleId`)
+ * stays agent-controlled; the orchestrator validates it against the run's roles when applying.
+ *  - `handoff`     — synchronous delegation; the delegator's done-gate blocks until the target
+ *                    completes the handed-off task.
+ *  - `assign`      — asynchronous delegation; fire-and-forget (no blocking dependency).
+ *  - `sendMessage` — deliver a message to the target role's inbox (surfaced at its next turn).
+ */
+export interface CoordinationDirective {
+  kind: 'coordination';
+  verb: CoordinationVerb;
+  fromRoleId: string;
+  toRoleId: string;
+  title?: string;
+  body: string;
+}
+
 export interface ParsedTeamOutput {
   messages: TeamMessage[];
   taskDirectives: TaskDirective[];
   signOffDirectives: SignOffDirective[];
   verificationDirectives: VerificationDirective[];
+  coordinationDirectives: CoordinationDirective[];
 }
 
 export interface ParseTeamOutputDefaults {
@@ -139,6 +161,7 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
     taskDirectives: [],
     signOffDirectives: [],
     verificationDirectives: [],
+    coordinationDirectives: [],
   };
   const timestamp = defaults.timestamp ?? new Date().toISOString();
   const blocks = extractBlocks(output);
@@ -153,6 +176,8 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
         parsed.taskDirectives.push(normalizeTaskDirective(item));
       } else if (block.kind === 'VerificationDirective') {
         parsed.verificationDirectives.push(normalizeVerificationDirective(item, defaults.roleId));
+      } else if (block.kind === 'CoordinationDirective') {
+        parsed.coordinationDirectives.push(normalizeCoordinationDirective(item, defaults.roleId));
       } else {
         parsed.signOffDirectives.push(normalizeSignOffDirective(item, defaults.roleId));
       }
@@ -184,13 +209,14 @@ export function systemBlockerMessage(input: {
 }
 
 interface OutputBlock {
-  kind: 'TeamMessage' | 'TaskDirective' | 'SignOffDirective' | 'VerificationDirective';
+  kind: 'TeamMessage' | 'TaskDirective' | 'SignOffDirective' | 'VerificationDirective' | 'CoordinationDirective';
   body: string;
 }
 
 function extractBlocks(output: string): OutputBlock[] {
   const blocks: OutputBlock[] = [];
-  const re = /```[ \t]*(TeamMessage|TaskDirective|SignOffDirective|VerificationDirective)[^\r\n]*\r?\n([\s\S]*?)```/gi;
+  const re =
+    /```[ \t]*(TeamMessage|TaskDirective|SignOffDirective|VerificationDirective|CoordinationDirective)[^\r\n]*\r?\n([\s\S]*?)```/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(output)) !== null) {
     const kind = normalizeBlockKind(match[1]);
@@ -206,6 +232,7 @@ function normalizeBlockKind(value: string | undefined): OutputBlock['kind'] | nu
   if (lower === 'taskdirective') return 'TaskDirective';
   if (lower === 'signoffdirective') return 'SignOffDirective';
   if (lower === 'verificationdirective') return 'VerificationDirective';
+  if (lower === 'coordinationdirective') return 'CoordinationDirective';
   return null;
 }
 
@@ -280,6 +307,43 @@ function normalizeVerificationDirective(raw: unknown, executingRoleId: string): 
     outcome,
     summary: optionalString(raw, 'summary') ?? optionalString(raw, 'output'),
   };
+}
+
+function normalizeCoordinationDirective(raw: unknown, executingRoleId: string): CoordinationDirective {
+  if (!isRecord(raw)) throw new Error('CoordinationDirective block must contain a JSON object');
+  const verb = parseCoordinationVerb(stringField(raw, 'verb') || stringField(raw, 'action'));
+  // `to` / `toRoleId` is the target role (agent-controlled, validated by the orchestrator).
+  const toRoleId = (stringField(raw, 'to') || stringField(raw, 'toRoleId') || stringField(raw, 'roleId')).trim();
+  if (!toRoleId) throw new Error('CoordinationDirective.to (target role id) is required');
+  const body = (stringField(raw, 'body') || stringField(raw, 'content') || stringField(raw, 'message')).trim();
+  if (!body) throw new Error('CoordinationDirective.body is required');
+  // Trust boundary: the DELEGATING identity is FORCED to the executing role. An agent-supplied
+  // `from`/`fromRoleId` is ignored — exactly like sign-offs/verification — so a worker can never
+  // forge a handoff/assign/sendMessage AS THE LEAD and bypass Lead-owned delegation authority.
+  return {
+    kind: 'coordination',
+    verb,
+    fromRoleId: executingRoleId,
+    toRoleId,
+    title: optionalString(raw, 'title'),
+    body,
+  };
+}
+
+function parseCoordinationVerb(value: string): CoordinationVerb {
+  switch (value) {
+    case 'handoff':
+      return 'handoff';
+    case 'assign':
+      return 'assign';
+    case 'sendMessage':
+    case 'sendmessage':
+    case 'message':
+    case 'send_message':
+      return 'sendMessage';
+    default:
+      throw new Error(`unsupported CoordinationDirective.verb: ${value}`);
+  }
 }
 
 function parseVerificationOutcome(value: string): VerificationDirectiveOutcome {

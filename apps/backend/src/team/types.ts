@@ -426,6 +426,52 @@ export interface TeamAttemptSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// Team git-worktree-per-task isolation (opt-in; config.team.worktreePerTask).
+// When ON and the workspace is a git repo, each role's claimed task runs in its
+// own throwaway worktree on branch `kaplan/<runId>-<taskId>`, whose diff is
+// captured and merged back to the workspace base on completion. A merge CONFLICT
+// aborts the merge, marks the task blocked, and KEEPS the worktree intact for
+// manual resolution (never auto-resolved). The records below are surfaced to the
+// UI so the user can see + act on un-merged per-task branches.
+// ---------------------------------------------------------------------------
+
+/** Lifecycle of a per-task worktree. */
+export type TeamTaskWorktreeStatus = 'active' | 'merged' | 'conflict' | 'failed';
+
+/** A per-task git worktree the team created (or kept on a conflict). */
+export interface TeamTaskWorktree {
+  /** The role+turn task this worktree isolates. */
+  taskId: string;
+  /** Role that worked the task in this worktree. */
+  roleId: string;
+  /** Absolute path to the worktree working directory. */
+  path: string;
+  /** Branch checked out in the worktree (`kaplan/<runId>-<taskId>`). */
+  branch: string;
+  /** The base commit the worktree branched from (the merge-back target anchor). */
+  baseRef: string;
+  status: TeamTaskWorktreeStatus;
+  /** Captured diff summary vs `baseRef` (when known). */
+  summary?: TeamAttemptSummary | null;
+  /** A human note (e.g. the conflicting files / merge error) when status is conflict/failed. */
+  note?: string;
+  createdAt: string;
+  mergedAt?: string;
+}
+
+/** A compact per-task-worktree record for the UI snapshot. */
+export interface TeamTaskWorktreeSnapshot {
+  taskId: string;
+  roleId: string;
+  branch: string;
+  status: TeamTaskWorktreeStatus;
+  summary?: TeamAttemptSummary | null;
+  note?: string;
+  createdAt: string;
+  mergedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Compact UI snapshot (the conversation is streamed separately).
 // ---------------------------------------------------------------------------
 
@@ -445,6 +491,88 @@ export interface RoleSnapshot {
   turnCount?: number;
   /** This role's task-board counts (todo/in-progress/done). */
   tasks?: { todo: number; inProgress: number; done: number };
+  /**
+   * Messages waiting in this role's inbox (delivered via a `sendMessage` coordination verb)
+   * that it has not yet seen at a turn. Surfaced so the UI can show a per-role inbox badge.
+   */
+  inbox?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Coordination verbs (CAO: handoff / assign / sendMessage). First-class
+// directives an agent (typically the Lead) emits to delegate scoped work or
+// deliver a message to another role. Parsed by `message-bus.ts` (with the same
+// roleId trust boundary as sign-offs/verification) and applied by the
+// orchestrator on top of the existing task-board + scheduler. See
+// `compose-turn.ts` for how the verbs are documented to agents.
+// ---------------------------------------------------------------------------
+
+/** The three explicit coordination verbs an agent can emit. */
+export type CoordinationVerb = 'handoff' | 'assign' | 'sendMessage';
+
+/**
+ * A handoff/assign/sendMessage directive a turn emitted.
+ *  - `handoff`     — synchronous delegation: a scoped task to `to`, treated as a BLOCKING
+ *                    dependency on the delegator until the target completes it.
+ *  - `assign`      — asynchronous delegation: a scoped task to `to`, fire-and-forget (the
+ *                    target reports back via a normal message; the delegator is not blocked).
+ *  - `sendMessage` — deliver a message to `to`'s inbox, surfaced at its next turn.
+ * `from` is forced to the executing role (trust boundary); `to` is agent-controlled.
+ */
+export interface CoordinationDirective {
+  kind: 'coordination';
+  verb: CoordinationVerb;
+  /** Forced to the executing role id — never read from agent output. */
+  fromRoleId: string;
+  /** Target role id (agent-supplied; validated against the run's roles by the orchestrator). */
+  toRoleId: string;
+  /** Short title for the delegated task (handoff/assign) or a label for the message. */
+  title?: string;
+  /** The task description / acceptance criteria (handoff/assign) or message body (sendMessage). */
+  body: string;
+}
+
+/** A pending blocking dependency created by a `handoff` (delegator waits on a target's task). */
+export interface HandoffDependency {
+  /** Unique id. */
+  id: string;
+  /** Role that handed the work off (and is blocked until the target completes it). */
+  fromRoleId: string;
+  /** Role the handed-off task is assigned to. */
+  toRoleId: string;
+  /** The target role's board task id this handoff is waiting on. */
+  taskId: string;
+  /** Short title of the handed-off task. */
+  title: string;
+  createdAt: string;
+  /** Set once the target's task completed and the dependency cleared. */
+  resolvedAt?: string;
+}
+
+/** One message sitting in a role's inbox (delivered by a `sendMessage` coordination verb). */
+export interface InboxMessage {
+  id: string;
+  /** Role that sent the message. */
+  fromRoleId: string;
+  /** Optional short label/subject. */
+  title?: string;
+  body: string;
+  createdAt: string;
+  /** Set once the message has been surfaced to the recipient at a turn (then it is dropped). */
+  deliveredAt?: string;
+}
+
+/** A compact handoff-dependency record for the UI snapshot. */
+export interface HandoffDependencySnapshot {
+  id: string;
+  fromRoleId: string;
+  toRoleId: string;
+  taskId: string;
+  title: string;
+  /** True while the dependency is still blocking (target task not yet completed). */
+  pending: boolean;
+  createdAt: string;
+  resolvedAt?: string;
 }
 
 /**
@@ -562,6 +690,16 @@ export interface TeamRunState {
   currentAttemptId?: string | null;
   /** The promoted attempt id, if one has been promoted into the base branch. */
   promotedAttemptId?: string | null;
+  /**
+   * Open handoff dependencies (synchronous delegations still blocking their delegator).
+   * Empty when no `handoff` verb is in flight — fully backward-compatible.
+   */
+  handoffs?: HandoffDependencySnapshot[];
+  /**
+   * Per-task git worktree branches that are still un-merged (kept on a merge conflict, or
+   * awaiting a manual merge-back). Empty when team worktree-per-task is OFF or none are open.
+   */
+  taskWorktrees?: TeamTaskWorktreeSnapshot[];
   /** Total turns executed so far (UI loop counter). */
   turnCount?: number;
   /** Current coordination round (UI loop counter). */

@@ -30,6 +30,8 @@ import type {
   TeamRunStartInput,
   TeamRunSummary,
   TeamAttemptSnapshot,
+  HandoffDependencySnapshot,
+  TeamTaskWorktreeSnapshot,
   TeamSignoffSnapshot,
   TeamStateEvent,
   TeamSteeringEvent,
@@ -167,6 +169,9 @@ export const useTeamStore = defineStore('team', () => {
   // Attempt model (vibe-kanban): the run's recorded attempts + which is promoted.
   const attempts = computed<TeamAttemptSnapshot[]>(() => state.value?.attempts ?? []);
   const promotedAttemptId = computed(() => state.value?.promotedAttemptId ?? null);
+  // Coordination verbs + worktree-per-task surfaces.
+  const handoffs = computed<HandoffDependencySnapshot[]>(() => state.value?.handoffs ?? []);
+  const taskWorktrees = computed<TeamTaskWorktreeSnapshot[]>(() => state.value?.taskWorktrees ?? []);
   const openBlockers = computed(() => state.value?.doneGate?.openBlockers ?? []);
   // True while showing a read-only rehydrate of a past run (history view), so control
   // surfaces (steer / role controls) hide and live frames for other runs are ignored.
@@ -708,6 +713,24 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  // --- Team worktree-per-task (Part B): merge/cleanup a kept per-task branch ---
+
+  async function mergeWorktree(taskId: string, cleanup = false, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    setBusy(`worktree:${taskId}`, true);
+    actionError.value = null;
+    try {
+      const next = normalizeStateResponse(await api.mergeTeamWorktree(id, taskId, cleanup) as TeamRunStateResponse);
+      if (next) applyState(next);
+      notices.push(cleanup ? 'Worktree discarded' : 'Worktree merged back', 'info');
+    } catch (error) {
+      recordFailure(cleanup ? 'Discard worktree failed' : 'Merge worktree failed', error);
+      throw error;
+    } finally {
+      setBusy(`worktree:${taskId}`, false);
+    }
+  }
+
   // --- Incremental live-frame appliers (no full snapshot re-fetch) ----------
 
   /** Is this frame for the run we are currently showing? Read-only history views ignore others. */
@@ -860,6 +883,8 @@ export const useTeamStore = defineStore('team', () => {
     metrics,
     attempts,
     promotedAttemptId,
+    handoffs,
+    taskWorktrees,
     openBlockers,
     readOnly,
     busy,
@@ -903,6 +928,7 @@ export const useTeamStore = defineStore('team', () => {
     createAttempt,
     promoteAttempt,
     loadAttemptDiff,
+    mergeWorktree,
     bindSocket,
   };
 });

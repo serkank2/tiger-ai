@@ -301,6 +301,13 @@ export function useApi() {
     getTeamAttemptDiff: (id: string, attemptId: string) =>
       req<TeamChanges>(`/api/team/runs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/diff`),
 
+    // --- Team worktree-per-task (Part B): merge/cleanup a kept per-task worktree branch ---
+    mergeTeamWorktree: (id: string, taskId: string, cleanup = false) =>
+      req<TeamRunStateResponse>(
+        `/api/team/runs/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(taskId)}/merge`,
+        { method: 'POST', body: { cleanup } },
+      ),
+
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),
     enqueueQueueJob: (body: QueueEnqueueInput) =>

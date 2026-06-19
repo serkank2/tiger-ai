@@ -16,6 +16,14 @@ import path from 'node:path';
 
 export type AgentTaskStatus = 'todo' | 'in-progress' | 'done';
 
+/**
+ * How a task arrived on the board. Default is the implicit Lead `task` flow. The two
+ * coordination verbs tag their queued task so the orchestrator can account for them:
+ *  - `handoff` — a SYNCHRONOUS delegation that blocks the delegator's done-gate until done.
+ *  - `assign`  — an ASYNCHRONOUS, fire-and-forget delegation (no blocking dependency).
+ */
+export type TaskRelationship = 'task' | 'handoff' | 'assign';
+
 export interface AgentTask {
   /** Stable id, zero-padded per role for FIFO ordering (TASK-0001 …). */
   id: string;
@@ -28,6 +36,10 @@ export interface AgentTask {
   /** Full task description / acceptance criteria. */
   body: string;
   status: AgentTaskStatus;
+  /** How this task arrived (implicit `task`, or a `handoff` / `assign` coordination verb). */
+  relationship?: TaskRelationship;
+  /** For a `handoff` task: the dependency id the delegator is blocked on until this completes. */
+  handoffId?: string;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
@@ -92,7 +104,15 @@ export class TaskBoard {
   }
 
   /** Assign a task to a role by writing it into the role's `todo/` queue. */
-  async enqueue(input: { roleId: string; title: string; body: string; fromRoleId?: string; createdAt: string }): Promise<AgentTask> {
+  async enqueue(input: {
+    roleId: string;
+    title: string;
+    body: string;
+    fromRoleId?: string;
+    createdAt: string;
+    relationship?: TaskRelationship;
+    handoffId?: string;
+  }): Promise<AgentTask> {
     await this.ensureRole(input.roleId);
     const id = await this.nextId(input.roleId);
     const task: AgentTask = {
@@ -102,6 +122,8 @@ export class TaskBoard {
       title: input.title.slice(0, 200),
       body: input.body,
       status: 'todo',
+      relationship: input.relationship,
+      handoffId: input.handoffId,
       createdAt: input.createdAt,
     };
     await this.write('todo', task);
@@ -166,6 +188,20 @@ export class TaskBoard {
     const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined };
     await this.write('todo', moved);
     await fs.rm(this.file('in-progress', task), { force: true });
+  }
+
+  /**
+   * Reopen a task from ANY state back to `todo`, clearing whichever state file currently holds
+   * it. Used when a per-task worktree merge conflicts AFTER the task was filed done: the task
+   * must be honestly re-queued (it is no longer "done") without leaving a stale `done` file.
+   */
+  async reopen(task: AgentTask): Promise<void> {
+    const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, completedAt: undefined };
+    await this.write('todo', moved);
+    await Promise.all([
+      fs.rm(this.file('in-progress', task), { force: true }),
+      fs.rm(this.file('done', task), { force: true }),
+    ]);
   }
 
   /**

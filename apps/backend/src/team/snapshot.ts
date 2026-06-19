@@ -18,6 +18,7 @@ import {
 } from './TeamOrchestrator.js';
 import type {
   DoneGateState,
+  HandoffDependencySnapshot,
   RoleSnapshot,
   RoleStatus,
   SteeringDirective,
@@ -25,6 +26,7 @@ import type {
   TeamMessage,
   TeamRunState,
   TeamSignoffSnapshot,
+  TeamTaskWorktreeSnapshot,
   TeamTurnSnapshot,
   TeamVerificationSnapshot,
 } from './types.js';
@@ -72,7 +74,36 @@ export function toRoleSnapshot(state: EngineTeamRunState, role: EngineRole): Rol
     terminalId: role.activeTerminalId,
     turnCount: state.turns.filter((turn) => turn.roleId === role.id).length,
     tasks: role.taskCounts,
+    inbox: state.inboxes?.[role.id]?.length || undefined,
   };
+}
+
+/** Project the engine's handoff dependencies onto the compact UI snapshot shape. */
+function toHandoffSnapshots(state: EngineTeamRunState): HandoffDependencySnapshot[] {
+  return (state.handoffs ?? []).map((h) => ({
+    id: h.id,
+    fromRoleId: h.fromRoleId,
+    toRoleId: h.toRoleId,
+    taskId: h.taskId,
+    title: h.title,
+    pending: !h.resolvedAt,
+    createdAt: h.createdAt,
+    resolvedAt: h.resolvedAt,
+  }));
+}
+
+/** Project the engine's per-task worktrees onto the compact UI snapshot shape. */
+function toTaskWorktreeSnapshots(state: EngineTeamRunState): TeamTaskWorktreeSnapshot[] {
+  return (state.taskWorktrees ?? []).map((w) => ({
+    taskId: w.taskId,
+    roleId: w.roleId,
+    branch: w.branch,
+    status: w.status,
+    summary: w.summary ?? null,
+    note: w.note,
+    createdAt: w.createdAt,
+    mergedAt: w.mergedAt,
+  }));
 }
 
 /**
@@ -188,6 +219,8 @@ export function toTeamRunStateDto(
     attempts: toAttemptSnapshots(state),
     currentAttemptId: state.currentAttemptId ?? null,
     promotedAttemptId: state.promotedAttemptId ?? null,
+    handoffs: toHandoffSnapshots(state),
+    taskWorktrees: toTaskWorktreeSnapshots(state),
     turnCount: state.turnCount,
     round: state.round,
     message: state.message,

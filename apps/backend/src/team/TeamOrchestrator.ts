@@ -45,9 +45,18 @@ import {
 } from './completion.js';
 import { logger } from '../obs/logger.js';
 import { computeTeamChanges, type TeamChanges } from './changes.js';
-import { createWorktree, isGitRepo, worktreeDiff, type Worktree } from '../git/worktree.js';
+import { createWorktree, isGitRepo, removeWorktree, worktreeDiff, type Worktree } from '../git/worktree.js';
 import { spawn } from 'node:child_process';
-import type { TeamAttemptStatus, TeamAttemptSummary } from './types.js';
+import type {
+  TeamAttemptStatus,
+  TeamAttemptSummary,
+  CoordinationVerb,
+  HandoffDependency,
+  InboxMessage,
+  TeamTaskWorktree,
+  TeamTaskWorktreeStatus,
+} from './types.js';
+import { config as appConfig } from '../config.js';
 import { notifyRunOutcome } from './notify.js';
 import type { DoneGateState, DoneGateBlocker } from './types.js';
 import { toRoleSnapshot } from './snapshot.js';
@@ -209,6 +218,23 @@ export interface TeamRunState {
   currentAttemptId?: string | null;
   /** Id of the promoted attempt, once one has been promoted into the base branch. */
   promotedAttemptId?: string | null;
+  /**
+   * Open + resolved handoff dependencies (CAO `handoff` verb). An OPEN handoff (no
+   * `resolvedAt`) is a blocking dependency on its delegator's done-gate until the target
+   * completes the handed-off task. Empty/undefined for runs with no handoff in flight.
+   */
+  handoffs?: HandoffDependency[];
+  /**
+   * Per-role inboxes (CAO `sendMessage` verb): messages awaiting delivery to a role at its
+   * next turn. Keyed by role id. An entry is dropped once `deliveredAt` is set (surfaced).
+   */
+  inboxes?: Record<string, InboxMessage[]>;
+  /**
+   * Per-task git worktrees created when `config.team.worktreePerTask` is ON and the workspace
+   * is a git repo. Records kept on a merge conflict (status 'conflict') stay until the user
+   * resolves/cleans them via the merge-back endpoint. Empty when the feature is OFF.
+   */
+  taskWorktrees?: TeamTaskWorktree[];
   round: number;
   turnCount: number;
   currentTurn: TeamTurnRecord | null;
@@ -386,6 +412,8 @@ export interface TeamRoleTurnInput {
   completionHints?: string[];
   /** The full board task assigned to this turn (its content goes into the prompt). */
   assignedTask?: { id: string; title?: string; content: string };
+  /** Inbox messages (from `sendMessage` verbs) to surface to this role at this turn. */
+  inbox?: { fromRoleId: string; title?: string; body: string; createdAt: string }[];
 }
 
 /** A task-board directive a turn emitted (claim/complete/block/needs_work/request_review). */
@@ -410,6 +438,14 @@ export interface TeamRoleTurnResult {
   }[];
   /** Task-board directives the turn emitted; the orchestrator applies them to the board + state. */
   taskDirectives?: TeamTaskDirective[];
+  /** Coordination verbs (handoff/assign/sendMessage) the turn emitted. */
+  coordinationDirectives?: {
+    verb: CoordinationVerb;
+    fromRoleId: string;
+    toRoleId: string;
+    title?: string;
+    body: string;
+  }[];
   materialChange?: boolean;
   reason?: string;
 }
@@ -485,6 +521,12 @@ export interface TeamOrchestratorOptions {
    * unless a future runner supplies it — it is wired through as an extension point.
    */
   maxBudget?: number;
+  /**
+   * Run each role's CLAIMED board task in its own git worktree (Part B). Defaults to
+   * `config.team.worktreePerTask`. Only takes effect when the workspace is a git repo;
+   * otherwise (and when false) role turns use the shared workspace cwd, exactly as today.
+   */
+  worktreePerTask?: boolean;
 }
 
 export class TeamPaths {
@@ -760,10 +802,18 @@ class DefaultCompletionGate implements TeamCompletionGate {
     // worker task it just queued is still unstarted. Account for the board here.
     const boardPending = teamBoardPending(state);
     const boardReason = `${boardPending} Lead-assigned task(s) are still queued or in progress on the team task board.`;
+    // A synchronous `handoff` is a BLOCKING dependency: the run must not be considered done while
+    // a handed-off task is still outstanding (its delegator's work is not satisfied until the
+    // target completes it). Account for open handoffs alongside the board.
+    const openHandoffCount = openHandoffs(state.handoffs).length;
+    const handoffReason = `${openHandoffCount} handoff dependency(ies) are still awaiting completion by the delegated role.`;
+    const extra: string[] = [];
+    if (boardPending > 0) extra.push(boardReason);
+    if (openHandoffCount > 0) extra.push(handoffReason);
     if (evaluation.complete) {
-      return boardPending === 0 ? { complete: true, reasons: [] } : { complete: false, reasons: [boardReason] };
+      return extra.length === 0 ? { complete: true, reasons: [] } : { complete: false, reasons: extra };
     }
-    const reasons = boardPending > 0 ? [...evaluation.reasons, boardReason] : evaluation.reasons;
+    const reasons = extra.length > 0 ? [...evaluation.reasons, ...extra] : evaluation.reasons;
     if (evaluation.status === 'running') return { complete: false, reasons };
     return {
       complete: false,
@@ -870,6 +920,7 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
             }
           : undefined,
         steering: input.appliedSteering.map((directive) => directive.body),
+        inbox: input.inbox?.map((m) => (m.title ? `From ${m.fromRoleId} — ${m.title}: ${m.body}` : `From ${m.fromRoleId}: ${m.body}`)),
         completionStatus: input.completionHints,
         transcriptMaxMessages: options.transcriptMaxMessages,
         model: input.role.model,
@@ -1077,12 +1128,20 @@ function mapRunnerResult(result: RunRoleTurnResult): TeamRoleTurnResult {
     outcome: directive.outcome,
     summary: directive.summary,
   }));
+  const coordinationDirectives = result.parsed.coordinationDirectives.map((directive) => ({
+    verb: directive.verb,
+    fromRoleId: directive.fromRoleId,
+    toRoleId: directive.toRoleId,
+    title: directive.title,
+    body: directive.body,
+  }));
   return {
     status: runnerStateToTurnStatus(result.outcome.state),
     messages: result.parsed.messages.map(toEngineDraft),
     signoffs: signoffs.length ? signoffs : undefined,
     taskDirectives: taskDirectives.length ? taskDirectives : undefined,
     verifications: verifications.length ? verifications : undefined,
+    coordinationDirectives: coordinationDirectives.length ? coordinationDirectives : undefined,
     reason: result.outcome.error,
   };
 }
@@ -1162,6 +1221,53 @@ export function promoteGuard(attempts: TeamAttemptRecord[], attemptId: string): 
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Pure helpers for the coordination verbs + worktree-per-task isolation. Kept as
+// free functions over plain data so the done-gate handoff accounting and the
+// per-task cwd / merge decisions are unit-testable without the engine, git, or fs.
+// ---------------------------------------------------------------------------
+
+/** Open (still-blocking) handoff dependencies — those without a `resolvedAt`. */
+export function openHandoffs(handoffs: HandoffDependency[] | undefined): HandoffDependency[] {
+  return (handoffs ?? []).filter((h) => !h.resolvedAt);
+}
+
+/**
+ * Decide the working directory a Team role turn should launch in. Pure + unit-tested.
+ * Worktree isolation applies only when (a) the feature is enabled, (b) the workspace is a
+ * git repo, AND (c) a worktree was successfully created for this task (worktreePath set).
+ * In every other case the turn runs in the shared workspace — i.e. default-OFF behavior is
+ * byte-for-byte identical to before.
+ */
+export function decideTeamTurnCwd(opts: {
+  workspace: string;
+  enabled: boolean;
+  isRepo: boolean;
+  worktreePath?: string | null;
+}): string {
+  if (opts.enabled && opts.isRepo && opts.worktreePath) return opts.worktreePath;
+  return opts.workspace;
+}
+
+/** Outcome classes for a per-task branch merge-back (mirrors the Tiger orchestrator). */
+export type TeamMergeOutcome = 'fast-forward' | 'merged' | 'conflict' | 'failed';
+
+/**
+ * Classify a `git merge` result into a {@link TeamMergeOutcome}. Pure + unit-tested.
+ * Detects the CONFLICT signature git prints so the caller leaves the worktree intact for
+ * manual resolution instead of auto-resolving.
+ */
+export function classifyTeamMerge(res: { ok: boolean; stdout: string; stderr: string }): TeamMergeOutcome {
+  if (res.ok) {
+    return /already up to date|fast-forward/i.test(res.stdout) ? 'fast-forward' : 'merged';
+  }
+  const blob = `${res.stdout}\n${res.stderr}`.toLowerCase();
+  if (blob.includes('conflict') || blob.includes('automatic merge failed') || blob.includes('overwritten by merge')) {
+    return 'conflict';
+  }
+  return 'failed';
+}
+
 /**
  * Autonomous AI team run engine. It composes the pure scheduler, one-turn runner,
  * message bus, completion gate, limit checks, file queues, and shared execution
@@ -1183,6 +1289,8 @@ export class TeamOrchestrator extends EventEmitter {
   private taskBoard: TaskBoard | null = null;
   /** Tasks claimed for the current in-flight turns, keyed by turn id, so completion can file them. */
   private turnTasks = new Map<string, AgentTask>();
+  /** Per-task git worktrees created for in-flight turns, keyed by turn id (Part B). */
+  private turnWorktrees = new Map<string, Worktree>();
 
   private readonly executionPersistence: ExecutionPersistence;
   private readonly teamPersistence: TeamPersistence;
@@ -1198,6 +1306,8 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxIdleLeadTurns: number;
   private readonly maxDurationMs?: number;
   private readonly maxBudget?: number;
+  /** Part B: run each claimed task in its own git worktree (config-gated; off by default). */
+  private readonly worktreePerTask: boolean;
   /** Consecutive failed turns since the last successful turn (recovery guard). */
   private consecutiveTurnFailures = 0;
   /** Last emitted done-gate snapshot (JSON), so the `done` event fires only on change. */
@@ -1218,6 +1328,7 @@ export class TeamOrchestrator extends EventEmitter {
     this.maxIdleLeadTurns = options.maxIdleLeadTurns ?? 2;
     this.maxDurationMs = options.maxDurationMs;
     this.maxBudget = options.maxBudget;
+    this.worktreePerTask = options.worktreePerTask ?? appConfig.team.worktreePerTask;
     this.scheduler = options.scheduler ?? new LeadOwnedScheduler(this.maxIdleLeadTurns);
     this.runner = options.runner ?? new MissingTeamTurnRunner();
     this.completionGate =
@@ -1272,6 +1383,9 @@ export class TeamOrchestrator extends EventEmitter {
       pendingSteeringCount: 0,
       leadReviewPending: false,
       consecutiveIdleLeadTurns: 0,
+      handoffs: [],
+      inboxes: {},
+      taskWorktrees: [],
       materialChangeAt: createdAt,
       createdAt,
       message: 'Ready to start.',
@@ -2013,6 +2127,16 @@ export class TeamOrchestrator extends EventEmitter {
         message: `${boardPending} Lead-assigned task(s) are still queued or in progress on the team task board.`,
       });
     }
+    // Open synchronous handoffs are blocking dependencies — surface each as an explicit blocker.
+    const open = openHandoffs(state.handoffs);
+    if (open.length > 0) {
+      blockers.push({
+        code: 'handoff_pending',
+        message: `${open.length} handoff dependency(ies) awaiting completion: ${open
+          .map((h) => `${h.taskId} (${h.fromRoleId}→${h.toRoleId})`)
+          .join(', ')}.`,
+      });
+    }
     return {
       satisfied: blockers.length === 0,
       requiredRoleIds: completion.requiredRoleIds,
@@ -2184,6 +2308,17 @@ export class TeamOrchestrator extends EventEmitter {
     role.lastTurnAt = turn.startedAt;
     role.activeTerminalId = terminalId;
     if (scheduled.task) this.turnTasks.set(turn.id, scheduled.task);
+
+    // Part B: when worktree-per-task is ON and the workspace is a git repo, isolate this
+    // claimed task in its own throwaway worktree; the turn then runs with that cwd. Best-effort:
+    // a git failure degrades to the shared workspace (decideTeamTurnCwd returns it), exactly as
+    // the OFF behavior. No-op when the feature is off, there is no claimed task, or it's non-git.
+    const turnCwd = await this.maybeCreateTaskWorktree(turn, scheduled.task ?? null);
+
+    // Drain this role's inbox (sendMessage verbs) so the messages are surfaced in this turn's
+    // prompt; mark them delivered (they are then dropped from the inbox below).
+    const inbox = this.drainInbox(role.id);
+
     await this.persistState();
     this.emitState();
     this.emitRole(role);
@@ -2197,7 +2332,7 @@ export class TeamOrchestrator extends EventEmitter {
         latestVerification: latestVerification(state),
       });
       const result = await this.runner.runRoleTurn({
-        workspace: state.workspace,
+        workspace: turnCwd,
         paths: this.requirePaths(),
         runId: state.runId,
         role: { ...role },
@@ -2212,6 +2347,7 @@ export class TeamOrchestrator extends EventEmitter {
           : undefined,
         findingId: scheduled.findingId,
         completionHints: gate.complete ? [] : gate.reasons,
+        inbox: inbox.length ? inbox : undefined,
       });
       if (signal.aborted || this.state?.status !== 'running') {
         this.interruptTurn(turn, 'Interrupted before the turn result could be applied.');
@@ -2233,12 +2369,232 @@ export class TeamOrchestrator extends EventEmitter {
       if (this.state?.currentTurn?.id === turn.id) this.state.currentTurn = null;
       // File this turn's claimed board task (done on success, requeued otherwise).
       await this.fileTurnTask(turn);
+      // Part B: capture the per-task diff and merge the worktree branch back (conflict-safe).
+      // No-op when no worktree was created for this turn.
+      await this.mergeBackTurnWorktree(turn, role, scheduled.task ?? null);
       await this.persistState();
       this.emitState();
       this.emitRole(role);
       // The turn may have changed real project files; surface a changeset event when it did.
       await this.emitChangesIfChanged();
     }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Part B: per-task git worktree isolation. Mirrors the conservative pattern in
+  // the Tiger orchestrator's fan-out (createWorktree → run with the worktree cwd
+  // → diff → merge back → prune; a CONFLICT aborts the merge, marks the task
+  // blocked, and KEEPS the worktree intact for manual resolution). Config-gated
+  // OFF; when off these are no-ops and turns use the shared workspace cwd.
+  // ----------------------------------------------------------------------------
+
+  /** Whether worktree-per-task isolation is active for this run (feature on + git workspace). */
+  private async worktreeIsolationActive(): Promise<boolean> {
+    if (!this.worktreePerTask) return false;
+    const state = this.state;
+    if (!state) return false;
+    return isGitRepo(state.workspace).catch(() => false);
+  }
+
+  /**
+   * Create a per-task worktree for a claimed task and return the cwd the turn should run in.
+   * Returns the shared workspace (unchanged behavior) when the feature is off, there is no
+   * claimed task, the workspace is not a git repo, or worktree creation fails. Never throws.
+   */
+  private async maybeCreateTaskWorktree(turn: TeamTurnRecord, task: AgentTask | null): Promise<string> {
+    const state = this.requireState();
+    const isRepo = await this.worktreeIsolationActive();
+    if (!task || !isRepo) return decideTeamTurnCwd({ workspace: state.workspace, enabled: this.worktreePerTask, isRepo, worktreePath: null });
+    try {
+      const worktree = await createWorktree({
+        repoDir: state.workspace,
+        taskId: `${state.runId}-${task.id}`,
+      });
+      this.turnWorktrees.set(turn.id, worktree);
+      state.taskWorktrees ??= [];
+      state.taskWorktrees.push({
+        taskId: task.id,
+        roleId: task.roleId,
+        path: worktree.path,
+        branch: worktree.branch,
+        baseRef: worktree.baseRef,
+        status: 'active',
+        createdAt: nowIso(),
+      });
+      await this.appendMessage({
+        turnId: turn.id,
+        from: SYSTEM_SENDER,
+        kind: 'system',
+        body: `Isolating ${task.id} in worktree ${worktree.branch} for ${turn.roleName}.`,
+      }).catch(() => undefined);
+      return decideTeamTurnCwd({
+        workspace: state.workspace,
+        enabled: this.worktreePerTask,
+        isRepo,
+        worktreePath: worktree.path,
+      });
+    } catch (err) {
+      await this.appendSystemBlocker(
+        `Could not isolate ${task.id} in its own git worktree (${messageFromUnknown(err)}); it will run in the shared workspace.`,
+        turn.id,
+      ).catch(() => undefined);
+      return state.workspace;
+    }
+  }
+
+  /**
+   * Capture a finished turn's per-task worktree diff and merge its branch back into the
+   * workspace base — conflict-safe. A clean merge prunes the worktree; a CONFLICT (or any merge
+   * failure) ABORTS the merge, marks the task blocked, keeps the worktree + branch intact, and
+   * surfaces a blocker. Never auto-resolves. No-op when no worktree was created for this turn.
+   */
+  private async mergeBackTurnWorktree(turn: TeamTurnRecord, role: TeamRoleInstance, task: AgentTask | null): Promise<void> {
+    const worktree = this.turnWorktrees.get(turn.id);
+    if (!worktree) return;
+    this.turnWorktrees.delete(turn.id);
+    const state = this.requireState();
+    const repoDir = state.workspace;
+    const record = (state.taskWorktrees ?? []).find((w) => w.branch === worktree.branch);
+
+    // Capture the per-task diff summary (best-effort).
+    try {
+      const diff = await worktreeDiff({ worktreePath: worktree.path, baseRef: worktree.baseRef });
+      const stat = parseShortstat(diff.stat);
+      if (record) record.summary = { files: diff.files.length, insertions: stat.insertions, deletions: stat.deletions };
+    } catch {
+      // leave summary null
+    }
+
+    // Never merge a half-finished branch: a non-completed turn keeps the worktree for inspection.
+    if (turn.status !== 'completed') {
+      if (record) {
+        record.status = 'failed';
+        record.note = `Turn ended ${turn.status}; worktree kept un-merged for inspection.`;
+      }
+      await this.appendSystemBlocker(
+        `${role.name}'s turn for ${task?.id ?? worktree.taskId} did not complete; KEEPING worktree ${worktree.branch} un-merged.`,
+        turn.id,
+      ).catch(() => undefined);
+      return;
+    }
+
+    // Commit whatever the turn left in the worktree so the merge sees it (no-op when nothing changed).
+    await runGit(worktree.path, ['add', '-A']);
+    await runGit(worktree.path, [
+      '-c',
+      'user.email=team@kaplan.local',
+      '-c',
+      'user.name=Kaplan Team',
+      'commit',
+      '--no-gpg-sign',
+      '--no-edit',
+      '-m',
+      `kaplan team: ${task?.id ?? worktree.taskId}`,
+    ]);
+
+    const merge = await runGit(repoDir, ['merge', '--no-edit', worktree.branch]);
+    const outcome = classifyTeamMerge(merge);
+    if (outcome === 'conflict' || outcome === 'failed') {
+      // Do NOT auto-resolve: abort so the workspace is clean again, KEEP the worktree + branch.
+      await runGit(repoDir, ['merge', '--abort']);
+      const detail = (merge.stderr || merge.stdout).trim().split('\n')[0] ?? '';
+      if (record) {
+        record.status = 'conflict';
+        record.note = `merge ${outcome}: ${detail}`;
+      }
+      // Mark the task blocked: reopen it from wherever it sits (fileTurnTask already filed a
+      // completed turn's task as done) so it is honestly re-queued, not silently lost.
+      if (task && this.taskBoard) {
+        const located = await this.taskBoard.findTask(task.roleId, task.id).catch(() => null);
+        if (located) await this.taskBoard.reopen(located.task).catch(() => undefined);
+      }
+      state.leadReviewPending = true;
+      this.staleSignoffs(`A per-task worktree merge conflict reopened ${task?.id ?? worktree.taskId}.`);
+      await this.appendSystemBlocker(
+        `MERGE ${outcome.toUpperCase()} merging ${worktree.branch} back for ${task?.id ?? worktree.taskId}: ${detail}. ` +
+          `The merge was aborted; the worktree and branch are KEPT for manual resolution. The task was marked blocked.`,
+        turn.id,
+      ).catch(() => undefined);
+      await this.refreshWorkQueues();
+      return;
+    }
+
+    // Clean merge — record it, prune the now-redundant worktree.
+    if (record) {
+      record.status = 'merged';
+      record.mergedAt = nowIso();
+    }
+    await removeWorktree({ repoDir, path: worktree.path, force: true }).catch(() => undefined);
+    await this.appendMessage({
+      turnId: turn.id,
+      from: SYSTEM_SENDER,
+      kind: 'system',
+      body: `Merged ${worktree.branch} back for ${task?.id ?? worktree.taskId} (${outcome}).`,
+    }).catch(() => undefined);
+  }
+
+  /**
+   * Merge-back / cleanup affordance for the UI (Part B). Re-attempts the merge of a KEPT
+   * per-task worktree branch (conflict case) into the workspace base, or — when `cleanup` is
+   * true — discards the branch + worktree without merging. Conflict-safe: a re-merge that still
+   * conflicts is aborted and the worktree kept. Returns the updated snapshot.
+   */
+  async mergeTaskWorktree(
+    runId: string | undefined,
+    taskId: string,
+    opts: { cleanup?: boolean } = {},
+  ): Promise<TeamRunState> {
+    await this.ensureLoaded(runId);
+    const state = this.requireState();
+    state.taskWorktrees ??= [];
+    const record = state.taskWorktrees.find((w) => w.taskId === taskId && (w.status === 'conflict' || w.status === 'failed'));
+    if (!record) throw httpError(404, `no un-merged worktree for task ${taskId}`);
+    if (!(await isGitRepo(state.workspace).catch(() => false))) {
+      throw httpError(409, 'the workspace is not a git repository');
+    }
+    const repoDir = state.workspace;
+
+    if (opts.cleanup) {
+      await removeWorktree({ repoDir, path: record.path, force: true }).catch(() => undefined);
+      await runGit(repoDir, ['branch', '-D', record.branch]).catch(() => undefined);
+      state.taskWorktrees = state.taskWorktrees.filter((w) => w !== record);
+      await this.persistState();
+      this.emitState();
+      return this.getState();
+    }
+
+    const merge = await runGit(repoDir, ['merge', '--no-edit', record.branch]);
+    const outcome = classifyTeamMerge(merge);
+    if (outcome === 'conflict' || outcome === 'failed') {
+      await runGit(repoDir, ['merge', '--abort']);
+      const detail = (merge.stderr || merge.stdout).trim().split('\n')[0] ?? '';
+      record.note = `merge ${outcome}: ${detail}`;
+      await this.persistState();
+      this.emitState();
+      throw httpError(409, `branch "${record.branch}" still conflicts; the merge was aborted (worktree kept). ${detail}`.trim());
+    }
+    record.status = 'merged';
+    record.mergedAt = nowIso();
+    await removeWorktree({ repoDir, path: record.path, force: true }).catch(() => undefined);
+    await this.appendMessage({
+      from: SYSTEM_SENDER,
+      kind: 'system',
+      body: `Merged kept worktree ${record.branch} back for ${taskId} (${outcome}).`,
+    }).catch(() => undefined);
+    await this.persistState();
+    this.emitState();
+    return this.getState();
+  }
+
+  /** Drain a role's inbox into a delivery list (and clear the delivered entries). */
+  private drainInbox(roleId: string): { fromRoleId: string; title?: string; body: string; createdAt: string }[] {
+    const state = this.requireState();
+    const inbox = state.inboxes?.[roleId];
+    if (!inbox || inbox.length === 0) return [];
+    const delivered = inbox.map((m) => ({ fromRoleId: m.fromRoleId, title: m.title, body: m.body, createdAt: m.createdAt }));
+    // Inbox messages are one-shot: once surfaced at a turn they are removed.
+    state.inboxes![roleId] = [];
+    return delivered;
   }
 
   private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
@@ -2349,6 +2705,10 @@ export class TeamOrchestrator extends EventEmitter {
     // Lead-addressed review requests are handled (and re-routed to the Lead) here.
     const tasksEnqueued = await this.enqueueTaskAssignments(appended);
 
+    // Apply the explicit coordination verbs (handoff/assign/sendMessage) this turn emitted,
+    // on top of the existing board + scheduler. Counts toward Lead productivity.
+    const coordinationEffects = await this.applyCoordinationDirectives(turn, role, result.coordinationDirectives ?? []);
+
     turn.status = result.status;
     turn.endedAt = nowIso();
     turn.reason = result.reason;
@@ -2382,7 +2742,8 @@ export class TeamOrchestrator extends EventEmitter {
         state.materialChangeAt !== materialBefore ||
         signoffsRecorded > 0 ||
         tasksEnqueued > 0 ||
-        directiveEffects > 0;
+        directiveEffects > 0 ||
+        coordinationEffects > 0;
       state.consecutiveIdleLeadTurns = productive ? 0 : (state.consecutiveIdleLeadTurns ?? 0) + 1;
     } else {
       state.leadReviewPending = true;
@@ -2645,6 +3006,160 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   /**
+   * Apply the explicit coordination verbs a turn emitted (CAO `handoff` / `assign` /
+   * `sendMessage`), composing on top of the existing per-role task board + scheduler — NOT a
+   * parallel system. Returns how many directives took effect (so a Lead turn that coordinated
+   * counts as productive). Trust + delegation rules mirror `enqueueTaskAssignments`:
+   *  - `from` is already forced to the executing role by the parser (cannot impersonate).
+   *  - `handoff`/`assign` are executable delegation, so ONLY the Lead may emit them to a worker;
+   *    a non-Lead delegation is dropped and flagged for Lead review (never silently executed).
+   *  - `sendMessage` is just an inbox note, so ANY role may send one (no executable authority).
+   * Mapping onto the board/scheduler/done-gate:
+   *  - `handoff` → enqueue a `handoff`-tagged board task for the target AND register a blocking
+   *    {@link HandoffDependency} on the delegator; the done-gate stays open until the target's
+   *    task completes (then the dependency resolves — see {@link resolveHandoffsForTask}).
+   *  - `assign`  → enqueue an `assign`-tagged board task; fire-and-forget (no dependency).
+   *  - `sendMessage` → push into the target role's inbox; surfaced at its next turn via the prompt.
+   * Best-effort: an unknown target or board IO hiccup is reported as a system note, never crashes.
+   */
+  private async applyCoordinationDirectives(
+    turn: TeamTurnRecord,
+    role: TeamRoleInstance,
+    directives: TeamRoleTurnResult['coordinationDirectives'],
+  ): Promise<number> {
+    if (!directives || directives.length === 0 || !this.taskBoard) return 0;
+    const board = this.taskBoard;
+    const state = this.requireState();
+    const roleIds = new Set(state.roles.map((r) => r.id));
+    const leadId = this.leadRoleId();
+    state.handoffs ??= [];
+    state.inboxes ??= {};
+    let applied = 0;
+
+    for (const directive of directives) {
+      const to = directive.toRoleId;
+      // The parser forces `fromRoleId` to the executing role, but defend in depth here too.
+      const from = role.id;
+      if (!roleIds.has(to) || to === from) {
+        await this.appendMessage({
+          turnId: turn.id,
+          from: SYSTEM_SENDER,
+          kind: 'system',
+          body: `${role.name} emitted a ${directive.verb} to an unknown or self target "${to}"; it was ignored.`,
+        }).catch(() => undefined);
+        continue;
+      }
+
+      if (directive.verb === 'sendMessage') {
+        const inbox = (state.inboxes[to] ??= []);
+        inbox.push({
+          id: nanoid(),
+          fromRoleId: from,
+          title: directive.title,
+          body: directive.body,
+          createdAt: nowIso(),
+        });
+        await this.appendMessage({
+          turnId: turn.id,
+          from,
+          to,
+          kind: 'chat',
+          channel: 'inbox',
+          body: directive.title ? `[${directive.title}] ${directive.body}` : directive.body,
+        }).catch(() => undefined);
+        applied += 1;
+        continue;
+      }
+
+      // handoff / assign are executable delegation — only the Lead may delegate work.
+      if (leadId && from !== leadId) {
+        await this.appendMessage({
+          turnId: turn.id,
+          from: SYSTEM_SENDER,
+          kind: 'system',
+          body: `${role.name} attempted to ${directive.verb} work to ${to}, but only the Lead delegates work. The request was not queued; it is flagged for Lead review.`,
+        }).catch(() => undefined);
+        state.leadReviewPending = true;
+        continue;
+      }
+
+      const title = (directive.title?.trim() || this.taskTitle(directive.body)).slice(0, 200);
+      const relationship: 'handoff' | 'assign' = directive.verb;
+      const handoffId = relationship === 'handoff' ? nanoid() : undefined;
+      const task = await board
+        .enqueue({
+          roleId: to,
+          fromRoleId: from,
+          title,
+          body: directive.body,
+          createdAt: nowIso(),
+          relationship,
+          handoffId,
+        })
+        .catch(() => null);
+      if (!task) continue;
+
+      if (relationship === 'handoff' && handoffId) {
+        // Register the blocking dependency: the delegator's done-gate stays open until the
+        // target completes this task (resolved in resolveHandoffsForTask on completion).
+        state.handoffs.push({
+          id: handoffId,
+          fromRoleId: from,
+          toRoleId: to,
+          taskId: task.id,
+          title,
+          createdAt: task.createdAt,
+        });
+        await this.appendMessage({
+          turnId: turn.id,
+          from,
+          to,
+          kind: 'handoff',
+          body: `Handoff (blocking): ${title}. ${role.name} is waiting on ${to} to complete ${task.id} before its own work is done.`,
+          refs: [{ kind: 'task', value: task.id }],
+        }).catch(() => undefined);
+        // A new blocking dependency staled prior sign-offs (the run is no longer "done").
+        state.materialChangeAt = nowIso();
+        this.staleSignoffs('A handoff created a new blocking dependency.');
+      } else {
+        await this.appendMessage({
+          turnId: turn.id,
+          from,
+          to,
+          kind: 'task',
+          body: `Assigned (async): ${title}. ${to} will report back when done.`,
+          refs: [{ kind: 'task', value: task.id }],
+        }).catch(() => undefined);
+      }
+      applied += 1;
+    }
+
+    if (applied > 0) await this.refreshWorkQueues();
+    return applied;
+  }
+
+  /**
+   * Resolve any open handoff dependency waiting on a now-completed task. Called when a
+   * `handoff`-tagged board task reaches `done`, so the delegator's done-gate can clear.
+   */
+  private resolveHandoffsForTask(task: AgentTask): void {
+    const state = this.state;
+    if (!state?.handoffs?.length) return;
+    const now = nowIso();
+    let resolvedAny = false;
+    for (const handoff of state.handoffs) {
+      if (handoff.resolvedAt) continue;
+      if (handoff.taskId === task.id && handoff.toRoleId === task.roleId) {
+        handoff.resolvedAt = now;
+        resolvedAny = true;
+      }
+    }
+    // Resolving a handoff is forward progress (a blocker CLEARED), so it must NOT stale
+    // sign-offs — only bump the material-change clock so the gate re-evaluates.
+    if (resolvedAny) state.materialChangeAt = now;
+  }
+
+  /**
    * Apply the structured task-board directives a turn emitted. The message bus parses
    * `claim/complete/block/needs_work/request_review` blocks but the engine used to drop them;
    * this is that documented-but-lost capability restored. Directives act on the EMITTING role's
@@ -2677,6 +3192,8 @@ export class TeamOrchestrator extends EventEmitter {
             const target = claimed && claimed.id === directive.taskId ? claimed : located?.task;
             if (target) {
               await board.complete(target, nowIso());
+              // A completed handoff task clears its delegator's blocking dependency.
+              this.resolveHandoffsForTask(target);
               if (claimed && claimed.id === directive.taskId) this.turnTasks.delete(turn.id);
               applied += 1;
             }
@@ -2748,8 +3265,11 @@ export class TeamOrchestrator extends EventEmitter {
     if (!task || !this.taskBoard) return;
     this.turnTasks.delete(turn.id);
     try {
-      if (turn.status === 'completed') await this.taskBoard.complete(task, nowIso());
-      else await this.taskBoard.requeue(task);
+      if (turn.status === 'completed') {
+        await this.taskBoard.complete(task, nowIso());
+        // A completed handoff task clears its delegator's blocking dependency.
+        this.resolveHandoffsForTask(task);
+      } else await this.taskBoard.requeue(task);
     } catch {
       // a task-board IO hiccup must not crash the run loop
     }
@@ -3118,6 +3638,9 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     attempts: Array.isArray(value.attempts) ? value.attempts : [],
     currentAttemptId: value.currentAttemptId ?? null,
     promotedAttemptId: value.promotedAttemptId ?? null,
+    handoffs: Array.isArray(value.handoffs) ? value.handoffs : [],
+    inboxes: value.inboxes && typeof value.inboxes === 'object' ? value.inboxes : {},
+    taskWorktrees: Array.isArray(value.taskWorktrees) ? value.taskWorktrees : [],
     tasks: value.tasks ?? null,
     findings: value.findings ?? null,
     currentTurn: value.currentTurn ?? null,

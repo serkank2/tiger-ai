@@ -36,6 +36,8 @@ export interface RunRoleTurnOptions {
   finding?: TeamContextBlock;
   steering?: string[];
   verification?: string[];
+  /** Inbox messages (from `sendMessage` coordination verbs) to surface in this turn's prompt. */
+  inbox?: string[];
   completionStatus?: string[];
   transcriptMaxMessages?: number;
   model?: string;
@@ -114,6 +116,7 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     finding: opts.finding,
     steering: opts.steering,
     verification: opts.verification,
+    inbox: opts.inbox,
     completionStatus: opts.completionStatus,
     transcriptMaxMessages: opts.transcriptMaxMessages,
   } satisfies ComposeRoleTurnOptions);
@@ -246,7 +249,7 @@ async function parseCompletedOrBlocker(
     taskId: opts.assignedTask?.id,
     content: `Role turn failed for ${opts.role.name}: ${detail}`,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [] };
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [], coordinationDirectives: [] };
   return { outcome: failed, parsed, messages: parsed.messages };
 }
 
@@ -257,7 +260,7 @@ function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string
     taskId: opts.assignedTask?.id,
     content: reason,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [] };
+  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [], coordinationDirectives: [] };
   return { outcome: { state: 'failed', error: reason }, parsed, messages: parsed.messages };
 }
 

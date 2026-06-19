@@ -657,6 +657,24 @@ export function createTeamRouter(ctx: AppCtx): Router {
     }
   });
 
+  // ----------------------------------------------------------------------------
+  // Team worktree-per-task (Part B): merge-back / cleanup affordance for a KEPT
+  // per-task worktree branch (one left un-merged by a merge conflict). Re-attempts
+  // the merge into the workspace base (conflict-safe), or discards it on ?cleanup.
+  // ----------------------------------------------------------------------------
+
+  // POST /api/team/runs/:id/worktrees/:taskId/merge { cleanup? } → merge or discard a kept worktree.
+  router.post('/runs/:id/worktrees/:taskId/merge', async (req, res) => {
+    requireActiveRun(ctx, req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      await orch.mergeTaskWorktree(req.params.id, req.params.taskId, { cleanup: body.cleanup === true });
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
   // GET /api/team/runs/:id/attempts/:attemptId/diff → the attempt's changeset (reuses the
   // diff machinery). Same shape as /changes so the colorized diff component can render it.
   router.get('/runs/:id/attempts/:attemptId/diff', async (req, res) => {

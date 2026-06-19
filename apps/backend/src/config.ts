@@ -167,6 +167,19 @@ export const config = {
     worktreePerTask: envBool('KAPLAN_WORKTREE_PER_TASK', false),
   },
 
+  // AI Team execution toggles.
+  team: {
+    // Git-worktree-per-task isolation for Team role turns. OFF by default: when enabled
+    // (KAPLAN_TEAM_WORKTREE_PER_TASK=1) AND the workspace is a git repo, each role's CLAIMED
+    // board task runs in its OWN throwaway git worktree (branch kaplan/<runId>-<taskId>) so a
+    // task's edits are isolated; its per-task diff is captured and merged back to the workspace
+    // base branch on completion. A merge CONFLICT aborts the merge, marks the task blocked, and
+    // KEEPS the worktree intact for manual resolution (never auto-resolved); a clean merge prunes
+    // it. When disabled, role turns use the shared workspace cwd exactly as today (byte-for-byte
+    // unchanged). Extends the Tiger-only worktree feature (config.tiger.worktreePerTask).
+    worktreePerTask: envBool('KAPLAN_TEAM_WORKTREE_PER_TASK', false),
+  },
+
   // Cue — event-driven orchestration engine. OFF by default: when enabled (KAPLAN_CUE_ENABLED=1)
   // the engine loads a per-project `.kaplan/cue.json` and wakes agents into self-running pipelines
   // (file changes / schedules / agent completions / manual triggers → queue jobs or team steering).
