@@ -66,6 +66,12 @@ export interface LimitsPersistedState {
   rules: LimitRule[];
   lastDecision?: LimitRuleDecision;
   updatedAt?: string;
+  /**
+   * Set when the snapshot source of truth (the MySQL `limit_snapshots` table) could not be read
+   * — e.g. the table is missing. The gate FAILS OPEN in this case (allows dispatch with a logged
+   * warning) instead of treating "no snapshots" as a conservative block forever. See Epic 6.
+   */
+  snapshotsUnavailable?: boolean;
 }
 
 export interface LimitProviderStatus {

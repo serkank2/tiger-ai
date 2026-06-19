@@ -153,7 +153,21 @@ export interface QueueRepositoryTx {
   insertEvent(event: QueueEvent): Promise<void>;
   getJob(id: string): Promise<QueueJob | null>;
   listJobs(): Promise<QueueJob[]>;
+  /**
+   * Lock and return dispatchable jobs ordered for dispatch (priority, position, age).
+   * In SQL this uses `SELECT ... FOR UPDATE SKIP LOCKED`; concurrent schedulers never
+   * see the same candidate. Only meaningful inside `transaction()`.
+   */
+  lockDispatchableJobs(now: string): Promise<QueueJob[]>;
+  /**
+   * Lock running jobs whose lease has expired (or that belong to `owner`) so they can
+   * be reclaimed without stealing a job whose owner is still refreshing its lease.
+   * Only meaningful inside `transaction()`.
+   */
+  lockReclaimableJobs(now: string, owner: string): Promise<QueueJob[]>;
   listSteps(jobId: string): Promise<QueueStep[]>;
+  /** Fetch steps for many jobs in one query (avoids N+1 when assembling QueueState). */
+  listStepsForJobs(jobIds: string[]): Promise<QueueStep[]>;
   listEvents(limit?: number): Promise<QueueEvent[]>;
   listRules(): Promise<QueueRule[]>;
   getLatestLimitSnapshot(provider: Exclude<QueueProvider, 'mixed'>): Promise<QueueLimitSnapshot | null>;

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { LimitStatus } from '~/types';
+import type { LimitRuleInput, LimitStatus } from '~/types';
 import { errText } from '~/lib/apiError';
 import { hasStaleLatest, latestSnapshotErrors, maxLatestPercent, severityForPercent } from '~/lib/limits';
 
@@ -65,6 +65,48 @@ export const useLimitsStore = defineStore('limits', () => {
     }
   }
 
+  const savingRule = ref(false);
+  const ruleError = ref<string | null>(null);
+
+  async function createRule(input: LimitRuleInput) {
+    savingRule.value = true;
+    ruleError.value = null;
+    try {
+      applyState(await useApi().createLimitRule(input));
+    } catch (error) {
+      ruleError.value = errText(error);
+      throw error;
+    } finally {
+      savingRule.value = false;
+    }
+  }
+
+  async function updateRule(id: string, input: LimitRuleInput) {
+    savingRule.value = true;
+    ruleError.value = null;
+    try {
+      applyState(await useApi().updateLimitRule(id, input));
+    } catch (error) {
+      ruleError.value = errText(error);
+      throw error;
+    } finally {
+      savingRule.value = false;
+    }
+  }
+
+  async function deleteRule(id: string) {
+    savingRule.value = true;
+    ruleError.value = null;
+    try {
+      applyState(await useApi().deleteLimitRule(id));
+    } catch (error) {
+      ruleError.value = errText(error);
+      throw error;
+    } finally {
+      savingRule.value = false;
+    }
+  }
+
   return {
     status,
     loaded,
@@ -86,8 +128,13 @@ export const useLimitsStore = defineStore('limits', () => {
     stale,
     latestErrors,
     hasErrors,
+    savingRule,
+    ruleError,
     applyState,
     load,
     refresh,
+    createRule,
+    updateRule,
+    deleteRule,
   };
 });

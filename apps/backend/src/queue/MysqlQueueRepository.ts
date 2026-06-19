@@ -285,8 +285,60 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
     return rows.map(mapJob);
   }
 
+  /**
+   * Lock and return dispatchable jobs (status queued/retrying, past any resume_after,
+   * with no live lease) ordered for dispatch. Uses `FOR UPDATE SKIP LOCKED` so two
+   * schedulers running concurrently never lease the same row: the second scheduler
+   * skips any candidate the first has already locked inside its own transaction.
+   *
+   * Must be called inside `transaction()`; outside a transaction the row locks are
+   * released immediately and offer no protection.
+   */
+  async lockDispatchableJobs(now: string): Promise<QueueJob[]> {
+    const mysqlNow = mysqlDate(now);
+    const rows = await this.select<QueueJobRow[]>(
+      `SELECT * FROM queue_jobs
+         WHERE status IN ('queued', 'retrying')
+           AND (resume_after IS NULL OR resume_after <= ?)
+           AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+         ORDER BY priority DESC, position ASC, created_at ASC
+         FOR UPDATE SKIP LOCKED`,
+      [mysqlNow, mysqlNow],
+    );
+    return rows.map(mapJob);
+  }
+
+  /**
+   * Lock running jobs whose lease has expired (or whose owner matches `owner`, used on
+   * startup recovery). Verifying lease_expires_at < now before reclaiming ensures a
+   * scheduler that is still actively refreshing its lease cannot have its job stolen.
+   * Returns the locked rows so the caller can reset them inside the same transaction.
+   */
+  async lockReclaimableJobs(now: string, owner: string): Promise<QueueJob[]> {
+    const mysqlNow = mysqlDate(now);
+    const rows = await this.select<QueueJobRow[]>(
+      `SELECT * FROM queue_jobs
+         WHERE status = 'running'
+           AND (lease_owner = ? OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+         ORDER BY position ASC, created_at ASC
+         FOR UPDATE SKIP LOCKED`,
+      [owner, mysqlNow],
+    );
+    return rows.map(mapJob);
+  }
+
   async listSteps(jobId: string): Promise<QueueStep[]> {
     const rows = await this.select<QueueStepRow[]>('SELECT * FROM queue_steps WHERE job_id = ? ORDER BY position ASC', [jobId]);
+    return rows.map(mapStep);
+  }
+
+  async listStepsForJobs(jobIds: string[]): Promise<QueueStep[]> {
+    if (jobIds.length === 0) return [];
+    const placeholders = jobIds.map(() => '?').join(', ');
+    const rows = await this.select<QueueStepRow[]>(
+      `SELECT * FROM queue_steps WHERE job_id IN (${placeholders}) ORDER BY job_id ASC, position ASC`,
+      jobIds,
+    );
     return rows.map(mapStep);
   }
 
@@ -388,19 +440,33 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
   }
 
   async replacePositions(ids: string[], now: string): Promise<void> {
-    let position = 1;
-    for (const id of ids) {
-      await this.execute('UPDATE queue_jobs SET position = ?, updated_at = ? WHERE id = ?', [position++, mysqlDate(now), id]);
-    }
-    const rows = await this.select<QueueJobRow[]>(
+    // Build the full target ordering: explicitly requested ids first, then the
+    // remaining jobs in their existing order. We then apply every new position
+    // in a single bulk UPDATE (CASE/WHEN) instead of one statement per row.
+    const trailing = await this.select<QueueJobRow[]>(
       ids.length
-        ? `SELECT * FROM queue_jobs WHERE id NOT IN (${ids.map(() => '?').join(', ')}) ORDER BY position ASC, created_at ASC`
-        : 'SELECT * FROM queue_jobs ORDER BY position ASC, created_at ASC',
+        ? `SELECT id FROM queue_jobs WHERE id NOT IN (${ids.map(() => '?').join(', ')}) ORDER BY position ASC, created_at ASC`
+        : 'SELECT id FROM queue_jobs ORDER BY position ASC, created_at ASC',
       ids,
     );
-    for (const row of rows) {
-      await this.execute('UPDATE queue_jobs SET position = ?, updated_at = ? WHERE id = ?', [position++, mysqlDate(now), row.id]);
-    }
+    const ordered = [...ids, ...trailing.map((row) => row.id)];
+    if (ordered.length === 0) return;
+
+    const mysqlNow = mysqlDate(now);
+    const cases: string[] = [];
+    const caseParams: unknown[] = [];
+    ordered.forEach((id, index) => {
+      cases.push('WHEN ? THEN ?');
+      caseParams.push(id, index + 1);
+    });
+    const placeholders = ordered.map(() => '?').join(', ');
+    await this.execute(
+      `UPDATE queue_jobs
+         SET position = CASE id ${cases.join(' ')} END,
+             updated_at = ?
+       WHERE id IN (${placeholders})`,
+      [...caseParams, mysqlNow, ...ordered],
+    );
   }
 
   async upsertRule(rule: QueueRule): Promise<void> {

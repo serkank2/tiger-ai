@@ -6,7 +6,21 @@ import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION } from '../team/persistence.js
 interface Migration {
   id: string;
   statements: string[];
+  /**
+   * Optional rollback statements, applied in order inside a single transaction by
+   * {@link rollbackLast}. A migration without `down` is considered irreversible and
+   * rollback refuses to touch it (so we never silently leave a half-undone schema).
+   */
+  down?: string[];
 }
+
+// Migration ID convention (Epic 8): going forward, IDs are zero-padded to 4 digits and
+// contiguous (`0001`..`00NN`). The early IDs below (`003_`, `004_`, `006_`, `008_`, `009_`)
+// predate this convention and are intentionally LEFT AS-IS: the `schema_migrations` table
+// keys off the exact `id` string, so renumbering an already-applied migration would make the
+// runner think it was never applied and re-run its `CREATE TABLE`s on every existing database.
+// We standardize new migrations only and never rewrite an applied id. The gaps in the early
+// sequence are cosmetic and harmless.
 
 const MIGRATIONS: Migration[] = [
   {
@@ -71,6 +85,7 @@ const MIGRATIONS: Migration[] = [
         action = VALUES(action),
         updated_at = UTC_TIMESTAMP(3)`,
     ],
+    down: [`DROP TABLE IF EXISTS limit_rules`, `DROP TABLE IF EXISTS limit_snapshots`],
   },
   {
     id: '004_run_templates',
@@ -94,6 +109,7 @@ const MIGRATIONS: Migration[] = [
         KEY idx_run_templates_builtin (builtin)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
+    down: [`DROP TABLE IF EXISTS run_templates`],
   },
   {
     id: '006_queue',
@@ -193,6 +209,13 @@ const MIGRATIONS: Migration[] = [
         config = VALUES(config),
         updated_at = UTC_TIMESTAMP(3)`,
     ],
+    // Drop children (FK to queue_jobs) before the parent.
+    down: [
+      `DROP TABLE IF EXISTS queue_rules`,
+      `DROP TABLE IF EXISTS queue_events`,
+      `DROP TABLE IF EXISTS queue_steps`,
+      `DROP TABLE IF EXISTS queue_jobs`,
+    ],
   },
   {
     id: '008_prompt_generations',
@@ -227,6 +250,7 @@ const MIGRATIONS: Migration[] = [
         INDEX idx_prompt_history_generation (generation_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
+    down: [`DROP TABLE IF EXISTS prompt_history_events`, `DROP TABLE IF EXISTS prompt_generations`],
   },
   {
     // Migration 008 originally created these two tables WITHOUT an explicit
@@ -287,6 +311,90 @@ export async function runMigrations(pool?: Pool): Promise<void> {
   await migrate(pool ?? (await getDbPool()));
 }
 
+export interface RollbackResult {
+  /** The migration id that was rolled back, or null when there was nothing to do. */
+  rolledBack: string | null;
+  reason?: string;
+}
+
+/**
+ * Roll back the most-recently-applied migration that we still know how to reverse.
+ *
+ * Reads the latest `applied_at` row from `schema_migrations`, looks up its `down` statements,
+ * runs them inside a transaction, then deletes the `schema_migrations` row (so a later
+ * `migrate()` will re-apply it). If the latest applied migration declares no `down`, we refuse
+ * rather than silently skipping it — that would leave the recorded version out of sync with the
+ * actual schema.
+ */
+export async function rollbackLast(pool?: Pool): Promise<RollbackResult> {
+  const db = pool ?? (await getDbPool());
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id VARCHAR(128) PRIMARY KEY,
+      applied_at DATETIME(3) NOT NULL
+    )
+  `);
+  const [rows] = await db.query(
+    'SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1',
+  );
+  const latestId = Array.isArray(rows) && rows.length > 0 ? (rows[0] as { id: string }).id : null;
+  if (!latestId) return { rolledBack: null, reason: 'no applied migrations' };
+
+  const migration = MIGRATIONS.find((m) => m.id === latestId);
+  if (!migration) {
+    return { rolledBack: null, reason: `applied migration "${latestId}" is unknown to this build` };
+  }
+  if (!migration.down || migration.down.length === 0) {
+    return { rolledBack: null, reason: `migration "${latestId}" is irreversible (no down steps)` };
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (const statement of migration.down) await conn.query(statement);
+    await conn.query('DELETE FROM schema_migrations WHERE id = ?', [latestId]);
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+  return { rolledBack: latestId };
+}
+
 export function toMysqlDate(iso: string): string {
   return iso.replace('T', ' ').replace('Z', '').slice(0, 23);
+}
+
+// CLI: `tsx src/db/migrate.ts [up|down]`. `up` (default) applies pending migrations;
+// `down` rolls back the most recent reversible migration.
+const isCliEntry = (() => {
+  try {
+    const entry = process.argv[1] ?? '';
+    return import.meta.url === new URL(`file://${entry}`).href || import.meta.url.endsWith(entry.replace(/\\/g, '/'));
+  } catch {
+    return false;
+  }
+})();
+
+if (isCliEntry) {
+  const command = (process.argv[2] ?? 'up').toLowerCase();
+  const run = async () => {
+    const pool = await getDbPool();
+    if (command === 'down') {
+      const result = await rollbackLast(pool);
+      if (result.rolledBack) console.log(`[migrate] rolled back ${result.rolledBack}`);
+      else console.log(`[migrate] nothing rolled back: ${result.reason}`);
+    } else {
+      await migrate(pool);
+      console.log('[migrate] migrations up to date');
+    }
+  };
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('[migrate] failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    });
 }

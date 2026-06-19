@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import EmptyState from '~/components/EmptyState.vue';
 import Skeleton from '~/components/Skeleton.vue';
 import Spinner from '~/components/Spinner.vue';
 import { useConnectionStore } from '~/stores/connection';
 import { useLimitsStore } from '~/stores/limits';
-import type { LimitSnapshot, TigerAgentType } from '~/types';
+import type { LimitRule, LimitRuleInput, LimitSnapshot, TigerAgentType } from '~/types';
 import {
   gateLabel,
   isSnapshotStale,
@@ -38,7 +38,83 @@ const providerCards = computed(() =>
 
 const history = computed(() => sortSnapshotsNewestFirst(limits.snapshots).slice(0, 16));
 const decision = computed(() => limits.decision);
-const rulesEditable = false;
+
+// --- Rule editor ---
+const WINDOW_OPTIONS = ['any', '5h', 'weekly', 'session', 'probe'];
+
+interface RuleDraft {
+  provider: TigerAgentType;
+  windowKey: string;
+  thresholdPercent: number;
+  enabled: boolean;
+}
+
+function draftFromRule(rule: LimitRule): RuleDraft {
+  return {
+    provider: rule.provider,
+    windowKey: rule.windowKey,
+    thresholdPercent: rule.thresholdPercent,
+    enabled: rule.enabled,
+  };
+}
+
+const drafts = reactive<Record<string, RuleDraft>>({});
+const newRule = reactive<RuleDraft>({ provider: 'claude', windowKey: 'any', thresholdPercent: 90, enabled: true });
+
+function draftFor(rule: LimitRule): RuleDraft {
+  if (!drafts[rule.id]) drafts[rule.id] = draftFromRule(rule);
+  return drafts[rule.id]!;
+}
+
+function isDirty(rule: LimitRule): boolean {
+  const d = drafts[rule.id];
+  if (!d) return false;
+  return (
+    d.provider !== rule.provider ||
+    d.windowKey !== rule.windowKey ||
+    Number(d.thresholdPercent) !== rule.thresholdPercent ||
+    d.enabled !== rule.enabled
+  );
+}
+
+async function saveRule(rule: LimitRule) {
+  const d = draftFor(rule);
+  const body: LimitRuleInput = {
+    provider: d.provider,
+    windowKey: d.windowKey,
+    thresholdPercent: Number(d.thresholdPercent),
+    enabled: d.enabled,
+  };
+  try {
+    await limits.updateRule(rule.id, body);
+    delete drafts[rule.id];
+  } catch {
+    /* error surfaced via limits.ruleError */
+  }
+}
+
+async function removeRule(rule: LimitRule) {
+  try {
+    await limits.deleteRule(rule.id);
+    delete drafts[rule.id];
+  } catch {
+    /* error surfaced via limits.ruleError */
+  }
+}
+
+async function addRule() {
+  try {
+    await limits.createRule({
+      provider: newRule.provider,
+      windowKey: newRule.windowKey,
+      thresholdPercent: Number(newRule.thresholdPercent),
+      enabled: newRule.enabled,
+    });
+    Object.assign(newRule, { provider: 'claude', windowKey: 'any', thresholdPercent: 90, enabled: true });
+  } catch {
+    /* error surfaced via limits.ruleError */
+  }
+}
 
 function refresh() {
   void limits.refresh().catch(() => {});
@@ -218,29 +294,72 @@ onMounted(() => {
             <p class="eyebrow">Rules</p>
             <h2>Gate rules</h2>
           </div>
-          <span class="status-pill">{{ rulesEditable ? 'editable' : 'read only' }}</span>
+          <span class="status-pill">editable</span>
         </header>
+
+        <p v-if="limits.ruleError" class="notice danger rule-notice">{{ limits.ruleError }}</p>
+
         <div v-if="limits.rules.length" class="rules-list">
-          <article v-for="rule in limits.rules" :key="rule.id" class="rule-row">
+          <article v-for="rule in limits.rules" :key="rule.id" class="rule-row editable">
             <label>
               <span>Provider</span>
-              <input :value="rule.provider" readonly />
+              <select v-model="draftFor(rule).provider" :disabled="limits.savingRule">
+                <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
+              </select>
             </label>
             <label>
               <span>Window</span>
-              <input :value="rule.windowKey" readonly />
+              <select v-model="draftFor(rule).windowKey" :disabled="limits.savingRule">
+                <option v-for="w in WINDOW_OPTIONS" :key="w" :value="w">{{ w }}</option>
+              </select>
             </label>
             <label>
-              <span>Threshold</span>
-              <input :value="`${rule.thresholdPercent}%`" readonly />
+              <span>Threshold %</span>
+              <input
+                v-model.number="draftFor(rule).thresholdPercent"
+                type="number"
+                min="0"
+                max="100"
+                :disabled="limits.savingRule"
+              />
             </label>
             <label class="checkline">
-              <input type="checkbox" :checked="rule.enabled" disabled />
+              <input v-model="draftFor(rule).enabled" type="checkbox" :disabled="limits.savingRule" />
               <span>Enabled</span>
             </label>
+            <div class="rule-actions">
+              <button type="button" :disabled="limits.savingRule || !isDirty(rule)" @click="saveRule(rule)">Save</button>
+              <button type="button" class="danger" :disabled="limits.savingRule" @click="removeRule(rule)">Delete</button>
+            </div>
           </article>
         </div>
         <p v-else class="provider-empty">No persisted rules.</p>
+
+        <article class="rule-row editable new-rule">
+          <label>
+            <span>Provider</span>
+            <select v-model="newRule.provider" :disabled="limits.savingRule">
+              <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </label>
+          <label>
+            <span>Window</span>
+            <select v-model="newRule.windowKey" :disabled="limits.savingRule">
+              <option v-for="w in WINDOW_OPTIONS" :key="w" :value="w">{{ w }}</option>
+            </select>
+          </label>
+          <label>
+            <span>Threshold %</span>
+            <input v-model.number="newRule.thresholdPercent" type="number" min="0" max="100" :disabled="limits.savingRule" />
+          </label>
+          <label class="checkline">
+            <input v-model="newRule.enabled" type="checkbox" :disabled="limits.savingRule" />
+            <span>Enabled</span>
+          </label>
+          <div class="rule-actions">
+            <button type="button" :disabled="limits.savingRule" @click="addRule">Add rule</button>
+          </div>
+        </article>
       </section>
 
       <section class="history-panel">
@@ -583,9 +702,52 @@ dd {
   font-weight: 800;
   text-transform: uppercase;
 }
-.rule-row input {
+.rule-row input,
+.rule-row select {
   min-width: 0;
   color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font: inherit;
+}
+.rule-row.editable {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+.rule-row.new-rule {
+  margin-top: 12px;
+  border-style: dashed;
+}
+.rule-actions {
+  display: flex;
+  gap: 6px;
+  align-self: end;
+}
+.rule-actions button {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+}
+.rule-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.rule-actions button.danger:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+.rule-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rule-notice {
+  margin-top: 12px;
 }
 .checkline {
   align-content: center;

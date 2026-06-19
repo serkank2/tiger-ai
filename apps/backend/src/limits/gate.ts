@@ -42,6 +42,13 @@ export function evaluateLimitGate(
   provider: AgentType,
   options: LimitGateEvaluationOptions = {},
 ): LimitRuleDecision {
+  // Fail open: if the snapshot source of truth is unavailable (e.g. the limit_snapshots table
+  // is missing), allow dispatch instead of conservatively blocking everything forever. The
+  // missing table is already logged once at the repository read site.
+  if (state?.snapshotsUnavailable) {
+    return allowDecision(provider, 'limit snapshot source unavailable; failing open', options.now);
+  }
+
   const rules = (state?.rules?.length ? state.rules : defaultLimitRules()).filter(
     (rule) => rule.enabled && rule.provider === provider && rule.action === 'block',
   );

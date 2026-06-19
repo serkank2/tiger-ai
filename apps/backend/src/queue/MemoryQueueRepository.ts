@@ -104,10 +104,45 @@ export class MemoryQueueRepository implements QueueRepository {
       .map(cloneQueueJob);
   }
 
+  async lockDispatchableJobs(now: string): Promise<QueueJob[]> {
+    const nowMs = new Date(now).getTime();
+    return [...this.jobs.values()]
+      .filter((job) => {
+        if (job.status !== 'queued' && job.status !== 'retrying') return false;
+        if (job.resumeAfter && new Date(job.resumeAfter).getTime() > nowMs) return false;
+        if (job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() > nowMs) return false;
+        return true;
+      })
+      .sort((a, b) => b.priority - a.priority || a.position - b.position || a.createdAt.localeCompare(b.createdAt))
+      .map(cloneQueueJob);
+  }
+
+  async lockReclaimableJobs(now: string, owner: string): Promise<QueueJob[]> {
+    const nowMs = new Date(now).getTime();
+    return [...this.jobs.values()]
+      .filter((job) => {
+        if (job.status !== 'running') return false;
+        if (job.leaseOwner === owner) return true;
+        if (!job.leaseExpiresAt) return true;
+        return new Date(job.leaseExpiresAt).getTime() <= nowMs;
+      })
+      .sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt))
+      .map(cloneQueueJob);
+  }
+
   async listSteps(jobId: string): Promise<QueueStep[]> {
     return [...this.steps.values()]
       .filter((step) => step.jobId === jobId)
       .sort((a, b) => a.position - b.position)
+      .map(cloneQueueStep);
+  }
+
+  async listStepsForJobs(jobIds: string[]): Promise<QueueStep[]> {
+    if (jobIds.length === 0) return [];
+    const wanted = new Set(jobIds);
+    return [...this.steps.values()]
+      .filter((step) => wanted.has(step.jobId))
+      .sort((a, b) => a.jobId.localeCompare(b.jobId) || a.position - b.position)
       .map(cloneQueueStep);
   }
 

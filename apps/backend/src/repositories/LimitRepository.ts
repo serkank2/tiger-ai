@@ -16,6 +16,9 @@ export interface LimitRepository {
   load(maxSnapshots: number): Promise<LimitsPersistedState>;
   insertSnapshots(snapshots: LimitSnapshot[]): Promise<void>;
   upsertRules(rules: LimitRule[]): Promise<void>;
+  listRules(): Promise<LimitRule[]>;
+  upsertRule(rule: LimitRule): Promise<void>;
+  deleteRule(id: string): Promise<void>;
 }
 
 interface LimitSnapshotRow extends RowDataPacket {
@@ -73,6 +76,15 @@ function mysqlDate(value: string | null | undefined): string | null {
   return value ? toMysqlDate(value) : null;
 }
 
+/**
+ * True when the error is "the limit tables don't exist / are shaped differently". Treated as a
+ * fail-open condition: a missing snapshot table must never silently block all dispatch forever.
+ */
+function isMissingLimitTable(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  return code === 'ER_NO_SUCH_TABLE' || code === 'ER_BAD_FIELD_ERROR';
+}
+
 function mapSnapshot(row: LimitSnapshotRow): LimitSnapshot {
   const confidence: LimitParseConfidence = row.parse_confidence === 'trusted' ? 'trusted' : 'unknown';
   return {
@@ -108,8 +120,10 @@ function mapRule(row: LimitRuleRow): LimitRule {
 
 export class MySqlLimitRepository implements LimitRepository {
   async load(maxSnapshots: number): Promise<LimitsPersistedState> {
-    const [snapshots, rules] = await Promise.all([
-      query<LimitSnapshotRow[]>(
+    let snapshots: LimitSnapshotRow[];
+    let snapshotsUnavailable = false;
+    try {
+      snapshots = await query<LimitSnapshotRow[]>(
         `SELECT *
          FROM (
            SELECT *
@@ -119,13 +133,30 @@ export class MySqlLimitRepository implements LimitRepository {
          ) recent
          ORDER BY checked_at ASC`,
         [maxSnapshots],
-      ),
-      query<LimitRuleRow[]>('SELECT * FROM limit_rules ORDER BY created_at ASC'),
-    ]);
+      );
+    } catch (err) {
+      // Fail open: a missing/unreadable snapshot table must NOT permanently block dispatch.
+      if (!isMissingLimitTable(err)) throw err;
+      console.warn(
+        '[limits] limit_snapshots table is missing or unreadable — failing OPEN (allowing dispatch). Run migrations to restore the limit gate.',
+      );
+      snapshots = [];
+      snapshotsUnavailable = true;
+    }
+
+    let rules: LimitRuleRow[];
+    try {
+      rules = await query<LimitRuleRow[]>('SELECT * FROM limit_rules ORDER BY created_at ASC');
+    } catch (err) {
+      if (!isMissingLimitTable(err)) throw err;
+      rules = [];
+    }
+
     return {
       snapshots: snapshots.map(mapSnapshot),
       rules: rules.length ? rules.map(mapRule) : defaultLimitRules(),
       updatedAt: snapshots[0] ? mapSnapshot(snapshots[snapshots.length - 1]!).checkedAt : undefined,
+      ...(snapshotsUnavailable ? { snapshotsUnavailable: true } : {}),
     };
   }
 
@@ -156,31 +187,42 @@ export class MySqlLimitRepository implements LimitRepository {
   }
 
   async upsertRules(rules: LimitRule[]): Promise<void> {
-    for (const rule of rules) {
-      await query(
-        `INSERT INTO limit_rules (
-          id, provider, window_key, threshold_percent, comparison, action, enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          provider = VALUES(provider),
-          window_key = VALUES(window_key),
-          threshold_percent = VALUES(threshold_percent),
-          comparison = VALUES(comparison),
-          action = VALUES(action),
-          enabled = VALUES(enabled),
-          updated_at = VALUES(updated_at)`,
-        [
-          rule.id,
-          rule.provider,
-          rule.windowKey,
-          rule.thresholdPercent,
-          rule.comparison,
-          rule.action,
-          rule.enabled ? 1 : 0,
-          mysqlDate(rule.createdAt),
-          mysqlDate(rule.updatedAt),
-        ],
-      );
-    }
+    for (const rule of rules) await this.upsertRule(rule);
+  }
+
+  async upsertRule(rule: LimitRule): Promise<void> {
+    await query(
+      `INSERT INTO limit_rules (
+        id, provider, window_key, threshold_percent, comparison, action, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        provider = VALUES(provider),
+        window_key = VALUES(window_key),
+        threshold_percent = VALUES(threshold_percent),
+        comparison = VALUES(comparison),
+        action = VALUES(action),
+        enabled = VALUES(enabled),
+        updated_at = VALUES(updated_at)`,
+      [
+        rule.id,
+        rule.provider,
+        rule.windowKey,
+        rule.thresholdPercent,
+        rule.comparison,
+        rule.action,
+        rule.enabled ? 1 : 0,
+        mysqlDate(rule.createdAt),
+        mysqlDate(rule.updatedAt),
+      ],
+    );
+  }
+
+  async listRules(): Promise<LimitRule[]> {
+    const rules = await query<LimitRuleRow[]>('SELECT * FROM limit_rules ORDER BY created_at ASC');
+    return rules.length ? rules.map(mapRule) : defaultLimitRules();
+  }
+
+  async deleteRule(id: string): Promise<void> {
+    await query('DELETE FROM limit_rules WHERE id = ?', [id]);
   }
 }

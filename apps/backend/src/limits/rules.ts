@@ -1,3 +1,4 @@
+import { isAgentType } from '../orchestrator/types.js';
 import type {
   LimitProvider,
   LimitRule,
@@ -7,6 +8,78 @@ import type {
 } from './types.js';
 
 export const DEFAULT_LIMIT_STALE_AFTER_MS = 15 * 60 * 1000;
+
+/** Input shape accepted by the rules-CRUD endpoints (loose; validated by {@link normalizeRuleInput}). */
+export interface LimitRuleInput {
+  id?: unknown;
+  provider?: unknown;
+  windowKey?: unknown;
+  thresholdPercent?: unknown;
+  enabled?: unknown;
+  // `comparison`/`action` are fixed ('gte'/'block') today; accepted but ignored if sent.
+  comparison?: unknown;
+  action?: unknown;
+}
+
+export class LimitRuleValidationError extends Error {
+  readonly status = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = 'LimitRuleValidationError';
+  }
+}
+
+const VALID_WINDOW_KEYS = new Set(['any', '5h', 'weekly', 'session', 'probe']);
+
+function isValidWindowKey(value: string): boolean {
+  return VALID_WINDOW_KEYS.has(value) || value.startsWith('custom:');
+}
+
+/**
+ * Validate + normalize untrusted CRUD input into a complete {@link LimitRule}. `existing` carries
+ * forward immutable/unspecified fields on update (id, createdAt). Throws
+ * {@link LimitRuleValidationError} (HTTP 400) on bad input.
+ */
+export function normalizeRuleInput(
+  input: LimitRuleInput,
+  existing?: LimitRule,
+  now: string = new Date().toISOString(),
+): LimitRule {
+  const provider = input.provider ?? existing?.provider;
+  if (!isAgentType(provider)) {
+    throw new LimitRuleValidationError('provider must be one of claude, codex, antigravity');
+  }
+
+  const windowKey = (input.windowKey ?? existing?.windowKey ?? 'any') as string;
+  if (typeof windowKey !== 'string' || !isValidWindowKey(windowKey)) {
+    throw new LimitRuleValidationError(`windowKey "${windowKey}" is not a recognized limit window`);
+  }
+
+  const thresholdRaw = input.thresholdPercent ?? existing?.thresholdPercent;
+  const thresholdPercent = typeof thresholdRaw === 'string' ? Number(thresholdRaw) : thresholdRaw;
+  if (typeof thresholdPercent !== 'number' || !Number.isFinite(thresholdPercent) || thresholdPercent < 0 || thresholdPercent > 100) {
+    throw new LimitRuleValidationError('thresholdPercent must be a number between 0 and 100');
+  }
+
+  const enabled = input.enabled === undefined ? existing?.enabled ?? true : Boolean(input.enabled);
+
+  const id =
+    (typeof input.id === 'string' && input.id.trim()) ||
+    existing?.id ||
+    `${provider}-${windowKey}-${Math.round(thresholdPercent)}-${Date.now().toString(36)}`;
+
+  return {
+    id,
+    provider,
+    windowKey: windowKey as LimitRule['windowKey'],
+    thresholdPercent,
+    comparison: 'gte',
+    action: 'block',
+    enabled,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
 
 function toTime(iso: string | null | undefined): number {
   if (!iso) return Number.NEGATIVE_INFINITY;

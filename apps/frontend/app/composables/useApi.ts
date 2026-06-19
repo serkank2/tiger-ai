@@ -2,6 +2,8 @@ import type {
   AppSettings,
   Group,
   HealthStatus,
+  LimitRule,
+  LimitRuleInput,
   LimitStatus,
   PromptFile,
   PromptGenerationReuseAction,
@@ -155,6 +157,12 @@ export function useApi() {
     getTigerUsage: () => req<TigerUsage>('/api/tiger/usage'),
     getLimits: () => req<LimitStatus>('/api/limits'),
     refreshLimits: () => req<LimitStatus>('/api/limits/refresh', { method: 'POST' }),
+    listLimitRules: () => req<LimitRule[]>('/api/limits/rules'),
+    createLimitRule: (body: LimitRuleInput) => req<LimitStatus>('/api/limits/rules', { method: 'POST', body }),
+    updateLimitRule: (id: string, body: LimitRuleInput) =>
+      req<LimitStatus>(`/api/limits/rules/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+    deleteLimitRule: (id: string) =>
+      req<LimitStatus>(`/api/limits/rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
     // --- Team orchestrator ---
     listTeamTemplates: () => req<TeamTemplatesResponse>('/api/team/templates'),

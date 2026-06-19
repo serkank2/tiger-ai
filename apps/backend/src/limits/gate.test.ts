@@ -100,6 +100,20 @@ test('StateLimitGate blocks conservatively on stale snapshots', async () => {
   assert.match(decision.reason, /stale/i);
 });
 
+test('StateLimitGate FAILS OPEN when the snapshot source is unavailable (missing table)', async () => {
+  const gate = new StateLimitGate(
+    () => ({ ...limits([]), snapshotsUnavailable: true }),
+    { now: NOW, staleAfterMs: 60_000 },
+  );
+
+  const decision = await gate.check('claude');
+
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.action, 'allow');
+  assert.equal(decision.conservative, false);
+  assert.match(decision.reason, /unavailable|failing open/i);
+});
+
 test('StateLimitGate blocks conservatively when reset_at is unknown', async () => {
   const gate = new StateLimitGate(
     () => limits([snapshot({ percentUsed: 91, resetAt: null, parseConfidence: 'unknown' })]),

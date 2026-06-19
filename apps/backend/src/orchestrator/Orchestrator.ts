@@ -26,6 +26,8 @@ import { buildLaunchCommand } from './launch-command.js';
 import { AgentSession } from './AgentSession.js';
 import { composePrompt, type ComposeOptions } from './compose.js';
 import { checkOutputFile, markerExists } from './validate.js';
+import { checkUpstreamArtifacts, evaluateCompletionGate, requiredSelfReport } from './completion-gate.js';
+import { boundedConcurrency, drainPool, runPool } from './worker-pool.js';
 import { logAgentResult, logNote, logStageEnd, logStageStart } from './runlog.js';
 import {
   NoopExecutionPersistence,
@@ -43,7 +45,6 @@ import {
   finishTaskFile,
   hasTaskFiles,
   listTaskRecords,
-  parseExecutionResult,
   parseTasks,
   reclaimStaleTaskClaims,
   releaseLock,
@@ -56,7 +57,6 @@ import {
   finishFinding,
   hasFindings,
   listFindings,
-  parseFixResult,
   reclaimStaleFindings,
   readFindingBlock,
   splitFindingsToFiles,
@@ -76,6 +76,12 @@ export interface OrchestratorOptions {
   persistence?: ExecutionPersistence;
   owner?: ExecutionOwner;
   runTemplates?: RunTemplateService;
+  /**
+   * When true, an interrupted fan-out stage detected on initialize/attach is automatically
+   * re-dispatched (Epic-5 auto-resume). Off by default: auto-spawning agents at boot has real cost
+   * and lease implications, so the default is detection-only and resume is an explicit user action.
+   */
+  autoResumeInterruptedStages?: boolean;
 }
 
 function formatRemovalFailure(reason: unknown): string {
@@ -93,19 +99,6 @@ function stageStatusToRunStatus(status: StageStatus): ExecutionRunStatus {
   if (status === 'failed') return 'failed';
   if (status === 'stopped') return 'stopped';
   return 'interrupted';
-}
-
-/** Run items through `worker` with bounded concurrency. */
-async function runPool<T>(items: T[], limit: number, worker: (item: T, i: number) => Promise<void>): Promise<void> {
-  let next = 0;
-  const n = Math.max(1, Math.min(limit, items.length || 1));
-  const runner = async (): Promise<void> => {
-    while (next < items.length) {
-      const i = next++;
-      await worker(items[i]!, i);
-    }
-  };
-  await Promise.all(Array.from({ length: n }, runner));
 }
 
 /**
@@ -143,12 +136,14 @@ export class Orchestrator extends EventEmitter {
   /** When set (e.g. by the queue Scheduler), executions persist under this owner instead of the default. */
   private activeOwner: ExecutionOwner | null = null;
   private runTemplates?: RunTemplateService;
+  private readonly autoResumeInterruptedStages: boolean;
 
   constructor(private readonly manager: TerminalManager, options: OrchestratorOptions = {}) {
     super();
     this.persistence = options.persistence ?? new NoopExecutionPersistence();
     this.defaultOwner = options.owner ?? { type: 'manual', id: `${process.pid}:${nanoid(6)}` };
     this.runTemplates = options.runTemplates;
+    this.autoResumeInterruptedStages = options.autoResumeInterruptedStages ?? false;
   }
 
   /** The owner under which executions are currently persisted (the scoped owner if set, else the default). */
@@ -240,6 +235,55 @@ export class Orchestrator extends EventEmitter {
     await this.refreshFindings();
     await this.quarantineInterruptedOutputs();
     this.emitState();
+    await this.maybeResumeInterruptedStages();
+  }
+
+  /** Stages that were left mid-run by a previous backend (restored as `interrupted`). */
+  interruptedStages(): StageId[] {
+    return STAGE_ORDER.filter((s) => this.stages[s].status === 'interrupted');
+  }
+
+  /**
+   * Re-dispatch the first interrupted fan-out stage so its incomplete work resumes. The
+   * claim-based stages (executing-plan / task-review) are inherently resumable — reconciliation
+   * has already reset abandoned in_progress task/fixing finding files back to claimable, so simply
+   * re-running the stage picks up exactly the unfinished items. Standard fan-out stages re-run in
+   * full (their partial outputs were quarantined on init). No-op when nothing is interrupted or a
+   * stage is already running.
+   *
+   * Returns the resumed stage id, or null if there was nothing to resume.
+   */
+  async resumeInterruptedStages(): Promise<StageId | null> {
+    if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
+    if (this.busy) throw httpError(409, 'a stage is already running');
+    const interrupted = this.interruptedStages();
+    const stageId = interrupted[0];
+    if (!stageId) return null;
+    const cfg = this.stages[stageId].config ?? this.defaultStageConfig(stageId);
+    await logNote(this.paths.runLogFile, `Resuming interrupted stage ${STAGE_META[stageId].title}.`).catch(() => {});
+    await this.startStage(stageId, cfg, false);
+    return stageId;
+  }
+
+  /** On init/attach: log any interrupted stages and, when enabled, auto-resume the first one. */
+  private async maybeResumeInterruptedStages(): Promise<void> {
+    const interrupted = this.interruptedStages();
+    if (interrupted.length === 0) return;
+    if (this.paths) {
+      await logNote(
+        this.paths.runLogFile,
+        `Detected ${interrupted.length} interrupted stage(s): ${interrupted.map((s) => STAGE_META[s].title).join(', ')}.` +
+          (this.autoResumeInterruptedStages ? ' Auto-resuming.' : ' Resume them when ready.'),
+      ).catch(() => {});
+    }
+    if (!this.autoResumeInterruptedStages) return;
+    // Fire-and-forget: do not block initialize on a full stage run.
+    void this.resumeInterruptedStages().catch((err) => {
+      if (this.paths) {
+        const message = err instanceof Error ? err.message : String(err);
+        void logNote(this.paths.runLogFile, `Auto-resume failed to start: ${message}`).catch(() => {});
+      }
+    });
   }
 
   /** Startup restore: attach to an existing workspace without overwriting the prompt. */
@@ -272,8 +316,10 @@ export class Orchestrator extends EventEmitter {
     const validationError = validateConfigPatch(partial, this.config);
     if (validationError) throw httpError(400, validationError);
     const merged = normalizeConfig({ ...this.config, ...(partial && typeof partial === 'object' ? partial : {}) });
-    this.config = merged;
+    // Persist to disk BEFORE mutating in-memory state: if the write fails, the error surfaces and
+    // this.config is left untouched, so in-memory config never silently diverges from config.json.
     await saveConfig(this.paths.configFile, merged);
+    this.config = merged;
     return merged;
   }
 
@@ -365,6 +411,9 @@ export class Orchestrator extends EventEmitter {
     this.autoConfigs = configs;
     const start =
       fromStage && STAGE_ORDER.includes(fromStage) ? fromStage : this.firstIncompleteStage();
+    // Starting an auto-run from a mid stage must not consume missing/empty upstream artifacts.
+    const upstream = await checkUpstreamArtifacts(this.paths, start);
+    if (!upstream.ok) throw httpError(400, upstream.reason ?? `upstream artifacts for ${start} are missing`);
     await this.startStage(start, configs[start] ?? this.defaultStageConfig(start), true);
   }
 
@@ -410,7 +459,19 @@ export class Orchestrator extends EventEmitter {
       return;
     }
     void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
-    void this.startStage(next, this.autoConfigs[next] ?? this.defaultStageConfig(next), true).catch((err) => {
+    // Validate the next stage's upstream artifacts before auto-dispatching it: a missing/empty
+    // upstream output stops the chain with a clear message instead of running a degenerate stage.
+    void (async () => {
+      const upstream = await checkUpstreamArtifacts(this.paths!, next);
+      if (!upstream.ok) {
+        this.autoAdvance = false;
+        this.stages[next].message = upstream.reason ?? `upstream artifacts for ${next} are missing`;
+        await logNote(this.paths!.runLogFile, `Auto-advance stopped: ${this.stages[next].message}`).catch(() => {});
+        this.emitState();
+        return;
+      }
+      await this.startStage(next, this.autoConfigs[next] ?? this.defaultStageConfig(next), true);
+    })().catch((err) => {
       this.autoAdvance = false;
       this.stages[next].message = `Auto-advance failed to start: ${err instanceof Error ? err.message : String(err)}`;
       this.emitState();
@@ -419,14 +480,52 @@ export class Orchestrator extends EventEmitter {
 
   /**
    * After an auto-run (Run All) completes the final stage, delete the whole .tiger workspace and
-   * return to the launcher (so re-running the same project always starts clean). Gated by
-   * config.execution.deleteTigerOnComplete. Resets state inline (closeProject has a busy guard).
+   * return to the launcher (so re-running the same project always starts clean).
+   *
+   * DESTRUCTIVE — strictly gated:
+   *  1. requires explicit opt-in (config.execution.deleteTigerOnComplete),
+   *  2. requires VERIFIED success — every stage must be `completed`; a single failed/stopped/
+   *     interrupted stage cancels the delete so partial work is never silently lost,
+   *  3. only resets in-memory state AFTER the removal is verified to have actually succeeded
+   *     (the directory is gone). If removal fails, the workspace is kept intact with a message.
    */
   private async cleanupAfterAutoRun(): Promise<void> {
     if (!this.paths || !this.config.execution.deleteTigerOnComplete) return;
+
+    // (2) Verified success: refuse to delete unless every stage completed cleanly.
+    const incomplete = STAGE_ORDER.filter((s) => this.stages[s].status !== 'completed');
+    if (incomplete.length > 0) {
+      await logNote(
+        this.paths.runLogFile,
+        `Skipping auto-delete of the .tiger workspace: ${incomplete.length} stage(s) did not complete ` +
+          `(${incomplete.map((s) => STAGE_META[s].title).join(', ')}). Preserving the workspace.`,
+      ).catch(() => {});
+      this.emitState();
+      return;
+    }
+
     const root = this.paths.root;
     await logNote(this.paths.runLogFile, 'Auto-run complete — deleting the .tiger workspace.').catch(() => {});
-    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    try {
+      await fs.rm(root, { recursive: true, force: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await logNote(this.paths.runLogFile, `Auto-delete failed; preserving the workspace: ${message}`).catch(() => {});
+      if (this.currentStage) this.stages[this.currentStage].message = `Auto-delete failed: ${message}`;
+      this.emitState();
+      return;
+    }
+    // (3) Verify the removal actually happened before discarding in-memory state.
+    const stillExists = await fs
+      .stat(root)
+      .then(() => true)
+      .catch(() => false);
+    if (stillExists) {
+      await logNote(this.paths.runLogFile, 'Auto-delete did not remove the workspace; preserving it.').catch(() => {});
+      this.emitState();
+      return;
+    }
+
     // Leave the workspace so the UI returns to the launcher.
     this.workspace = null;
     this.paths = null;
@@ -717,13 +816,15 @@ export class Orchestrator extends EventEmitter {
 
       await this.executeAgentRun(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
 
-      // Resolve final task status from the agent's self-report, falling back to the run state.
-      let finalStatus: 'done' | 'blocked' = run.state === 'completed' ? 'done' : 'blocked';
-      const reported = await fs
-        .readFile(run.outputPath, 'utf8')
-        .then((t) => parseExecutionResult(t))
-        .catch(() => null);
-      if (reported && run.state === 'completed') finalStatus = reported.status;
+      // Semantic completion gate: a finished run that did NOT emit an EXECUTION_RESULT self-report
+      // (or reported blocked) is treated as blocked, never silently done.
+      const output = await fs.readFile(run.outputPath, 'utf8').catch(() => '');
+      const gate = evaluateCompletionGate(requiredSelfReport('executing-plan'), run.state === 'completed', output);
+      const finalStatus: 'done' | 'blocked' = gate.ok ? 'done' : 'blocked';
+      if (!gate.ok && gate.reason) {
+        run.error = run.error ?? gate.reason;
+        void logNote(paths.runLogFile, `${run.label} blocked on ${claimed.record.id}: ${gate.reason}`);
+      }
       await finishTaskFile(paths.tasksDir, claimed.record.id, finalStatus, nowIso());
       const finalRecord = (await listTaskRecords(paths.tasksDir)).find((t) => t.id === claimed.record.id);
       if (finalRecord) await this.persistence.recordTaskFinish({ workspace: this.workspace!, task: finalRecord });
@@ -732,21 +833,21 @@ export class Orchestrator extends EventEmitter {
       return true;
     };
 
-    if (cfg.parallel) {
-      const worker = async (type: AgentType): Promise<void> => {
-        while (!signal.aborted && (await processTask(type))) {
-          /* keep draining the shared queue */
-        }
-      };
-      await Promise.all(types.map(worker));
-    } else {
-      let ti = 0;
-      while (!signal.aborted) {
-        const did = await processTask(types[ti % types.length]!);
-        if (!did) break;
-        ti++;
-      }
-    }
+    // Bounded worker pool over a shared task queue: at most maxConcurrent agents run at once
+    // (sequential mode pins it to 1). A shared round-robin cursor keeps every configured
+    // provider in rotation without spawning one worker per slot.
+    let typeCursor = 0;
+    await drainPool<AgentType>({
+      limit: this.drainConcurrency(cfg.parallel, types.length),
+      shouldStop: () => signal.aborted,
+      claim: async () => {
+        const type = types[typeCursor++ % types.length]!;
+        return (await processTask(type)) ? type : null;
+      },
+      process: async () => {
+        /* processTask already implemented the claimed task; nothing further to do */
+      },
+    });
     await this.refreshTasks();
   }
 
@@ -840,30 +941,34 @@ export class Orchestrator extends EventEmitter {
         void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`);
         this.emitState();
         await this.executeAgentRun(run, { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block }, signal);
-        const reported =
-          run.state === 'completed' ? parseFixResult(await fs.readFile(run.outputPath, 'utf8').catch(() => '')) : null;
-        await finishFinding(paths.findingsDir, claimed.id, reported?.status === 'fixed' ? 'fixed' : 'wontfix');
+        // Semantic completion gate: only a completed run that emits FIX_RESULT: fixed counts as fixed;
+        // a missing FIX_RESULT (or wontfix) leaves the finding unresolved (wontfix), never silently fixed.
+        const fixOutput = await fs.readFile(run.outputPath, 'utf8').catch(() => '');
+        const gate = evaluateCompletionGate(requiredSelfReport('task-review', 'fix'), run.state === 'completed', fixOutput);
+        if (!gate.ok && gate.reason) {
+          run.error = run.error ?? gate.reason;
+          void logNote(paths.runLogFile, `${run.label} did not resolve ${claimed.id}: ${gate.reason}`);
+        }
+        await finishFinding(paths.findingsDir, claimed.id, gate.ok ? 'fixed' : 'wontfix');
         const finalFinding = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
         if (finalFinding) await this.persistence.recordFindingFinish({ workspace: this.workspace!, finding: finalFinding });
         if (this.config.execution.locking) await releaseLock(paths.findingLockFile(claimed.id));
         await this.refreshFindings();
         return true;
       };
-      if (cfg.parallel) {
-        const worker = async (type: AgentType): Promise<void> => {
-          while (!signal.aborted && (await processFinding(type))) {
-            /* drain the finding queue */
-          }
-        };
-        await Promise.all(types.map(worker));
-      } else {
-        let ti = 0;
-        while (!signal.aborted) {
-          const did = await processFinding(types[ti % types.length]!);
-          if (!did) break;
-          ti++;
-        }
-      }
+      // Bounded worker pool over the shared finding queue (capped at maxConcurrent).
+      let typeCursor = 0;
+      await drainPool<AgentType>({
+        limit: this.drainConcurrency(cfg.parallel, types.length),
+        shouldStop: () => signal.aborted,
+        claim: async () => {
+          const type = types[typeCursor++ % types.length]!;
+          return (await processFinding(type)) ? type : null;
+        },
+        process: async () => {
+          /* processFinding already resolved the claimed finding */
+        },
+      });
     }
 
     // Roll findings up into each task's review status.
@@ -1063,8 +1168,18 @@ export class Orchestrator extends EventEmitter {
   }
 
   private concurrency(_stageId: StageId, count: number, parallel = true): number {
-    // No imposed cap — the user chooses the agent counts; in parallel mode run them all at once.
-    return parallel ? Math.max(1, count) : 1;
+    if (!parallel) return 1;
+    // Cap parallel fan-out at execution.maxConcurrent so a stage with many agents never
+    // launches an unbounded number of PTYs at once; the rest queue behind the pool.
+    const cap = boundedConcurrency(this.config.execution.maxConcurrent);
+    return Math.max(1, Math.min(cap, count));
+  }
+
+  /** Concurrency for the claim-draining stages (executing-plan / task-review FIX). */
+  private drainConcurrency(parallel: boolean, slots: number): number {
+    if (!parallel) return 1;
+    const cap = boundedConcurrency(this.config.execution.maxConcurrent);
+    return Math.max(1, Math.min(cap, Math.max(1, slots)));
   }
 
   private finalizeStage(stageId: StageId): void {
@@ -1220,11 +1335,31 @@ export class Orchestrator extends EventEmitter {
     if (this.runLeaseHeartbeat) return;
     this.runLeaseHeartbeat = setInterval(() => {
       void this.refreshActiveRunLease().catch((err) => {
+        // A failed lease refresh means another owner may take over the workspace lease — continuing
+        // would risk split-brain double execution. Hard-stop the run: abort in-flight agents and
+        // halt auto-advance. The lease will lapse and be reconciled on the next boot.
         const message = err instanceof Error ? err.message : String(err);
-        if (this.paths) void logNote(this.paths.runLogFile, `Failed to refresh execution lease: ${message}`);
+        if (this.paths) {
+          void logNote(
+            this.paths.runLogFile,
+            `Execution lease refresh FAILED (${message}); aborting the run to prevent split-brain double execution.`,
+          );
+        }
+        this.escalateLeaseFailure(message);
       });
     }, this.heartbeatIntervalMs());
     this.runLeaseHeartbeat.unref();
+  }
+
+  /** Hard-stop the active run after a lease heartbeat failure (prevents split-brain). */
+  private escalateLeaseFailure(message: string): void {
+    this.autoAdvance = false;
+    if (this.currentStage) {
+      this.stages[this.currentStage].message = `Aborted: execution lease lost (${message}).`;
+    }
+    this.abort?.abort();
+    void this.stopRunLeaseHeartbeat();
+    this.emitState();
   }
 
   private async stopRunLeaseHeartbeat(): Promise<void> {

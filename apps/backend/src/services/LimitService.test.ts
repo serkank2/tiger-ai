@@ -4,8 +4,34 @@ import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { PersistedState } from '../store/types.js';
 import type { UsageProbe } from '../orchestrator/usage.js';
 import type { AgentType } from '../orchestrator/types.js';
-import { defaultLimitRules, type LimitSnapshot } from '../limits/types.js';
-import { evaluateLimitRules, LimitService } from './LimitService.js';
+import { defaultLimitRules, type LimitRule, type LimitSnapshot, type LimitsPersistedState } from '../limits/types.js';
+import type { LimitRepository } from '../repositories/LimitRepository.js';
+import { evaluateLimitRules, LimitService, LimitRuleValidationError } from './LimitService.js';
+
+class InMemoryLimitRepository implements LimitRepository {
+  snapshots: LimitSnapshot[] = [];
+  rules: LimitRule[] = defaultLimitRules('2026-06-18T00:00:00.000Z');
+  async load(maxSnapshots: number): Promise<LimitsPersistedState> {
+    return { snapshots: this.snapshots.slice(-maxSnapshots), rules: this.rules.slice() };
+  }
+  async insertSnapshots(snapshots: LimitSnapshot[]): Promise<void> {
+    this.snapshots.push(...snapshots);
+  }
+  async upsertRules(rules: LimitRule[]): Promise<void> {
+    for (const rule of rules) await this.upsertRule(rule);
+  }
+  async upsertRule(rule: LimitRule): Promise<void> {
+    const idx = this.rules.findIndex((r) => r.id === rule.id);
+    if (idx === -1) this.rules.push(rule);
+    else this.rules[idx] = rule;
+  }
+  async listRules(): Promise<LimitRule[]> {
+    return this.rules.slice();
+  }
+  async deleteRule(id: string): Promise<void> {
+    this.rules = this.rules.filter((r) => r.id !== id);
+  }
+}
 
 const NOW = new Date('2026-06-18T06:00:00.000Z');
 
@@ -167,4 +193,70 @@ test('LimitService.refresh persists normalized snapshots into state', async () =
   assert.equal(status.latest.find((item) => item.provider === 'codex')?.percentUsed, 92);
   assert.equal(status.providers.antigravity.ok, false);
   assert.equal(status.decision.allowed, false);
+});
+
+function serviceWithRepo(repo: LimitRepository): LimitService {
+  return new LimitService({
+    manager: {} as TerminalManager,
+    state: state(),
+    save: async () => {},
+    probe: async () => ({}) as Record<AgentType, UsageProbe>,
+    repository: repo,
+    intervalMs: 0,
+    staleAfterMs: 60_000,
+  });
+}
+
+test('LimitService.createRule persists a new rule to the repository and in-memory mirror', async () => {
+  const repo = new InMemoryLimitRepository();
+  const service = serviceWithRepo(repo);
+
+  const status = await service.createRule({ provider: 'codex', windowKey: '5h', thresholdPercent: 75, enabled: true });
+  const created = status.rules.find((rule) => rule.provider === 'codex' && rule.windowKey === '5h');
+  assert.ok(created);
+  assert.equal(created.thresholdPercent, 75);
+  assert.ok(repo.rules.some((rule) => rule.id === created.id));
+});
+
+test('LimitService.updateRule mutates an existing rule', async () => {
+  const repo = new InMemoryLimitRepository();
+  const service = serviceWithRepo(repo);
+  const id = service.listRules()[0]!.id;
+
+  await service.updateRule(id, { provider: 'claude', windowKey: 'any', thresholdPercent: 50, enabled: false });
+  const updated = service.listRules().find((rule) => rule.id === id);
+  assert.equal(updated?.thresholdPercent, 50);
+  assert.equal(updated?.enabled, false);
+});
+
+test('LimitService.updateRule rejects an unknown id', async () => {
+  const service = serviceWithRepo(new InMemoryLimitRepository());
+  await assert.rejects(
+    () => service.updateRule('nope', { provider: 'claude', windowKey: 'any', thresholdPercent: 90, enabled: true }),
+    LimitRuleValidationError,
+  );
+});
+
+test('LimitService.deleteRule removes the rule everywhere', async () => {
+  const repo = new InMemoryLimitRepository();
+  const service = serviceWithRepo(repo);
+  // Create an extra rule so deleting it doesn't trip the "re-seed defaults when empty" guard.
+  const created = (await service.createRule({ provider: 'codex', windowKey: '5h', thresholdPercent: 70, enabled: true }))
+    .rules.find((rule) => rule.provider === 'codex')!;
+
+  const status = await service.deleteRule(created.id);
+  assert.equal(status.rules.some((rule) => rule.id === created.id), false);
+  assert.equal(repo.rules.some((rule) => rule.id === created.id), false);
+});
+
+test('LimitService fails open in getState when snapshots are unavailable', async () => {
+  const repo = new InMemoryLimitRepository();
+  // Simulate a missing snapshot table by flagging the load result.
+  repo.load = async () => ({ snapshots: [], rules: repo.rules.slice(), snapshotsUnavailable: true });
+  const service = serviceWithRepo(repo);
+  await service.initialize();
+
+  const status = service.getState();
+  assert.equal(status.decision.allowed, true);
+  assert.equal(status.decision.action, 'allow');
 });

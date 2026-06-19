@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { config } from '../config.js';
 import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import { RuleEngine } from '../queue/RuleEngine.js';
+import { planRetry } from '../queue/retry.js';
 import type {
   QueueEvent,
   QueueJob,
@@ -92,13 +93,6 @@ function httpError(status: number, message: string): Error & { status: number } 
   return e;
 }
 
-function isDispatchable(job: QueueJob, now: string): boolean {
-  if (job.status !== 'queued' && job.status !== 'retrying') return false;
-  if (job.resumeAfter && new Date(job.resumeAfter).getTime() > new Date(now).getTime()) return false;
-  if (job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() > new Date(now).getTime()) return false;
-  return true;
-}
-
 function statusAllowsPause(status: QueueJobStatus): boolean {
   return status === 'queued' || status === 'retrying' || status === 'running' || status === 'blocked_by_limit';
 }
@@ -124,10 +118,17 @@ export class QueueService extends EventEmitter {
       this.repo.listRules(),
       this.repo.listEvents(QUEUE_STATE_EVENT_LIMIT),
     ]);
-    const views: QueueJobView[] = [];
-    for (const job of jobs) {
-      views.push({ ...job, steps: await this.repo.listSteps(job.id) });
+    const steps = await this.repo.listStepsForJobs(jobs.map((job) => job.id));
+    const stepsByJob = new Map<string, QueueStep[]>();
+    for (const step of steps) {
+      const arr = stepsByJob.get(step.jobId);
+      if (arr) arr.push(step);
+      else stepsByJob.set(step.jobId, [step]);
     }
+    const views: QueueJobView[] = jobs.map((job) => ({
+      ...job,
+      steps: (stepsByJob.get(job.id) ?? []).sort((a, b) => a.position - b.position),
+    }));
     return { jobs: views, rules, events, updatedAt: nowIso() };
   }
 
@@ -321,9 +322,9 @@ export class QueueService extends EventEmitter {
   async leaseNext(owner: string, leaseMs: number): Promise<LeaseNextResult> {
     const result = await this.repo.transaction<LeaseNextResult>(async (tx) => {
       const now = nowIso();
-      const jobs = (await tx.listJobs())
-        .filter((job) => isDispatchable(job, now))
-        .sort((a, b) => b.priority - a.priority || a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+      // Row-locks dispatchable jobs (FOR UPDATE SKIP LOCKED) ordered for dispatch,
+      // so two concurrent schedulers can never lease the same job.
+      const jobs = await tx.lockDispatchableJobs(now);
       const candidate = jobs[0];
       if (!candidate) return { kind: 'empty' };
 
@@ -449,10 +450,14 @@ export class QueueService extends EventEmitter {
     await this.repo.transaction(async (tx) => {
       const now = nowIso();
       const job = await requireJob(tx, id);
-      const retry = job.attempts < job.maxAttempts;
+      // Exponential backoff so a deterministically-failing job defers via resumeAfter
+      // instead of hot-looping; terminal `failed` once the attempts cap is reached.
+      const plan = planRetry(job.attempts, job.maxAttempts, now);
+      const retry = plan.retry;
       await tx.updateJob(id, {
         status: retry ? 'retrying' : 'failed',
         blockedReason: retry ? reason : null,
+        resumeAfter: retry ? plan.resumeAfter : null,
         leaseOwner: null,
         leaseExpiresAt: null,
         completedAt: retry ? null : now,
@@ -504,9 +509,10 @@ export class QueueService extends EventEmitter {
     let count = 0;
     await this.repo.transaction(async (tx) => {
       const now = nowIso();
-      const jobs = await tx.listJobs();
+      // Only reclaims running jobs whose lease has actually expired (or belong to this
+      // owner) — never steals a job whose owner is still refreshing its lease.
+      const jobs = await tx.lockReclaimableJobs(now, owner);
       for (const job of jobs) {
-        if (job.status !== 'running') continue;
         count++;
         await tx.updateJob(job.id, {
           status: 'retrying',

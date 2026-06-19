@@ -333,6 +333,14 @@ export interface LimitRule {
   updatedAt: string;
 }
 
+export interface LimitRuleInput {
+  id?: string;
+  provider: TigerAgentType;
+  windowKey: string;
+  thresholdPercent: number;
+  enabled: boolean;
+}
+
 export interface LimitSelectedWindow {
   provider: TigerAgentType;
   windowKey: string;
