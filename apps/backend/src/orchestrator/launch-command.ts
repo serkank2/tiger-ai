@@ -1,10 +1,23 @@
 import type { AgentType, TigerConfig } from './types.js';
+import { config } from '../config.js';
 
 export interface LaunchParams {
   model: string;
   effort: string;
   /** Permission-mode key into cfg.cli[type].permissionModes. */
   permission: string;
+}
+
+export interface LaunchOptions {
+  /**
+   * Whether the blanket `--dangerously-*` agent permission flag may be applied. The blanket
+   * "skip every approval / disable the sandbox" mode is a foot-gun, so it is OPT-IN: when this
+   * is false (the default, read from `config.security.allowDangerousAgentPermissions`), a
+   * permission mode that resolves to a dangerous flag is downgraded to no permission flags
+   * (the CLI's own safe default) instead of disabling all guardrails. Fine-grained/safe
+   * permission modes (acceptEdits, plan, workspace-write, read-only, sandbox, …) are unaffected.
+   */
+  allowDangerous?: boolean;
 }
 
 /**
@@ -17,7 +30,12 @@ export interface LaunchParams {
  * passed through {@link shellQuote}, which double-quotes only the values that need it — so
  * a label becomes one argument and simple flags stay unquoted. Pure + unit-tested.
  */
-export function buildLaunchCommand(cfg: TigerConfig, type: AgentType, params: LaunchParams): string {
+export function buildLaunchCommand(
+  cfg: TigerConfig,
+  type: AgentType,
+  params: LaunchParams,
+  opts?: LaunchOptions,
+): string {
   const tool = cfg.cli[type];
   const args: string[] = [tool.executable];
 
@@ -36,7 +54,18 @@ export function buildLaunchCommand(cfg: TigerConfig, type: AgentType, params: La
   }
 
   const perm = tool.permissionModes[params.permission];
-  if (perm && perm.length) args.push(...perm);
+  // Gate the blanket dangerous flag: it is applied only when explicitly allowed.
+  // Default the gate from config so callers that don't pass opts (Orchestrator, prompt
+  // generation, team runner) get the safe behavior without any wiring change.
+  const allowDangerous = opts?.allowDangerous ?? config.security.allowDangerousAgentPermissions;
+  if (perm && perm.length) {
+    if (!allowDangerous && isDangerousPermission(cfg, type, params.permission)) {
+      // Dangerous blanket mode requested but not opted in: fall back to the CLI's own
+      // default guardrails (no permission flags) rather than disabling all approvals.
+    } else {
+      args.push(...perm);
+    }
+  }
 
   if (tool.extraArgs && tool.extraArgs.length) args.push(...tool.extraArgs);
 

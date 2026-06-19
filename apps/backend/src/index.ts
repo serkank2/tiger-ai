@@ -1,8 +1,15 @@
 import http from 'node:http';
 import path from 'node:path';
-import express, { type NextFunction, type Request, type Response } from 'express';
+import express from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import { config } from './config.js';
+import { logger } from './obs/logger.js';
+import { metrics } from './obs/metrics.js';
+import { errorHandler, httpError } from './http/errors.js';
+import { requestContext } from './http/middleware/request-context.js';
+import { requireAuth } from './http/middleware/auth.js';
+import { rateLimit } from './http/middleware/rate-limit.js';
 import { loadState, saveState } from './store/state.js';
 import { TerminalManager } from './terminal/TerminalManager.js';
 import type { AppCtx } from './context.js';
@@ -40,9 +47,10 @@ try {
   await migrate(await getDbPool());
 } catch (err) {
   const reason = err instanceof Error ? err.message : String(err);
-  console.error('\n  ❌ Kaplan backend: MySQL unavailable — refusing to start.');
-  console.error(`     ${reason}`);
-  console.error('     Start MySQL and check KAPLAN_DB_* settings (see apps/backend/.env.example).\n');
+  logger.error('MySQL unavailable — refusing to start', {
+    reason,
+    hint: 'Start MySQL and check KAPLAN_DB_* settings (see apps/backend/.env.example).',
+  });
   process.exit(1);
 }
 
@@ -116,18 +124,37 @@ await teamTemplates.initialize();
 await queueScheduler.start();
 
 const app = express();
+// Trust the loopback proxy chain so req.ip reflects the real client for rate limiting.
+app.set('trust proxy', 'loopback');
+// Per-request id + child logger + access log + request counter. First so everything downstream
+// (and the central error handler) sees req.id / req.log.
+app.use(requestContext());
+// Security headers. CSP is left off by default — the API serves JSON, and the frontend is a
+// separate origin, so a restrictive CSP here would only risk breaking dev tooling.
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: config.corsOrigins }));
 // Server-side Origin guard: block cross-origin browser requests outright (CORS only
 // blocks reading the *response*; a simple cross-origin POST could still hit a route).
 // Non-browser local clients send no Origin and are allowed.
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   const origin = req.headers.origin;
   if (origin && !config.corsOrigins.includes(origin)) {
-    res.status(403).json({ error: { message: 'forbidden origin' } });
+    next(httpError(403, 'forbidden_origin', 'forbidden origin'));
     return;
   }
   next();
 });
+
+// Liveness endpoint: exempt from auth and rate limiting (orchestrators probe it aggressively).
+// Mounted app-wide (not under '/api') so req.path keeps the full prefix for the skip checks.
+const isLiveness = (req: { path: string }): boolean => req.path === '/api/health/live';
+const isApi = (req: { path: string }): boolean => req.path.startsWith('/api/') || req.path === '/api';
+// Optional shared-token auth on /api/* (no-op when KAPLAN_AUTH_TOKEN is unset).
+app.use(requireAuth({ skip: (req) => !isApi(req) || isLiveness(req) }));
+// Per-IP fixed-window abuse guard (honors config.rateLimit; skips the liveness probe).
+if (config.rateLimit.enabled) {
+  app.use(rateLimit({ skip: isLiveness }));
+}
 
 // Prompt bodies are larger than the rest of the API; give this router its own bigger
 // JSON parser, mounted BEFORE the global 64kb cap so prompt writes aren't pre-limited.
@@ -142,6 +169,21 @@ app.use('/api/team', express.json({ limit: '2mb' }), createTeamRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
+// Liveness: the process is up and serving. Always 200, no I/O — for restart-on-crash probes.
+app.get('/api/health/live', (_req, res) => {
+  res.json({ status: 'ok', uptimeSec: Math.round(process.uptime()) });
+});
+
+// Readiness: only 200 when the durable store is reachable, else 503 — for load-balancer gating.
+app.get('/api/health/ready', async (_req, res) => {
+  const dbReady = await pingDb();
+  res.status(dbReady ? 200 : 503).json({
+    status: dbReady ? 'ok' : 'unavailable',
+    db: { ready: dbReady, name: config.db.database },
+  });
+});
+
+// Back-compat combined health (existing clients depend on this shape).
 app.get('/api/health', async (_req, res) => {
   const dbReady = await pingDb();
   res.json({
@@ -153,6 +195,16 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+// Metrics scrape (Prometheus text by default, JSON via ?format=json). Auth-gated together with
+// the rest of /api when a token is configured; open when auth is disabled (local default).
+app.get('/api/metrics', async (req, res) => {
+  if (req.query.format === 'json') {
+    res.json(metrics.renderJson());
+    return;
+  }
+  res.type('text/plain; version=0.0.4').send(metrics.renderText());
+});
+
 app.use('/api/terminals', createTerminalsRouter(ctx));
 app.use('/api/groups', createGroupsRouter(ctx));
 app.use('/api/settings', createSettingsRouter(ctx));
@@ -160,28 +212,35 @@ app.use('/api/fs', createFsRouter(ctx));
 app.use('/api/limits', createLimitsRouter(ctx));
 
 // Central error handler (Express 5 forwards rejected async handlers here).
-app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  const e = err as { code?: string; status?: number; statusCode?: number };
-  const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
-  // Honor Express/body-parser statuses (400 malformed JSON, 413 too large, ...).
-  const httpStatus =
-    explicit && explicit >= 400 && explicit < 600 ? explicit : e.code === 'EINVAL_CWD' ? 400 : 500;
-  const rawMessage = err instanceof Error ? err.message : String(err);
-  if (httpStatus >= 500) console.error('[api] unhandled error:', err);
-  // Don't leak internal messages (e.g. absolute fs paths) on 5xx; client only needs 4xx detail.
-  res.status(httpStatus).json({ error: { message: httpStatus >= 500 ? 'internal server error' : rawMessage, code: e.code } });
-});
+app.use(errorHandler());
 
 const server = http.createServer(app);
 const wss = createWsServer(server, ctx);
 
+// Live gauges, computed from the real ctx on every /metrics scrape (never stale).
+const TERMINAL_STATES = new Set(['completed', 'failed', 'canceled']); // queue jobs no longer "in flight"
+let lastQueueDepth = 0;
+queueService.on('state', (s: import('./queue/types.js').QueueState) => {
+  lastQueueDepth = s.jobs.filter((j) => !TERMINAL_STATES.has(j.status)).length;
+});
+metrics.setGauge('queue_depth', () => lastQueueDepth);
+metrics.setGauge('terminal_count', () => state.terminals.length);
+metrics.setGauge('terminal_running_count', () =>
+  state.terminals.filter((t) => manager.getStatus(t.id)?.state === 'running').length,
+);
+metrics.setGauge('ws_peers', () => wss.clients.size);
+metrics.setGauge('process_uptime_seconds', () => Math.round(process.uptime()));
+metrics.setGauge('process_resident_memory_bytes', () => process.memoryUsage().rss);
+
 let autostartDone: Promise<void> = Promise.resolve();
 
 server.listen(config.port, config.host, () => {
-  console.log(`\n  🐅 Kaplan backend`);
-  console.log(`     REST   http://${config.host}:${config.port}/api`);
-  console.log(`     WS     ws://${config.host}:${config.port}/ws`);
-  console.log(`     state  ${config.stateFile}\n`);
+  logger.info('Kaplan backend listening', {
+    rest: `http://${config.host}:${config.port}/api`,
+    ws: `ws://${config.host}:${config.port}/ws`,
+    state: config.stateFile,
+    auth: config.auth.enabled ? 'enabled' : 'disabled',
+  });
   limits.start();
   autostartDone = manager.autostartAll();
 });
@@ -190,7 +249,7 @@ let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n[${signal}] shutting down — killing terminals...`);
+  logger.info('shutting down — killing terminals', { signal });
   queueScheduler.stop();
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
   if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});
@@ -210,7 +269,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 // Last-resort: kill child ptys instead of leaving them orphaned on an unexpected crash.
 process.on('unhandledRejection', (reason) => {
-  console.error('[fatal] unhandledRejection:', reason);
+  logger.error('unhandledRejection', { err: reason });
   void shutdown('unhandledRejection');
 });
 
@@ -231,6 +290,6 @@ async function pingDb(): Promise<boolean> {
   }
 }
 process.on('uncaughtException', (err) => {
-  console.error('[fatal] uncaughtException:', err);
+  logger.error('uncaughtException', { err });
   void shutdown('uncaughtException');
 });

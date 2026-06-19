@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AppCtx } from '../context.js';
 import { safeDirPath as safePath } from '../util/paths.js';
+import { badRequest, forbidden, httpError, notFound } from './errors.js';
 
 /** Filesystem helpers for the cwd picker (validate a path, browse directories). */
 export function createFsRouter(_ctx: AppCtx): Router {
@@ -15,10 +16,7 @@ export function createFsRouter(_ctx: AppCtx): Router {
 
   router.get('/validate', async (req, res) => {
     const p = safePath(req.query.path);
-    if (!p) {
-      res.status(400).json({ error: { message: 'an absolute local directory path is required' } });
-      return;
-    }
+    if (!p) throw badRequest('an absolute local directory path is required');
     try {
       const st = await fsp.stat(p);
       res.json({ path: p, exists: true, isDirectory: st.isDirectory() });
@@ -28,18 +26,14 @@ export function createFsRouter(_ctx: AppCtx): Router {
         res.json({ path: p, exists: false, isDirectory: false });
         return;
       }
-      res.status(code === 'EACCES' || code === 'EPERM' ? 403 : 400).json({
-        error: { message: 'cannot access path', code }, // don't leak raw OS message (contains absolute paths)
-      });
+      // Don't leak raw OS message (contains absolute paths); map to a stable error code.
+      throw code === 'EACCES' || code === 'EPERM' ? forbidden('cannot access path') : badRequest('cannot access path');
     }
   });
 
   router.get('/list', async (req, res) => {
     const p = req.query.path === undefined ? os.homedir() : safePath(req.query.path);
-    if (!p) {
-      res.status(400).json({ error: { message: 'an absolute local directory path is required' } });
-      return;
-    }
+    if (!p) throw badRequest('an absolute local directory path is required');
     try {
       const entries = await fsp.readdir(p, { withFileTypes: true });
       const directories = entries
@@ -49,8 +43,10 @@ export function createFsRouter(_ctx: AppCtx): Router {
       res.json({ path: p, parent: path.dirname(p), directories });
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
-      const status = code === 'ENOENT' ? 404 : code === 'EACCES' || code === 'EPERM' ? 403 : 400;
-      res.status(status).json({ error: { message: 'cannot read directory', code } }); // static msg; no path leak
+      // static msg; no path leak. Map OS errno to a stable error code.
+      if (code === 'ENOENT') throw notFound('cannot read directory');
+      if (code === 'EACCES' || code === 'EPERM') throw forbidden('cannot read directory');
+      throw httpError(400, 'bad_request', 'cannot read directory');
     }
   });
 

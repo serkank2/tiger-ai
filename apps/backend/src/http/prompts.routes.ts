@@ -5,6 +5,7 @@ import type { AgentType } from '../orchestrator/types.js';
 import type { PromptGenerationRecord, PromptGenerationStatus } from '../repositories/PromptGenerationRepository.js';
 import type { PromptHistoryFilters } from '../repositories/PromptHistoryRepository.js';
 import type { QueueProvider } from '../queue/types.js';
+import { badRequest, conflict, notFound } from './errors.js';
 
 /**
  * Prompt library API over the prompts dir. Thrown errors carry `.status` and are
@@ -47,10 +48,7 @@ export function createPromptsRouter(ctx: AppCtx): Router {
 
   router.get('/generate/:id', async (req, res) => {
     const generation = await ctx.promptGenerations.get(req.params.id);
-    if (!generation) {
-      res.status(404).json({ error: { message: 'prompt generation not found' } });
-      return;
-    }
+    if (!generation) throw notFound('prompt generation not found');
     res.json(ctx.promptGenerations.toState(generation));
   });
 
@@ -104,7 +102,7 @@ export function createPromptsRouter(ctx: AppCtx): Router {
       return;
     }
 
-    res.status(400).json({ error: { message: 'unknown reuse action' } });
+    throw badRequest('unknown reuse action');
   });
 
   router.get('/file', async (req, res) => {
@@ -114,8 +112,7 @@ export function createPromptsRouter(ctx: AppCtx): Router {
   router.post('/', async (req, res) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     if (typeof b.path !== 'string' || typeof b.content !== 'string') {
-      res.status(400).json({ error: { message: 'path and content must be strings' } });
-      return;
+      throw badRequest('path and content must be strings');
     }
     const out = await writePrompt(b.path, b.content, { create: true, overwrite: b.overwrite === true });
     res.status(201).json(out);
@@ -124,8 +121,7 @@ export function createPromptsRouter(ctx: AppCtx): Router {
   router.put('/file', async (req, res) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     if (typeof b.path !== 'string' || typeof b.content !== 'string') {
-      res.status(400).json({ error: { message: 'path and content must be strings' } });
-      return;
+      throw badRequest('path and content must be strings');
     }
     const out = await writePrompt(b.path, b.content, {
       expectedVersion: typeof b.expectedVersion === 'string' ? b.expectedVersion : undefined,
@@ -212,8 +208,9 @@ function isDoneWithOutput(
   return generation.status === 'done' && typeof generation.outputText === 'string' && generation.outputText.trim().length > 0;
 }
 
-function httpErr(status: number, message: string): Error & { status: number } {
-  const err = new Error(message) as Error & { status: number };
-  err.status = status;
-  return err;
+/** Map the legacy (status, message) shape to the shared HttpError so responses carry a stable code. */
+function httpErr(status: number, message: string): Error {
+  if (status === 404) return notFound(message);
+  if (status === 409) return conflict(message);
+  return badRequest(message);
 }

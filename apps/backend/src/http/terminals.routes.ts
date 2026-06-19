@@ -4,6 +4,7 @@ import type { AppCtx } from '../context.js';
 import type { TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
 import { asBool, isStringRecord, nonEmptyString, normalizeShell, toDimension } from './validate.js';
 import { resolveExistingDir } from '../util/paths.js';
+import { badRequest, notFound } from './errors.js';
 
 /** Validate a groupId payload: must be null/absent or reference an existing group. */
 function resolveGroupId(ctx: AppCtx, raw: unknown): { ok: true; value: string | null } | { ok: false } {
@@ -52,8 +53,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
   router.get('/:id', (req, res) => {
     const def = ctx.state.terminals.find((t) => t.id === req.params.id);
     if (!def) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     res.json(present(ctx, def));
   });
@@ -62,35 +62,29 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = nonEmptyString(body.name);
     if (!name) {
-      res.status(400).json({ error: { message: 'name is required' } });
-      return;
+      throw badRequest('name is required');
     }
     const group = resolveGroupId(ctx, body.groupId);
     if (!group.ok) {
-      res.status(400).json({ error: { message: 'invalid groupId' } });
-      return;
+      throw badRequest('invalid groupId');
     }
     const cwdCheck = await resolveExistingDir(nonEmptyString(body.cwd) ?? ctx.state.settings.defaultCwd);
     if (!cwdCheck.ok) {
-      res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
-      return;
+      throw badRequest(`invalid working directory: ${cwdCheck.reason}`);
     }
     let shell = ctx.state.settings.defaultShell;
     if (body.shell !== undefined) {
       const s = normalizeShell(body.shell);
       if (!s) {
-        res.status(400).json({ error: { message: 'invalid shell' } });
-        return;
+        throw badRequest('invalid shell');
       }
       shell = s;
     }
     if (body.env != null && !isStringRecord(body.env)) {
-      res.status(400).json({ error: { message: 'env must be a map of string values' } });
-      return;
+      throw badRequest('env must be a map of string values');
     }
     if (typeof body.initialCommand === 'string' && body.initialCommand.length > 8192) {
-      res.status(400).json({ error: { message: 'initialCommand too long (max 8192 chars)' } });
-      return;
+      throw badRequest('initialCommand too long (max 8192 chars)');
     }
     const now = new Date().toISOString();
     const def: TerminalDefinition = {
@@ -115,8 +109,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
   router.put('/:id', async (req, res) => {
     const def = ctx.state.terminals.find((t) => t.id === req.params.id);
     if (!def) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
     // Validate everything into a patch FIRST; only apply once all checks pass, so a
@@ -128,38 +121,33 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     if ('groupId' in body) {
       const group = resolveGroupId(ctx, body.groupId);
       if (!group.ok) {
-        res.status(400).json({ error: { message: 'invalid groupId' } });
-        return;
+        throw badRequest('invalid groupId');
       }
       patch.groupId = group.value;
     }
     if (nonEmptyString(body.cwd)) {
       const cwdCheck = await resolveExistingDir(body.cwd);
       if (!cwdCheck.ok) {
-        res.status(400).json({ error: { message: `invalid working directory: ${cwdCheck.reason}` } });
-        return;
+        throw badRequest(`invalid working directory: ${cwdCheck.reason}`);
       }
       patch.cwd = cwdCheck.path;
     }
     if ('initialCommand' in body) {
       if (typeof body.initialCommand === 'string' && body.initialCommand.length > 8192) {
-        res.status(400).json({ error: { message: 'initialCommand too long (max 8192 chars)' } });
-        return;
+        throw badRequest('initialCommand too long (max 8192 chars)');
       }
       patch.initialCommand = typeof body.initialCommand === 'string' ? body.initialCommand : undefined;
     }
     if (body.shell !== undefined) {
       const shell = normalizeShell(body.shell);
       if (!shell) {
-        res.status(400).json({ error: { message: 'invalid shell' } });
-        return;
+        throw badRequest('invalid shell');
       }
       patch.shell = shell;
     }
     if ('env' in body) {
       if (body.env != null && !isStringRecord(body.env)) {
-        res.status(400).json({ error: { message: 'env must be a map of string values' } });
-        return;
+        throw badRequest('env must be a map of string values');
       }
       patch.env = isStringRecord(body.env) ? body.env : undefined;
     }
@@ -171,8 +159,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     // definition into the manager (manager/state divergence).
     const current = ctx.state.terminals.find((t) => t.id === req.params.id);
     if (!current) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     Object.assign(current, patch);
     current.updatedAt = new Date().toISOString();
@@ -187,8 +174,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
   router.delete('/:id', async (req, res) => {
     const idx = ctx.state.terminals.findIndex((t) => t.id === req.params.id);
     if (idx === -1) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     await ctx.manager.remove(req.params.id);
     ctx.state.terminals.splice(idx, 1);
@@ -202,8 +188,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
 
   router.post('/:id/start', async (req, res) => {
     if (!exists(ctx, req.params.id)) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
     const status = await ctx.manager.start(req.params.id, toDimension(body.cols), toDimension(body.rows));
@@ -212,8 +197,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
 
   router.post('/:id/stop', async (req, res) => {
     if (!exists(ctx, req.params.id)) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     const status = await ctx.manager.stop(req.params.id);
     res.json(status);
@@ -221,8 +205,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
 
   router.post('/:id/restart', async (req, res) => {
     if (!exists(ctx, req.params.id)) {
-      res.status(404).json({ error: { message: 'terminal not found' } });
-      return;
+      throw notFound('terminal not found');
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
     const status = await ctx.manager.restart(req.params.id, toDimension(body.cols), toDimension(body.rows));

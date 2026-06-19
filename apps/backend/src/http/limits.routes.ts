@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { LimitRuleValidationError, type LimitRuleInput } from '../services/LimitService.js';
+import { badRequest, notFound } from './errors.js';
 
 export function createLimitsRouter(ctx: AppCtx): Router {
   const router = Router();
@@ -41,11 +42,9 @@ export function createLimitsRouter(ctx: AppCtx): Router {
   return router;
 }
 
-function sendRuleError(res: import('express').Response, err: unknown): void {
+function sendRuleError(_res: import('express').Response, err: unknown): never {
   if (err instanceof LimitRuleValidationError) {
-    const status = /not found/i.test(err.message) ? 404 : 400;
-    res.status(status).json({ error: { message: err.message } });
-    return;
+    throw /not found/i.test(err.message) ? notFound(err.message) : badRequest(err.message);
   }
   throw err;
 }

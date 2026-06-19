@@ -60,6 +60,21 @@ function parseOrigins(): string[] {
   return ['http://localhost:3000', 'http://127.0.0.1:3000'];
 }
 
+/** Comma-separated absolute directories agents/runs may use as workspaces. */
+function parseList(name: string): string[] {
+  const raw = process.env[name];
+  if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+function envBool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  return raw === '1' || raw.toLowerCase() === 'true' || raw.toLowerCase() === 'yes';
+}
+
+const isProd = process.env.NODE_ENV === 'production';
+
 /** Read an env var as an integer, falling back to `fallback` when unset/invalid. */
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -111,6 +126,42 @@ export const config = {
   // Provider limit probes.
   limitProbeIntervalMs: Math.max(0, envInt('KAPLAN_LIMIT_PROBE_MS', 5 * 60 * 1000)),
   limitStaleAfterMs: Math.max(60_000, envInt('KAPLAN_LIMIT_STALE_AFTER_MS', 15 * 60 * 1000)),
+
+  // Structured logging. JSON in production, human-friendly otherwise; level gates output.
+  log: {
+    level: (process.env.KAPLAN_LOG_LEVEL?.trim() || (isProd ? 'info' : 'debug')) as
+      | 'debug'
+      | 'info'
+      | 'warn'
+      | 'error',
+    json: envBool('KAPLAN_LOG_JSON', isProd),
+  },
+
+  // Optional auth. When a token is set, every HTTP request and WS upgrade must present it
+  // (Authorization: Bearer <token>, or ?token= for WS). Empty token = auth disabled (local).
+  auth: {
+    token: process.env.KAPLAN_AUTH_TOKEN?.trim() || '',
+    get enabled(): boolean {
+      return this.token.length > 0;
+    },
+  },
+
+  // Workspace safety. When enforcement is on, runs/agents may only operate inside one of the
+  // allow-listed directories (or the data dir). Off by default to preserve local single-user UX.
+  security: {
+    workspaceAllowlist: parseList('KAPLAN_WORKSPACE_ALLOWLIST').map((p) => path.resolve(p)),
+    enforceWorkspaceBoundary: envBool('KAPLAN_ENFORCE_WORKSPACE', false),
+    // The blanket `--dangerously-*` agent permission is opt-in; safer per-permission config
+    // is always honored. Default false => dangerous blanket modes are NOT applied implicitly.
+    allowDangerousAgentPermissions: envBool('KAPLAN_ALLOW_DANGEROUS_AGENT_PERMISSIONS', false),
+  },
+
+  // Basic abuse guard on the HTTP API (per-IP fixed window). Generous for a local tool.
+  rateLimit: {
+    enabled: envBool('KAPLAN_RATE_LIMIT', true),
+    windowMs: envInt('KAPLAN_RATE_LIMIT_WINDOW_MS', 60_000),
+    max: envInt('KAPLAN_RATE_LIMIT_MAX', 600),
+  },
 };
 
 export type Config = typeof config;

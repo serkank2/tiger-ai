@@ -2,12 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
 import type { QueueProvider, QueueRule, QueueRuleAction, QueueRuleOperator, QueueRuleProvider } from '../queue/types.js';
-
-function badRequest(message: string): Error & { status: number } {
-  const e = new Error(message) as Error & { status: number };
-  e.status = 400;
-  return e;
-}
+import { badRequest, notFound } from './errors.js';
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -117,10 +112,7 @@ export function createQueueRouter(ctx: AppCtx): Router {
 
   router.put('/rules/:id', async (req, res) => {
     const current = (await service.listRules()).find((rule) => rule.id === req.params.id);
-    if (!current) {
-      res.status(404).json({ error: { message: 'rule not found' } });
-      return;
-    }
+    if (!current) throw notFound('rule not found');
     res.json(await service.upsertRule(ruleFromBody({ ...(req.body ?? {}), id: req.params.id } as Record<string, unknown>, current)));
   });
 

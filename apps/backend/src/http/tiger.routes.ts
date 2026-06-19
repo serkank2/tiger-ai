@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { resolveExistingDir } from '../util/paths.js';
+import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import {
   TIGER_PROJECT_PROMPT_MAX_CHARS,
@@ -50,6 +51,9 @@ export function createTigerRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: `invalid workspace directory: ${dirCheck.reason}` } });
       return;
     }
+    // Enforce the workspace boundary before any tiger/ scaffolding is created here.
+    // Throws HttpError(403, 'workspace_not_allowed') handled by the central error middleware.
+    assertWorkspaceAllowed(dirCheck.path);
     const prompt = typeof body.projectPrompt === 'string' ? body.projectPrompt : '';
     if (!prompt.trim()) {
       res.status(400).json({ error: { message: 'projectPrompt is required' } });
@@ -95,6 +99,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
       res.status(400).json({ error: { message: `invalid project directory: ${dirCheck.reason}` } });
       return;
     }
+    assertWorkspaceAllowed(dirCheck.path);
     await orch.attachWorkspace(dirCheck.path);
     rememberProject(ctx, dirCheck.path);
     await ctx.save();

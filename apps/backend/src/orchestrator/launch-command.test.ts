@@ -15,9 +15,44 @@ test('claude default (normal) permission yields no permission flags', () => {
   assert.equal(cmd, 'claude');
 });
 
-test('claude dangerous mode uses --dangerously-skip-permissions', () => {
-  const cmd = buildLaunchCommand(cfg, 'claude', { model: 'opus', effort: '', permission: 'dangerous' });
+test('claude dangerous mode uses --dangerously-skip-permissions when opted in', () => {
+  const cmd = buildLaunchCommand(
+    cfg,
+    'claude',
+    { model: 'opus', effort: '', permission: 'dangerous' },
+    { allowDangerous: true },
+  );
   assert.equal(cmd, 'claude --model opus --dangerously-skip-permissions');
+});
+
+test('claude dangerous mode is downgraded (no perm flags) when NOT opted in', () => {
+  const cmd = buildLaunchCommand(
+    cfg,
+    'claude',
+    { model: 'opus', effort: '', permission: 'dangerous' },
+    { allowDangerous: false },
+  );
+  assert.equal(cmd, 'claude --model opus');
+});
+
+test('codex yolo mode is downgraded when NOT opted in but keeps extra args', () => {
+  const cmd = buildLaunchCommand(
+    cfg,
+    'codex',
+    { model: '', effort: '', permission: 'yolo' },
+    { allowDangerous: false },
+  );
+  assert.equal(cmd, 'codex --no-alt-screen');
+});
+
+test('safe permission modes are unaffected by the dangerous gate', () => {
+  const cmd = buildLaunchCommand(
+    cfg,
+    'codex',
+    { model: '', effort: '', permission: 'workspace-write' },
+    { allowDangerous: false },
+  );
+  assert.equal(cmd, 'codex --ask-for-approval never --sandbox workspace-write --no-alt-screen');
 });
 
 test('codex command applies model, reasoning effort, sandbox and extra args', () => {
@@ -33,22 +68,24 @@ test('codex with no model omits the model flag', () => {
   assert.equal(cmd, 'codex --ask-for-approval never --sandbox read-only --no-alt-screen');
 });
 
-test('default launch commands use the high-capability default profile', () => {
+test('default launch commands use the high-capability default profile when dangerous is opted in', () => {
   const d = cfg.defaults;
   assert.equal(
-    buildLaunchCommand(cfg, 'claude', {
-      model: d.claudeModel,
-      effort: d.claudeEffort,
-      permission: d.claudePermission,
-    }),
+    buildLaunchCommand(
+      cfg,
+      'claude',
+      { model: d.claudeModel, effort: d.claudeEffort, permission: d.claudePermission },
+      { allowDangerous: true },
+    ),
     'claude --model opus --effort xhigh --dangerously-skip-permissions',
   );
   assert.equal(
-    buildLaunchCommand(cfg, 'codex', {
-      model: d.codexModel,
-      effort: d.codexEffort,
-      permission: d.codexPermission,
-    }),
+    buildLaunchCommand(
+      cfg,
+      'codex',
+      { model: d.codexModel, effort: d.codexEffort, permission: d.codexPermission },
+      { allowDangerous: true },
+    ),
     'codex -m gpt-5.5 -c model_reasoning_effort=xhigh --dangerously-bypass-approvals-and-sandbox --no-alt-screen',
   );
 });
@@ -61,11 +98,12 @@ test('isDangerousPermission flags only the unrestricted modes', () => {
 });
 
 test('antigravity quotes a space/parenthesis model label as one argument plus the dangerous flag', () => {
-  const cmd = buildLaunchCommand(cfg, 'antigravity', {
-    model: 'Gemini 3.1 Pro (High)',
-    effort: '',
-    permission: 'dangerous',
-  });
+  const cmd = buildLaunchCommand(
+    cfg,
+    'antigravity',
+    { model: 'Gemini 3.1 Pro (High)', effort: '', permission: 'dangerous' },
+    { allowDangerous: true },
+  );
   assert.equal(cmd, 'agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions');
 });
 

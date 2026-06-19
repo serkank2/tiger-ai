@@ -5,6 +5,8 @@ import type { AppCtx } from '../context.js';
 import type { ManagerOutputEvent } from '../terminal/TerminalManager.js';
 import type { CommandTarget, TerminalRuntimeStatus } from '../store/types.js';
 import { parseClientMessage, type ServerMsg } from './protocol.js';
+import { logger } from '../obs/logger.js';
+import { verifyUpgrade } from '../http/middleware/auth.js';
 import { toTeamRunStateDto } from '../team/snapshot.js';
 import type { TeamRunState as EngineTeamRunState } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
@@ -42,8 +44,17 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     // Non-browser local clients send no Origin header and are allowed.
     verifyClient: (info, cb) => {
       const origin = info.origin;
-      const ok = !origin || config.corsOrigins.includes(origin);
-      cb(ok, 403, 'Forbidden origin');
+      if (origin && !config.corsOrigins.includes(origin)) {
+        cb(false, 403, 'Forbidden origin');
+        return;
+      }
+      // Optional shared-token auth: when enabled, the upgrade must carry the token
+      // (Authorization: Bearer, ?token=, or the Sec-WebSocket-Protocol header).
+      if (!verifyUpgrade(info.req)) {
+        cb(false, 401, 'Unauthorized');
+        return;
+      }
+      cb(true);
     },
   });
   const peers = new Set<Peer>();
@@ -207,7 +218,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     } catch (err) {
       // Catch-all for unexpected handler errors (known cases send specific term.error above).
       // Log full detail server-side; send a generic message so internal paths don't leak.
-      console.error('[ws] handler error:', err);
+      logger.error('ws handler error', { err });
       send(peer.ws, {
         type: 'term.error',
         termId: 'termId' in msg ? msg.termId : undefined,

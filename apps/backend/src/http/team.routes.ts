@@ -29,6 +29,7 @@ import { resolveExistingDir } from '../util/paths.js';
 import { TeamTemplateServiceError } from '../services/team-templates.js';
 import { artifactsFile } from '../team/message-bus.js';
 import { computeTeamChanges } from '../team/changes.js';
+import { assertWorkspaceAllowed } from '../security/workspace.js';
 import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
@@ -288,6 +289,10 @@ export function createTeamRouter(ctx: AppCtx): Router {
       }
       workspace = known;
     }
+    // Enforce the workspace boundary for the resolved workspace (whether client-supplied
+    // or derived from the active/last project). Throws HttpError(403, 'workspace_not_allowed'),
+    // forwarded by Express 5 to the central error middleware for a stable error code.
+    assertWorkspaceAllowed(workspace);
     const roles = await resolveRoles(ctx, body);
     // Scaffold the .tiger root and seed the goal as the project prompt (idempotent;
     // never clobbers an existing prompt), so role turns always have project context.

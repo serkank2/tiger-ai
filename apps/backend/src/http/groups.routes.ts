@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
 import type { TerminalGroup } from '../store/types.js';
 import { isValidColor, nonEmptyString } from './validate.js';
+import { badRequest, notFound } from './errors.js';
 import { TIGER_GROUP_NAME_MAX_CHARS } from '../orchestrator/config.js';
 
 export function createGroupsRouter(ctx: AppCtx): Router {
@@ -15,13 +16,9 @@ export function createGroupsRouter(ctx: AppCtx): Router {
   router.post('/', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = nonEmptyString(body.name);
-    if (!name) {
-      res.status(400).json({ error: { message: 'name is required' } });
-      return;
-    }
+    if (!name) throw badRequest('name is required');
     if (name.length > TIGER_GROUP_NAME_MAX_CHARS) {
-      res.status(400).json({ error: { message: `name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer` } });
-      return;
+      throw badRequest(`name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer`);
     }
     const group: TerminalGroup = {
       id: nanoid(),
@@ -35,15 +32,11 @@ export function createGroupsRouter(ctx: AppCtx): Router {
 
   router.put('/:id', async (req, res) => {
     const group = ctx.state.groups.find((g) => g.id === req.params.id);
-    if (!group) {
-      res.status(404).json({ error: { message: 'group not found' } });
-      return;
-    }
+    if (!group) throw notFound('group not found');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const name = nonEmptyString(body.name);
     if (name && name.length > TIGER_GROUP_NAME_MAX_CHARS) {
-      res.status(400).json({ error: { message: `name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer` } });
-      return;
+      throw badRequest(`name must be ${TIGER_GROUP_NAME_MAX_CHARS} characters or fewer`);
     }
     if (name) group.name = name;
     if ('color' in body) group.color = isValidColor(body.color) ? body.color.trim() : undefined;
@@ -53,10 +46,7 @@ export function createGroupsRouter(ctx: AppCtx): Router {
 
   router.delete('/:id', async (req, res) => {
     const idx = ctx.state.groups.findIndex((g) => g.id === req.params.id);
-    if (idx === -1) {
-      res.status(404).json({ error: { message: 'group not found' } });
-      return;
-    }
+    if (idx === -1) throw notFound('group not found');
     ctx.state.groups.splice(idx, 1);
     // Unassign terminals that belonged to this group.
     for (const t of ctx.state.terminals) {

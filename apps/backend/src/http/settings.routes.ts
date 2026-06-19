@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { normalizeShell } from './validate.js';
+import { badRequest } from './errors.js';
 import { resolveExistingDir } from '../util/paths.js';
 import type { ShellSpec } from '../store/types.js';
 
@@ -19,28 +20,19 @@ export function createSettingsRouter(ctx: AppCtx): Router {
     let defaultCwd: string | undefined;
     if (typeof body.defaultCwd === 'string' && body.defaultCwd.trim()) {
       const check = await resolveExistingDir(body.defaultCwd);
-      if (!check.ok) {
-        res.status(400).json({ error: { message: `invalid defaultCwd: ${check.reason}` } });
-        return;
-      }
+      if (!check.ok) throw badRequest(`invalid defaultCwd: ${check.reason}`);
       defaultCwd = check.path;
     }
     let defaultShell: ShellSpec | undefined;
     if (body.defaultShell !== undefined) {
       const shell = normalizeShell(body.defaultShell);
-      if (!shell) {
-        res.status(400).json({ error: { message: 'invalid defaultShell' } });
-        return;
-      }
+      if (!shell) throw badRequest('invalid defaultShell');
       defaultShell = shell;
     }
 
     if (typeof body.theme === 'string' && body.theme.trim()) {
       const theme = body.theme.trim();
-      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(theme)) {
-        res.status(400).json({ error: { message: 'invalid theme' } });
-        return;
-      }
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(theme)) throw badRequest('invalid theme');
       s.theme = theme;
     }
     if (defaultCwd) s.defaultCwd = defaultCwd;
