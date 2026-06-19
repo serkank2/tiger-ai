@@ -6,6 +6,7 @@ import type { HealthStatus } from '~/types';
 import { errText } from '~/lib/apiError';
 import StateView from '~/components/state/StateView.vue';
 import SettingsModal from '~/components/SettingsModal.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 const api = useApi();
 const settings = useSettingsStore();
@@ -61,7 +62,7 @@ onMounted(loadStatus);
       title="Couldn't load system status"
       :description="error"
     >
-      <button class="btn" @click="loadStatus">Retry</button>
+      <BaseButton @click="loadStatus">Retry</BaseButton>
     </StateView>
 
     <template v-else>
@@ -69,16 +70,16 @@ onMounted(loadStatus);
       <section class="card">
         <header class="card-head">
           <h3>System status</h3>
-          <button class="btn small" :disabled="loading" @click="loadStatus">
+          <BaseButton size="sm" :loading="loading" @click="loadStatus">
             {{ loading ? 'Refreshing…' : 'Refresh' }}
-          </button>
+          </BaseButton>
         </header>
         <dl class="grid">
           <div class="row">
             <dt>Database (MySQL)</dt>
             <dd>
-              <span class="pill" :class="dbReady ? 'ok' : 'bad'">
-                <span class="dot" />{{ dbReady ? 'Ready' : 'Unavailable' }}
+              <span class="pill" :class="dbReady ? 'ok' : 'bad'" role="status">
+                <span class="dot" aria-hidden="true" />{{ dbReady ? 'Ready' : 'Unavailable' }}
               </span>
               <span v-if="health?.db.name" class="muted">{{ health.db.name }}</span>
             </dd>
@@ -86,8 +87,8 @@ onMounted(loadStatus);
           <div class="row">
             <dt>Backend</dt>
             <dd>
-              <span class="pill" :class="health?.ok ? 'ok' : 'bad'">
-                <span class="dot" />{{ health?.status ?? 'unknown' }}
+              <span class="pill" :class="health?.ok ? 'ok' : 'bad'" role="status">
+                <span class="dot" aria-hidden="true" />{{ health?.status ?? 'unknown' }}
               </span>
             </dd>
           </div>
@@ -130,7 +131,7 @@ onMounted(loadStatus);
       <section class="card">
         <header class="card-head">
           <h3>Preferences</h3>
-          <button class="btn small" @click="showPreferences = true">Edit preferences</button>
+          <BaseButton size="sm" @click="showPreferences = true">Edit preferences</BaseButton>
         </header>
         <dl class="grid">
           <div class="row">
@@ -265,19 +266,5 @@ dd {
   margin: 12px 0 0;
   color: var(--amber);
   font-size: var(--text-sm);
-}
-.btn {
-  border: 1px solid var(--border-strong);
-  padding: 8px 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.btn.small {
-  padding: 5px 11px;
-  font-size: var(--text-xs);
 }
 </style>

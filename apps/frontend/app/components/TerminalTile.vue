@@ -1,9 +1,23 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
 import { lastOutputLine } from '~/lib/terminalPreview';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 const props = defineProps<{ terminal: TerminalDto }>();
 const terminals = useTerminalsStore();
+
+// Local pending guard so the lifecycle controls show feedback and can't be
+// double-clicked during the async start/stop/restart transition.
+const pending = ref(false);
+async function runLifecycle(action: () => unknown | Promise<unknown>) {
+  if (pending.value) return;
+  pending.value = true;
+  try {
+    await action();
+  } finally {
+    pending.value = false;
+  }
+}
 
 const root = ref<HTMLElement | null>(null);
 const host = ref<HTMLElement | null>(null);
@@ -78,10 +92,51 @@ function expand() {
       <StatusDot :state="terminal.status.state" />
       <span class="tname">{{ terminal.name }}</span>
       <span class="spacer" />
-      <button v-if="!running" class="ic" title="Start" @click="terminals.start(terminal.id)">▶</button>
-      <button v-else class="ic" title="Stop" @click="terminals.stop(terminal.id)">■</button>
-      <button class="ic" title="Restart" @click="terminals.restart(terminal.id)">⟳</button>
-      <button class="ic" title="Expand to single view" @click="expand">⛶</button>
+      <BaseButton
+        v-if="!running"
+        class="ic"
+        size="sm"
+        variant="ghost"
+        iconOnly
+        ariaLabel="Start terminal"
+        title="Start"
+        :loading="pending"
+        @click="runLifecycle(() => terminals.start(terminal.id))"
+        >▶</BaseButton
+      >
+      <BaseButton
+        v-else
+        class="ic"
+        size="sm"
+        variant="ghost"
+        iconOnly
+        ariaLabel="Stop terminal"
+        title="Stop"
+        :loading="pending"
+        @click="runLifecycle(() => terminals.stop(terminal.id))"
+        >■</BaseButton
+      >
+      <BaseButton
+        class="ic"
+        size="sm"
+        variant="ghost"
+        iconOnly
+        ariaLabel="Restart terminal"
+        title="Restart"
+        :loading="pending"
+        @click="runLifecycle(() => terminals.restart(terminal.id))"
+        >⟳</BaseButton
+      >
+      <BaseButton
+        class="ic"
+        size="sm"
+        variant="ghost"
+        iconOnly
+        ariaLabel="Expand to single view"
+        title="Expand to single view"
+        @click="expand"
+        >⛶</BaseButton
+      >
     </div>
     <div class="tile-body">
       <!-- Live xterm host: only mounted while the tile is on-screen / active. -->
@@ -134,17 +189,12 @@ function expand() {
 .spacer {
   flex: 1;
 }
-.ic {
+/* Compact lifecycle controls in the dense tile header. BaseButton handles
+   focus-visible/disabled/aria; we only tighten the icon-only square size. */
+.ic.btn {
   width: 22px;
   height: 22px;
   font-size: 11px;
-  color: var(--text-dim);
-  display: grid;
-  place-items: center;
-}
-.ic:hover {
-  background: var(--bg);
-  color: var(--text);
 }
 .tile-body {
   flex: 1;

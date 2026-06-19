@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { AgentType, CliToolConfig, StageDefaults, TigerConfig } from './types.js';
+import type { AgentType, CliToolConfig, TigerConfig } from './types.js';
 
 let tmpSeq = 0;
 
@@ -194,8 +194,12 @@ export function validateConfigPatch(input: unknown, current: TigerConfig): strin
   }
 
   if ('defaults' in input) {
-    const msg = validateDefaultsPatch(input.defaults, current);
-    if (msg) return msg;
+    // `defaults` are SOURCE-authoritative: normalizeConfig() always reseeds them from code on load
+    // (so a code change applies immediately and a stale config.json can never pin old defaults).
+    // Accepting a `defaults` patch here would be a lossy round-trip — saveConfig persists it but the
+    // next load discards it. Reject the patch instead so the contract is consistent: defaults are
+    // read-only via the API and only ever change in code.
+    return 'defaults are managed in code and cannot be changed via the config API';
   }
 
   if ('timing' in input) {
@@ -311,71 +315,6 @@ function validateCliToolPatch(provider: Provider, raw: unknown): string | null {
   return null;
 }
 
-function validateDefaultsPatch(raw: unknown, current: TigerConfig): string | null {
-  if (!isPlainRecord(raw)) return 'defaults must be an object';
-  const allowed: (keyof StageDefaults)[] = [
-    'claudeAgents',
-    'codexAgents',
-    'antigravityAgents',
-    'claudeModel',
-    'codexModel',
-    'antigravityModel',
-    'claudeEffort',
-    'codexEffort',
-    'antigravityEffort',
-    'claudePermission',
-    'codexPermission',
-    'antigravityPermission',
-    'parallel',
-  ];
-  const unknown = unknownKey(raw, allowed);
-  if (unknown) return `unknown defaults field: ${unknown}`;
-
-  for (const field of ['claudeAgents', 'codexAgents', 'antigravityAgents'] as const) {
-    if (field in raw) {
-      const msg = validateIntegerInRange(raw[field], `defaults.${field}`, {
-        min: TIGER_AGENT_COUNT_MIN,
-        max: TIGER_AGENT_COUNT_MAX,
-      });
-      if (msg) return msg;
-    }
-  }
-
-  const claudeModel = validateModelChoice(raw.claudeModel, 'defaults.claudeModel', current.cli.claude.models);
-  if ('claudeModel' in raw && claudeModel) return claudeModel;
-  const codexModel = validateModelChoice(raw.codexModel, 'defaults.codexModel', current.cli.codex.models);
-  if ('codexModel' in raw && codexModel) return codexModel;
-  const antigravityModel = validateModelChoice(
-    raw.antigravityModel,
-    'defaults.antigravityModel',
-    current.cli.antigravity.models,
-  );
-  if ('antigravityModel' in raw && antigravityModel) return antigravityModel;
-  if ('claudeEffort' in raw && !setHas(TIGER_CLAUDE_EFFORTS, raw.claudeEffort)) {
-    return 'defaults.claudeEffort is not a known Claude effort';
-  }
-  if ('codexEffort' in raw && !setHas(TIGER_CODEX_EFFORTS, raw.codexEffort)) {
-    return 'defaults.codexEffort is not a known Codex effort';
-  }
-  if ('antigravityEffort' in raw && !setHas(TIGER_ANTIGRAVITY_EFFORTS, raw.antigravityEffort)) {
-    return 'defaults.antigravityEffort is not a known Antigravity effort';
-  }
-  if ('claudePermission' in raw && !setHas(Object.keys(current.cli.claude.permissionModes), raw.claudePermission)) {
-    return 'defaults.claudePermission is not a known Claude permission mode';
-  }
-  if ('codexPermission' in raw && !setHas(Object.keys(current.cli.codex.permissionModes), raw.codexPermission)) {
-    return 'defaults.codexPermission is not a known Codex permission mode';
-  }
-  if (
-    'antigravityPermission' in raw &&
-    !setHas(Object.keys(current.cli.antigravity.permissionModes), raw.antigravityPermission)
-  ) {
-    return 'defaults.antigravityPermission is not a known Antigravity permission mode';
-  }
-  if ('parallel' in raw && typeof raw.parallel !== 'boolean') return 'defaults.parallel must be a boolean';
-  return null;
-}
-
 function validateExecutionPatch(raw: unknown): string | null {
   if (!isPlainRecord(raw)) return 'execution must be an object';
   const allowed = ['parallel', 'locking', 'deleteTigerOnComplete', ...Object.keys(TIGER_EXECUTION_LIMITS)];
@@ -429,13 +368,6 @@ function validateModelList(value: unknown, label: string, allowLabel: boolean): 
         : `${label} entries must be simple non-empty model identifiers`;
     }
   }
-  return null;
-}
-
-function validateModelChoice(value: unknown, label: string, allowed: string[] | undefined): string | null {
-  if (typeof value !== 'string') return `${label} must be a string`;
-  if (value === '') return null;
-  if (!allowed?.includes(value)) return `${label} is not in the configured model list`;
   return null;
 }
 

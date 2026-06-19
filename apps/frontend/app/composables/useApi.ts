@@ -22,7 +22,6 @@ import type {
   RoleConfigInput,
   RoleReconfigureInput,
   TeamChanges,
-  SteerResponse,
   TeamArtifact,
   TeamMessageHistoryParams,
   TeamMessagePage,
@@ -242,14 +241,10 @@ export function useApi() {
     closeTeamRun: (id: string) =>
       req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/close`, { method: 'POST' }),
     steerTeamRun: (id: string, body: TeamSteeringInput) =>
-      req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
     listTeamMessages: (runId: string, params: TeamMessageHistoryParams = {}) =>
       req<TeamMessagePage>(`/api/team/runs/${encodeURIComponent(runId)}/messages${queryString(params as Record<string, unknown>)}`),
-    getTeamMessageHistory: (runId: string, params: TeamMessageHistoryParams = {}) =>
-      req<TeamMessagePage>(`/api/team/runs/${encodeURIComponent(runId)}/messages${queryString(params as Record<string, unknown>)}`),
     listTeamArtifacts: (runId: string) =>
-      req<TeamArtifact[]>(`/api/team/runs/${encodeURIComponent(runId)}/artifacts`),
-    getTeamArtifacts: (runId: string) =>
       req<TeamArtifact[]>(`/api/team/runs/${encodeURIComponent(runId)}/artifacts`),
     readTeamArtifact: (runId: string, path: string) =>
       req<{ path: string; content: string; artifact?: TeamArtifact }>(
@@ -264,8 +259,6 @@ export function useApi() {
       req<TeamCommitResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/commit`, { method: 'POST', body: { message } }),
     createTeamPr: (runId: string, body: TeamPrInput) =>
       req<TeamPrResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/pr`, { method: 'POST', body }),
-    submitTeamSteering: (id: string, body: TeamSteeringInput) =>
-      req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
 
     // Run history + read-only rehydrate.
     listTeamRuns: () => req<TeamRunsResponse>('/api/team/runs'),

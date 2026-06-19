@@ -91,7 +91,10 @@ async function act(chunk) {
       await delay(100);
       await fs.appendFile(out, `partial chunk ${i}\n`, 'utf8');
     }
-    await fs.appendFile(out, 'final chunk\n', 'utf8');
+    // The final write includes the execution self-report so this long-running mode satisfies the
+    // semantic completion gate (the task completes `done`, not `blocked`). The `final chunk` line is
+    // still the marker the stability test asserts on.
+    await fs.appendFile(out, 'final chunk\nEXECUTION_RESULT: done\n', 'utf8');
     // stay alive, produce no further output
   } else {
     // 'hang': produce nothing and stay alive

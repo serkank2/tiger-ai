@@ -83,3 +83,20 @@ test('QueueService reclaims stale leases without resetting completed steps', asy
   assert.equal(steps.find((step) => step.stepKey === 'writing-plan')?.status, 'pending');
   assert.equal((await service.getJob(job.id))?.status, 'retrying');
 });
+
+test('bulk emits exactly one coalesced state event for the whole batch', async () => {
+  const repo = new MemoryQueueRepository(false);
+  const service = new QueueService(repo);
+  const a = await service.enqueue({ prompt: 'a' });
+  const b = await service.enqueue({ prompt: 'b' });
+  const c = await service.enqueue({ prompt: 'c' });
+
+  let stateEmits = 0;
+  service.on('state', () => stateEmits++);
+
+  const results = await service.bulk('cancel', [a.id, b.id, c.id]);
+  assert.equal(results.filter((r) => r.ok).length, 3);
+  assert.equal(stateEmits, 1, 'one coalesced state broadcast for the batch, not one per job');
+  assert.equal((await service.getJob(a.id))?.status, 'canceled');
+  assert.equal((await service.getJob(c.id))?.status, 'canceled');
+});

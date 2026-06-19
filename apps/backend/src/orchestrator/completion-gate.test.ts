@@ -13,7 +13,8 @@ import {
 test('requiredSelfReport maps stages and review phases to their tokens', () => {
   assert.equal(requiredSelfReport('executing-plan'), 'execution');
   assert.equal(requiredSelfReport('task-review', 'fix'), 'fix');
-  assert.equal(requiredSelfReport('task-review', 'find'), null);
+  // The FIND phase now requires a REVIEW_RESULT sentinel so a crashed/empty review is not auto-approved.
+  assert.equal(requiredSelfReport('task-review', 'find'), 'review');
   assert.equal(requiredSelfReport('task-review'), null);
   assert.equal(requiredSelfReport('brainstorming'), null);
   assert.equal(requiredSelfReport('requesting-code-review'), null);
@@ -52,6 +53,21 @@ test('fix gate accepts FIX_RESULT: fixed and blocks FIX_RESULT: wontfix', () => 
   const wontfix = evaluateCompletionGate('fix', true, 'FIX_RESULT: wontfix: not reproducible\n');
   assert.equal(wontfix.ok, false);
   assert.match(wontfix.reason ?? '', /wontfix/);
+});
+
+test('review gate blocks a completed FIND run with no REVIEW_RESULT sentinel', () => {
+  const r = evaluateCompletionGate('review', true, '## FINDING: x\nrelated task TASK-001\n');
+  assert.equal(r.ok, false);
+  assert.match(r.reason ?? '', /REVIEW_RESULT|needs-attention/);
+});
+
+test('review gate accepts REVIEW_RESULT: clean and REVIEW_RESULT: findings', () => {
+  assert.equal(evaluateCompletionGate('review', true, 'No findings.\nREVIEW_RESULT: clean\n').ok, true);
+  assert.equal(evaluateCompletionGate('review', true, '## FINDING: x\nREVIEW_RESULT: findings\n').ok, true);
+});
+
+test('review gate blocks when the run itself did not complete', () => {
+  assert.equal(evaluateCompletionGate('review', false, 'REVIEW_RESULT: clean\n').ok, false);
 });
 
 test('null gate accepts any completed run', () => {

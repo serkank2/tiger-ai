@@ -32,6 +32,11 @@
   --slate: #7c8390;
   --blue: #5aa9e6;
 
+  /* Soft tints of the status colors — derived from the live tokens so they track
+     theme overrides. Used for subtle backgrounds/badges instead of hardcoded rgba. */
+  --green-soft: color-mix(in srgb, var(--green) 16%, transparent);
+  --red-soft: color-mix(in srgb, var(--red) 16%, transparent);
+
   /* ============================================================
      DIMENSION TOKENS — theme-independent. Shared by every theme;
      themes.ts never overrides these. This is the single source of
@@ -184,4 +189,28 @@ input::placeholder {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-faint);
   background-clip: content-box;
+}
+
+/* ============================================================
+   REDUCED MOTION — global safety net. Individual components also
+   guard their own keyframe animations, but this neutralizes any
+   decorative motion (pulses, blinks, shimmers, spins, slide/fade
+   transitions) that a component author forgot to gate. Animations
+   are slowed rather than killed for spinners so "busy" stays legible.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Keep indeterminate spinners visibly rotating, just calmer. */
+  .spinner svg,
+  .spinner {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
 }

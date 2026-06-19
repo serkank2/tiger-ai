@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => {
       steerTeamRun: vi.fn(),
       listTeamMessages: vi.fn(),
       listTeamArtifacts: vi.fn(),
+      getTeamRun: vi.fn(),
+      getTeamChanges: vi.fn(),
     },
     notices: {
       push: vi.fn(),
@@ -240,5 +242,72 @@ describe('useTeamStore', () => {
 
     expect(store.actionError).toBe('run cannot be paused');
     expect(mocks.notices.push).toHaveBeenCalledWith('Team pause failed: run cannot be paused', 'error');
+  });
+
+  async function openReadOnly(store: ReturnType<typeof useTeamStore>, runId = 'run-1') {
+    mocks.api.getTeamRun.mockResolvedValue({ state: state({ id: runId }) });
+    mocks.api.listTeamMessages.mockResolvedValue(page([message('m1')]));
+    mocks.api.listTeamArtifacts.mockResolvedValue([]);
+    await store.openRun(runId);
+    expect(store.readOnly).toBe(true);
+  }
+
+  it('ignores live role/done/steering/changes frames while a read-only run is open (even on id match)', async () => {
+    const store = useTeamStore();
+    store.bindSocket();
+    await openReadOnly(store);
+
+    // Frames target the same id as the viewed run — they must be dropped, not applied.
+    mocks.listeners.get('team.role')?.({
+      type: 'team.role',
+      runId: 'run-1',
+      role: { ...role, status: 'paused' },
+    });
+    mocks.listeners.get('team.done')?.({
+      type: 'team.done',
+      runId: 'run-1',
+      gate: { satisfied: true, requiredRoleIds: [], signedOffRoleIds: [], pendingRoleIds: [] },
+    });
+    mocks.listeners.get('team.steering')?.({
+      type: 'team.steering',
+      runId: 'run-1',
+      directive: { id: 'd1', body: 'x', acknowledged: false },
+    });
+    mocks.listeners.get('team.changes')?.({
+      type: 'team.changes',
+      runId: 'run-1',
+      changes: { isGitRepo: true, head: 'abc', branch: 'main', summary: {}, generatedAt: 'now' },
+    });
+
+    expect(store.roles[0]?.status).toBe('working');
+    expect(store.activeRun?.doneGate.satisfied).toBe(false);
+    expect(store.directives).toHaveLength(0);
+    // The read-only changes frame must not trigger a diff refetch.
+    expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
+  });
+
+  it('ignores a live team.state push for the same id while read-only (no silent go-live)', async () => {
+    const store = useTeamStore();
+    store.bindSocket();
+    await openReadOnly(store);
+
+    mocks.listeners.get('team.state')?.({ type: 'team.state', state: state({ id: 'run-1', status: 'paused' }) });
+
+    // Still read-only, snapshot unchanged — going live requires returnToLive(), not id equality.
+    expect(store.readOnly).toBe(true);
+    expect(store.activeRun?.status).toBe('running');
+  });
+
+  it('loadChanges stays quiet (no toast) when called with quiet option', async () => {
+    const store = useTeamStore();
+    store.applyState(state());
+    mocks.api.getTeamChanges.mockRejectedValue({ data: { error: { message: 'diff failed' } } });
+
+    await expect(store.loadChanges('run-1', { quiet: true })).rejects.toBeTruthy();
+    expect(mocks.notices.push).not.toHaveBeenCalledWith('Team changes: diff failed', 'error');
+
+    // Without quiet it still toasts.
+    await expect(store.loadChanges('run-1')).rejects.toBeTruthy();
+    expect(mocks.notices.push).toHaveBeenCalledWith('Team changes: diff failed', 'error');
   });
 });

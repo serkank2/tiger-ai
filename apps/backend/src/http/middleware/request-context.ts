@@ -24,9 +24,27 @@ declare global {
   }
 }
 
+/** Accept a client-supplied request id but bound its length and charset (defense in depth). */
+function sanitizeInboundId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 128 || !/^[\w.\-:]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 export function requestContext() {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const reqId = crypto.randomUUID();
+    // The liveness probe is hammered by orchestrators; it carries no correlation value, so skip
+    // UUID generation (and the child-logger / per-request access log) for it entirely.
+    if (req.path === '/api/health/live') {
+      req.id = '';
+      req.log = logger;
+      next();
+      return;
+    }
+    // Honor an inbound X-Request-Id when present (lets a proxy / caller correlate across hops);
+    // otherwise mint a fresh UUID. Either way echo the id back so the client can log it.
+    const reqId = sanitizeInboundId(req.headers['x-request-id']) ?? crypto.randomUUID();
     req.id = reqId;
     req.log = logger.child({ reqId });
     res.setHeader('X-Request-Id', reqId);

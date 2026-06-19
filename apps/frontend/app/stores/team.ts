@@ -12,7 +12,6 @@ import type {
   RoleReconfigureInput,
   RoleSnapshot,
   RoleTemplate,
-  SteerResponse,
   SteeringDirective,
   TeamArtifact,
   TeamChanges,
@@ -71,7 +70,6 @@ type StateResponse =
   | TeamRunStateResponse
   | CreateTeamRunResponse
   | { activeRun?: TeamRunState | null };
-type SteeringResponse = TeamRunState | TeamRunStateResponse | SteerResponse;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -105,7 +103,7 @@ function normalizeTemplatesResponse(response: TemplateResponse): { teams: TeamTe
   return Array.isArray(response) ? { teams: response, roles: [] } : response;
 }
 
-function normalizeStateResponse(response: StateResponse | SteeringResponse | null | undefined): TeamRunState | null {
+function normalizeStateResponse(response: StateResponse | null | undefined): TeamRunState | null {
   if (!response) return null;
   if (!isRecord(response)) return null;
   const record = response as Record<string, unknown>;
@@ -419,8 +417,12 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  /** Load the run's real product changes (git working-tree diff vs HEAD) for the Changes view. */
-  async function loadChanges(runId = activeRunId.value): Promise<void> {
+  /**
+   * Load the run's real product changes (git working-tree diff vs HEAD) for the Changes view.
+   * Pass `quiet` for the frame-driven refresh path: transient diff failures during an active
+   * run still update internal state but never raise a user-facing error toast.
+   */
+  async function loadChanges(runId = activeRunId.value, options: { quiet?: boolean } = {}): Promise<void> {
     if (!runId) {
       changes.value = null;
       return;
@@ -430,7 +432,7 @@ export const useTeamStore = defineStore('team', () => {
       changes.value = await api.getTeamChanges(runId);
     } catch (error) {
       loadError.value = errText(error);
-      notices.push(`Team changes: ${loadError.value}`, 'error');
+      if (!options.quiet) notices.push(`Team changes: ${loadError.value}`, 'error');
       throw error;
     } finally {
       changesLoading.value = false;
@@ -538,17 +540,12 @@ export const useTeamStore = defineStore('team', () => {
       const id = currentRunOrThrow(runId);
       const body = typeof input === 'string' ? { body: input } : input;
       const response = await api.steerTeamRun(id, body);
-      const next = normalizeStateResponse(response as SteeringResponse);
-      if (next) applyState(next);
-      else if (isRecord(response) && isRecord((response as SteerResponse).directive) && state.value) {
-        state.value = {
-          ...state.value,
-          pendingSteering: [...state.value.pendingSteering, (response as SteerResponse).directive as SteeringDirective],
-        };
-      }
-      if (!state.value) throw new Error('Team steering did not return a run state');
+      // The steer endpoint always returns `{ state }`; normalize and apply it.
+      const next = normalizeStateResponse(response as StateResponse);
+      if (!next) throw new Error('Team steering did not return a run state');
+      applyState(next);
       notices.push('Message sent to the Lead', 'info');
-      return state.value;
+      return next;
     } catch (error) {
       recordFailure('Message to the Lead failed', error);
       throw error;
@@ -739,6 +736,9 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   function applyRoleFrame(runId: string, role: RoleSnapshot): void {
+    // Read-only history views must not be mutated by live frames, even when the
+    // viewed run id happens to equal the live run id (id coincidence).
+    if (readOnly.value) return;
     if (!isCurrentRun(runId) || !state.value) return;
     const roles = state.value.roles.map((r) => (r.id === role.id ? { ...r, ...role } : r));
     if (!roles.some((r) => r.id === role.id)) roles.push(role);
@@ -746,11 +746,13 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   function applyDoneFrame(runId: string, gate: DoneGateState): void {
+    if (readOnly.value) return;
     if (!isCurrentRun(runId) || !state.value) return;
     state.value = { ...state.value, doneGate: gate };
   }
 
   function applySteeringFrame(runId: string, directive: SteeringDirective): void {
+    if (readOnly.value) return;
     if (!isCurrentRun(runId) || !state.value) return;
     const pending = state.value.pendingSteering.filter((d) => d.id !== directive.id);
     // Acknowledged/applied directives drop out of the pending list; others stay reflected.
@@ -759,6 +761,7 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   function applyChangesFrame(runId: string, summary: TeamChangesEvent): void {
+    if (readOnly.value) return;
     if (!isCurrentRun(runId)) return;
     // Reflect the summary immediately; pull the full diff lazily via the existing REST route.
     if (changes.value) {
@@ -771,7 +774,8 @@ export const useTeamStore = defineStore('team', () => {
         generatedAt: summary.generatedAt,
       };
     }
-    void loadChanges(runId).catch(() => {});
+    // Frame-driven refresh: stay quiet so transient diff failures don't toast mid-run.
+    void loadChanges(runId, { quiet: true }).catch(() => {});
   }
 
   let unbindTeamRole: (() => void) | null = null;
@@ -779,16 +783,21 @@ export const useTeamStore = defineStore('team', () => {
   let unbindTeamSteering: (() => void) | null = null;
   let unbindTeamChanges: (() => void) | null = null;
 
+  let bound = false;
+
   function bindSocket(): () => void {
-    if (!unbindTeamState || !unbindTeamMessage) {
+    if (!bound) {
+      bound = true;
       const socket = useSocket();
       unbindTeamState = socket.onServerEvent('team.state', (msg) => {
         const next = (msg as unknown as TeamStateEvent).state;
-        // A live state push for the active run supersedes a read-only history view.
-        if (next && (!readOnly.value || next.id === state.value?.id)) {
-          if (next.id !== viewingRunId.value) viewingRunId.value = null;
-          applyState(next);
-        }
+        if (!next) return;
+        // While viewing a past run read-only, ignore live state pushes entirely —
+        // even one whose id coincides with the viewed run. Going live is an explicit
+        // user action (returnToLive), never inferred from id equality.
+        if (readOnly.value) return;
+        viewingRunId.value = null;
+        applyState(next);
       });
       unbindTeamMessage = socket.onServerEvent('team.message', (msg) => {
         const message = (msg as unknown as TeamMessageEvent).message;
@@ -810,9 +819,7 @@ export const useTeamStore = defineStore('team', () => {
         const e = msg as unknown as TeamChangesFrame;
         if (e.changes) applyChangesFrame(e.runId, e.changes);
       });
-    }
 
-    if (!unwatchConnection) {
       const connection = useConnectionStore();
       unwatchConnection = watch(
         () => connection.status,
@@ -839,6 +846,7 @@ export const useTeamStore = defineStore('team', () => {
       unbindTeamSteering = null;
       unbindTeamChanges = null;
       unwatchConnection = null;
+      bound = false;
     };
   }
 

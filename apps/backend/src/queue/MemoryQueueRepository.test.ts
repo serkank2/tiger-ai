@@ -112,3 +112,20 @@ test('replacePositions renumbers requested ids first, then the rest, contiguousl
     ],
   );
 });
+
+test('getLatestLimitSnapshotsByWindow returns the latest snapshot per window', async () => {
+  const repo = new MemoryQueueRepository(false);
+  // Two windows for claude, each with an older + newer snapshot; one codex window (filtered out).
+  repo.addLimitSnapshot({ provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: null, checkedAt: '2026-06-19T01:00:00.000Z' });
+  repo.addLimitSnapshot({ provider: 'claude', windowKey: '5h', percentUsed: 55, resetAt: null, checkedAt: '2026-06-19T03:00:00.000Z' });
+  repo.addLimitSnapshot({ provider: 'claude', windowKey: '7d', percentUsed: 40, resetAt: null, checkedAt: '2026-06-19T02:00:00.000Z' });
+  repo.addLimitSnapshot({ provider: 'codex', windowKey: '5h', percentUsed: 99, resetAt: null, checkedAt: '2026-06-19T04:00:00.000Z' });
+
+  const claude = await repo.getLatestLimitSnapshotsByWindow('claude');
+  const byWindow = new Map(claude.map((s) => [s.windowKey, s.percentUsed]));
+  assert.equal(claude.length, 2);
+  assert.equal(byWindow.get('5h'), 55); // newest 5h wins
+  assert.equal(byWindow.get('7d'), 40);
+
+  assert.deepEqual(await repo.getLatestLimitSnapshotsByWindow('antigravity'), []);
+});

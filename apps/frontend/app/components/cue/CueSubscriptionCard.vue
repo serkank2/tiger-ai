@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import Spinner from '~/components/Spinner.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 import type { CueSubscriptionStatus } from '~/types';
 
 const props = defineProps<{ sub: CueSubscriptionStatus; busy?: boolean }>();
@@ -29,15 +29,15 @@ const lastFired = computed(() =>
         <span class="badge target">→ {{ sub.target }}</span>
         <span v-if="!sub.enabled" class="badge off">disabled</span>
       </div>
-      <button
+      <BaseButton
         v-if="isManual"
-        class="btn trigger"
-        :disabled="busy || !sub.enabled"
+        size="sm"
+        :loading="busy"
+        :disabled="!sub.enabled"
         @click="emit('trigger', sub.id)"
       >
-        <Spinner v-if="busy" small />
-        <span v-else>Trigger</span>
-      </button>
+        Trigger
+      </BaseButton>
     </div>
 
     <dl class="meta">
@@ -98,20 +98,6 @@ const lastFired = computed(() =>
 }
 .badge.off {
   color: var(--text-faint);
-}
-.btn {
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 6px 14px;
-  font-weight: 600;
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 .meta {
   display: flex;

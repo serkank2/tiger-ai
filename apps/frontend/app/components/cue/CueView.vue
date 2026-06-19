@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import EmptyState from '~/components/EmptyState.vue';
-import Spinner from '~/components/Spinner.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import Spinner from '~/components/ui/Spinner.vue';
 import CueSubscriptionCard from '~/components/cue/CueSubscriptionCard.vue';
 import { useCueStore } from '~/stores/cue';
 
@@ -38,10 +39,13 @@ async function onTrigger(id: string): Promise<void> {
       <div class="actions">
         <span v-if="cue.running" class="status on">● running</span>
         <span v-else-if="cue.loaded && !cue.disabled" class="status off">● stopped</span>
-        <button class="btn" :disabled="cue.isBusy('reload') || cue.disabled" @click="onReload">
-          <Spinner v-if="cue.isBusy('reload')" small />
-          <span v-else>Reload config</span>
-        </button>
+        <BaseButton
+          :loading="cue.isBusy('reload')"
+          :disabled="cue.disabled"
+          @click="onReload"
+        >
+          Reload config
+        </BaseButton>
       </div>
     </header>
 
@@ -59,9 +63,11 @@ async function onTrigger(id: string): Promise<void> {
       v-else-if="cue.loadError"
       title="Could not load Cue"
       :description="cue.loadError"
-      tone="error"
+      tone="danger"
     >
-      <button class="btn" @click="onReload">Retry</button>
+      <template #actions>
+        <BaseButton @click="onReload">Retry</BaseButton>
+      </template>
     </EmptyState>
 
     <template v-else>
@@ -127,20 +133,6 @@ async function onTrigger(id: string): Promise<void> {
 }
 .status.off {
   color: var(--text-faint);
-}
-.btn {
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 7px 14px;
-  font-weight: 600;
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 .ctx {
   margin: 0;

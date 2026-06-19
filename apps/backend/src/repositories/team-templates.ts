@@ -16,6 +16,9 @@ import {
   type TeamTemplateUpdate,
 } from '../services/team-templates.js';
 import type { RoleTemplate, TeamTemplate } from '../team/templates.js';
+import { logger } from '../obs/logger.js';
+
+const log = logger.child({ mod: 'repo.team-templates' });
 
 interface TeamTemplateRow extends RowDataPacket {
   id: string;
@@ -34,8 +37,21 @@ function dateIso(value: Date | string | null): string | null {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function parseRoles(value: TeamTemplateRow['roles_json']): RoleTemplate[] {
-  const parsed = typeof value === 'string' ? (JSON.parse(value) as unknown) : value;
+function parseRoles(value: TeamTemplateRow['roles_json'], id?: string): RoleTemplate[] {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch (err) {
+      // A single corrupted roles_json must not throw out of list() and break the whole
+      // team-templates endpoint. Degrade this row to no roles and log it.
+      log.warn('team template roles_json is not valid JSON; using empty roles', {
+        id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
   return Array.isArray(parsed) ? (parsed as RoleTemplate[]) : [];
 }
 
@@ -44,7 +60,7 @@ function rowToTemplate(row: TeamTemplateRow): TeamTemplate {
     id: row.id,
     name: row.name,
     description: row.description ?? undefined,
-    roles: parseRoles(row.roles_json),
+    roles: parseRoles(row.roles_json, row.id),
     builtin: row.builtin === 1,
     version: row.version,
     createdAt: dateIso(row.created_at) ?? undefined,

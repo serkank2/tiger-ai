@@ -112,8 +112,22 @@ export async function renamePrompt(from: string, to: string, opts: { overwrite?:
   if (!b.ok) throw httpErr(400, `to: ${b.reason}`);
   if (!opts.overwrite && (await fs.stat(b.abs).catch(() => null))) throw httpErr(409, 'target already exists');
   await fs.mkdir(path.dirname(b.abs), { recursive: true });
+  // TOCTOU re-assert: between resolvePromptPath's parent-realpath check and this rename, a symlink
+  // could have been planted on the target's directory (especially via the overwrite path). Re-check
+  // the REAL path of the target dir immediately before rename so we never write outside the root.
+  await assertTargetDirInsideRoot(b.abs);
   await fs.rename(a.abs, b.abs).catch(() => {
     throw httpErr(404, 'prompt not found');
   });
   return readPrompt(b.rel);
+}
+
+/** Assert the real path of the target's directory is still inside the prompts root. */
+async function assertTargetDirInsideRoot(absTarget: string): Promise<void> {
+  const root = await fs.realpath(config.promptsDir).catch(() => path.resolve(config.promptsDir));
+  const realDir = await fs.realpath(path.dirname(absTarget)).catch(() => null);
+  if (realDir == null) throw httpErr(400, 'to: target directory is unavailable');
+  const rel = path.relative(root, realDir);
+  const inside = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  if (!inside) throw httpErr(400, 'to: target resolves outside prompts dir');
 }

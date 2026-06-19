@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { PromptSummary } from '~/types';
 import IconTrash from '~/components/IconTrash.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
 
 const props = defineProps<{
   items: PromptSummary[];
@@ -64,17 +68,29 @@ onBeforeUnmount(() => {
       <input v-model="q" class="search" placeholder="🔍 search prompts" spellcheck="false" />
     </div>
     <div class="actions">
-      <button class="btn" @click="emit('create')">+ New</button>
-      <button class="btn ghost" :disabled="loading" title="Reload from disk" @click="emit('refresh')">⟳</button>
+      <BaseButton size="sm" variant="secondary" block @click="emit('create')">+ New</BaseButton>
+      <BaseButton
+        size="sm"
+        variant="secondary"
+        icon-only
+        aria-label="Reload from disk"
+        title="Reload from disk"
+        :disabled="loading"
+        @click="emit('refresh')"
+      >
+        ⟳
+      </BaseButton>
     </div>
     <div class="list">
       <div v-if="loading && !items.length" class="loading-list">
-        <Spinner small label="Loading prompts" />
+        <Spinner :size="14" label="Loading prompts" />
         <Skeleton v-for="i in 4" :key="i" :lines="2" />
       </div>
 
-      <EmptyState v-else-if="error" title="Prompt library unavailable" :description="error" tone="error">
-        <button class="btn" @click="emit('refresh')">Retry</button>
+      <EmptyState v-else-if="error" title="Prompt library unavailable" :description="error" tone="danger">
+        <template #actions>
+          <BaseButton size="sm" variant="secondary" @click="emit('refresh')">Retry</BaseButton>
+        </template>
       </EmptyState>
 
       <template v-else>
@@ -111,11 +127,30 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="row-actions" @click.stop>
-              <button class="ic" title="Rename" @click="startRename(p.path)">✎</button>
-              <button class="ic danger" :class="{ confirm: confirmingPath === p.path }" :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'" @click="onDelete(p.path)">
+              <BaseButton
+                size="sm"
+                variant="ghost"
+                icon-only
+                class="ic"
+                aria-label="Rename"
+                title="Rename"
+                @click="startRename(p.path)"
+              >
+                ✎
+              </BaseButton>
+              <BaseButton
+                size="sm"
+                variant="ghost"
+                icon-only
+                class="ic danger"
+                :class="{ confirm: confirmingPath === p.path }"
+                :aria-label="confirmingPath === p.path ? 'Click again to delete' : 'Delete'"
+                :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'"
+                @click="onDelete(p.path)"
+              >
                 <template v-if="confirmingPath === p.path">✓?</template>
                 <IconTrash v-else />
-              </button>
+              </BaseButton>
             </div>
           </template>
         </div>
@@ -130,10 +165,6 @@ onBeforeUnmount(() => {
 .top { margin-bottom: 8px; }
 .search { width: 100%; }
 .actions { display: flex; gap: 6px; margin-bottom: 8px; }
-.btn { border: 1px solid var(--border-strong); padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--accent); flex: 1; }
-.btn.ghost { flex: none; color: var(--text-dim); width: 34px; }
-.btn:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .loading-list { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
 .item { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
@@ -148,8 +179,7 @@ onBeforeUnmount(() => {
 .row-actions { display: none; gap: 2px; }
 .item:hover .row-actions, .item.active .row-actions, .item:focus-within .row-actions { display: flex; }
 .item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ic { width: 26px; height: 26px; font-size: 12px; color: var(--text-dim); display: grid; place-items: center; }
-.ic:hover { background: var(--bg); color: var(--text); }
+.ic { font-size: 12px; }
 .ic.danger:hover, .ic.confirm { color: var(--red); }
 .renameinput { width: 100%; font-family: var(--font-mono); font-size: 12px; }
 .empty { padding: 18px; text-align: center; color: var(--text-faint); font-size: 13px; }

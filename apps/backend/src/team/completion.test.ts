@@ -273,6 +273,27 @@ test('evaluateCompletion: an inconclusive latest verification blocks completion'
   assert.match(result.blockers.find((b) => b.code === 'verification_failed')!.message, /inconclusive/i);
 });
 
+// Finding #8: when two verifications share the EXACT same timestamp, the genuinely-latest
+// (last-appended) record must win deterministically via the insertion-index tiebreak — a
+// passing record appended AFTER a failing one at the same ms must be the one the gate reads.
+test('evaluateCompletion: equal-timestamp verifications resolve to the LAST appended (index tiebreak)', () => {
+  const passLast = greenInput();
+  passLast.verifications = [
+    verification({ id: 'VER-FAIL', outcome: 'failed', createdAt: T1 }),
+    verification({ id: 'VER-PASS', outcome: 'passed', createdAt: T1 }), // same ms, appended later → wins
+  ];
+  // The latest (passing) verification is read, so the verification gate does not block.
+  assert.ok(!codes(passLast).includes('verification_failed'), 'last-appended passing verification must win the tie');
+
+  const failLast = greenInput();
+  failLast.verifications = [
+    verification({ id: 'VER-PASS', outcome: 'passed', createdAt: T1 }),
+    verification({ id: 'VER-FAIL', outcome: 'failed', createdAt: T1 }), // same ms, appended later → wins
+  ];
+  // Now the latest (failing) verification is read, so the gate blocks.
+  assert.ok(codes(failLast).includes('verification_failed'), 'last-appended failing verification must win the tie');
+});
+
 test('evaluateCompletion: no recorded verification blocks completion', () => {
   const input = greenInput();
   input.verifications = [];

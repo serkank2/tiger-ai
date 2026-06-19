@@ -329,19 +329,24 @@ export class TerminalSession extends EventEmitter {
     if (!this.proc) return Promise.resolve(true);
     return new Promise((resolve) => {
       let done = false;
-      const onExit = () => {
+      const finish = (value: boolean) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
-        resolve(true);
-      };
-      this.once('exit', onExit);
-      const timer = setTimeout(() => {
-        if (done) return;
-        done = true;
+        clearInterval(poll);
         this.removeListener('exit', onExit);
-        resolve(false);
-      }, timeoutMs);
+        resolve(value);
+      };
+      const onExit = () => finish(true);
+      this.once('exit', onExit);
+      // Backstop: resolve on the proc===null transition even if the 'exit' event never reaches us
+      // (e.g. a stale-generation handleExit nulls proc and returns before emitting). Without this,
+      // a pty that already exited would make us wait the full timeout for an event that won't come.
+      const poll = setInterval(() => {
+        if (!this.proc) finish(true);
+      }, 25);
+      poll.unref?.();
+      const timer = setTimeout(() => finish(false), timeoutMs);
     });
   }
 

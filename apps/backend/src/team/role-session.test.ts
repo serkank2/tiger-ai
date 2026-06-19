@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { RoleCliSession } from './role-session.js';
+import { RoleCliSession, sleep } from './role-session.js';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { AgentType, TigerTiming } from '../orchestrator/types.js';
 
@@ -102,4 +102,35 @@ test('dispose stops the underlying terminal only after a start and leaves the se
   await sess.dispose(); // never started → must not call stop
   assert.equal((mgr as unknown as { stops: number }).stops, 0);
   assert.equal(sess.isAlive, false);
+});
+
+// --- Finding #4: sleep must not leak abort listeners on the timeout path -------
+
+function abortListenerCount(signal: AbortSignal): number {
+  const s = signal as unknown as { listenerCount?: (name: string) => number };
+  return typeof s.listenerCount === 'function' ? s.listenerCount('abort') : 0;
+}
+
+test('sleep removes its abort listener on the timeout path (no listener leak in a poll loop)', async () => {
+  const controller = new AbortController();
+  for (let i = 0; i < 50; i++) {
+    await sleep(0, controller.signal); // each resolves via the timeout branch
+  }
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(abortListenerCount(controller.signal), 0, 'no abort listeners should remain after timeout-path sleeps');
+});
+
+test('sleep resolves immediately when the signal is already aborted', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await sleep(10_000, controller.signal); // returns at once, not after 10s
+  assert.equal(controller.signal.aborted, true);
+});
+
+test('sleep resolves and detaches the listener when aborted mid-wait', async () => {
+  const controller = new AbortController();
+  const p = sleep(10_000, controller.signal);
+  controller.abort();
+  await p; // resolves promptly via the abort path
+  assert.equal(abortListenerCount(controller.signal), 0, 'the abort path must also leave no lingering listener');
 });

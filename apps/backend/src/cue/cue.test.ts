@@ -192,6 +192,28 @@ test('normalizeConfig parses filter, target options, and enabled=false', () => {
   assert.equal(s.target.priority, 5);
 });
 
+test('normalizeConfig warns when per-event required fields are missing but keeps the sub', () => {
+  const { subscriptions, warnings } = normalizeConfig({
+    subscriptions: [
+      { id: 'once-no-at', event: 'time.once', prompt: 'x', target: { kind: 'queue' } },
+      { id: 'sched-no-interval', event: 'time.scheduled', prompt: 'x', target: { kind: 'queue' } },
+    ],
+  });
+  assert.equal(subscriptions.length, 2);
+  assert.ok(warnings.some((w) => w.includes('once-no-at') && /at/.test(w)));
+  assert.ok(warnings.some((w) => w.includes('sched-no-interval') && /intervalMs/.test(w)));
+});
+
+// --- path containment ---
+
+test('isPathInside is segment-aware and rejects escapes', async () => {
+  const { isPathInside } = await import('./CueEngine.js');
+  assert.equal(isPathInside('/a/b', '/a/b/c'), true);
+  assert.equal(isPathInside('/a/b', '/a/b'), true);
+  assert.equal(isPathInside('/a/foo', '/a/foobar'), false);
+  assert.equal(isPathInside('/a/b', '/a'), false);
+});
+
 // --- ignore policy ---
 
 test('isIgnoredPath skips VCS/build dirs anywhere in the path', () => {

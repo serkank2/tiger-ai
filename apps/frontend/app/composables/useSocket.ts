@@ -126,6 +126,32 @@ export function useSocket() {
     };
   }
 
+  /**
+   * Force the live socket to re-handshake. Used when the shared-token auth credential
+   * changes in Settings: REST picks up the new token on the next request, but the WS
+   * carries its token only on the handshake, so it must be torn down and reopened to
+   * apply the new (or cleared) token. Closing triggers onclose -> scheduleReconnect,
+   * but we reconnect eagerly here so the change applies immediately.
+   */
+  function reconnect(): void {
+    if (!import.meta.client) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    backoff = 500;
+    const old = socket;
+    socket = null; // detach handlers (they bail when `socket !== ws`) before closing
+    if (old) {
+      try {
+        old.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    connect();
+  }
+
   function scheduleReconnect(): void {
     if (reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
@@ -322,7 +348,7 @@ export function useSocket() {
     };
   }
 
-  return { connect, attach, detach, input, resize, broadcast, onOutput, onSnapshot, onServerEvent };
+  return { connect, reconnect, attach, detach, input, resize, broadcast, onOutput, onSnapshot, onServerEvent };
 }
 
 // HMR safety: tear down the live socket/timer when this module is replaced.

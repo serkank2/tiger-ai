@@ -101,8 +101,13 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
   animation: pulse 1.4s var(--ease-in-out) infinite;
 }
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 66, 0.5); }
-  50% { box-shadow: 0 0 0 5px rgba(245, 158, 66, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  50% { box-shadow: 0 0 0 5px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.pulse {
+    animation: none;
+  }
 }
 .body {
   min-width: 0;
@@ -136,19 +141,19 @@ const isActive = computed(() => props.role.status === 'working' || props.role.st
   color: var(--text-faint);
 }
 .turns {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
 .flag {
-  font-size: 10px;
+  font-size: var(--text-xs);
   border-radius: var(--radius-pill);
   padding: 0 6px;
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
 }
-.flag.write { color: var(--accent); border-color: rgba(245, 158, 66, 0.4); }
-.flag.sign { color: var(--green); border-color: rgba(108, 197, 108, 0.4); }
+.flag.write { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.flag.sign { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
 .tasks {
   display: flex;
   gap: var(--space-2);

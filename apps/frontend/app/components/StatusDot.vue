@@ -15,8 +15,8 @@ const meta = computed(() => META[props.state] ?? FALLBACK);
 </script>
 
 <template>
-  <span class="status" :class="meta.cls" :title="meta.text">
-    <span class="dot" />
+  <span class="status" :class="meta.cls" :title="meta.text" role="status" :aria-label="meta.text">
+    <span class="dot" aria-hidden="true" />
     <span v-if="label" class="txt">{{ meta.text }}</span>
   </span>
 </template>
@@ -65,6 +65,11 @@ const meta = computed(() => META[props.state] ?? FALLBACK);
   }
   50% {
     opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .amber .dot {
+    animation: none;
   }
 }
 </style>

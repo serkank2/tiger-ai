@@ -99,11 +99,26 @@ export function normalizeConfig(raw: unknown): { subscriptions: CueSubscription[
     if (filter) sub.filter = filter;
     // Allow an interval spec under `watch` for time.scheduled (string spec), which the engine
     // parses via parseIntervalSpec; leave as-is.
+    // Advisory validation of per-event required fields (kept, not dropped — the engine degrades
+    // gracefully, but a warning surfaces the misconfiguration in status/logs).
+    for (const w of requiredFieldWarnings(sub)) warnings.push(w);
     seenIds.add(id);
     out.push(sub);
   }
 
   return { subscriptions: out, warnings };
+}
+
+/** Non-fatal warnings for per-event required fields a subscription is missing. */
+function requiredFieldWarnings(sub: CueSubscription): string[] {
+  const warnings: string[] = [];
+  if (sub.event === 'time.once' && !sub.at) {
+    warnings.push(`subscription "${sub.id}": time.once requires an "at" timestamp — it will not fire`);
+  }
+  if (sub.event === 'time.scheduled' && sub.intervalMs === undefined && !sub.watch) {
+    warnings.push(`subscription "${sub.id}": time.scheduled requires "intervalMs" (or an interval spec in "watch") — it will not fire`);
+  }
+  return warnings;
 }
 
 function normalizeTarget(raw: unknown): CueTarget | null {

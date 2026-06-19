@@ -103,6 +103,58 @@ test('enqueue_prompt delegates to queueService.enqueue and returns the new id', 
   assert.equal(result.projectName, 'X');
 });
 
+test('enqueue_prompt rejects a relative workspacePath (sanity layer, even with enforcement off)', async () => {
+  const ctx = makeStubCtx();
+  const tool = buildTools().find((t) => t.name === 'enqueue_prompt')!;
+  const result = (await tool.run(ctx, { prompt: 'build it', workspacePath: '../../etc' })) as {
+    ok?: boolean;
+    error?: string;
+  };
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'workspace_not_allowed');
+});
+
+test('enqueue_prompt passes a sane absolute workspacePath through (resolved)', async () => {
+  let seen: string | undefined = 'unset';
+  const ctx = makeStubCtx({
+    queueService: {
+      enqueue: async (input: { prompt: string; workspacePath?: string }) => {
+        seen = input.workspacePath;
+        return { id: 'job-new', position: 2, status: 'queued', provider: 'claude', projectName: 'Queue' };
+      },
+    },
+  });
+  const tool = buildTools().find((t) => t.name === 'enqueue_prompt')!;
+  const abs = process.platform === 'win32' ? 'C:\\work\\ws' : '/work/ws';
+  const result = (await tool.run(ctx, { prompt: 'build it', workspacePath: abs })) as { id?: string };
+  assert.equal(result.id, 'job-new');
+  assert.ok(seen && seen.length > 0 && seen !== 'unset', 'workspacePath forwarded');
+});
+
+test('enqueue_prompt leaves workspacePath unset when omitted (queue generates a safe path)', async () => {
+  let seen: string | undefined = 'unset';
+  const ctx = makeStubCtx({
+    queueService: {
+      enqueue: async (input: { prompt: string; workspacePath?: string }) => {
+        seen = input.workspacePath;
+        return { id: 'job-new', position: 2, status: 'queued', provider: 'claude', projectName: 'Queue' };
+      },
+    },
+  });
+  const tool = buildTools().find((t) => t.name === 'enqueue_prompt')!;
+  await tool.run(ctx, { prompt: 'build it' });
+  assert.equal(seen, undefined);
+});
+
+test('list_queue_jobs status arg is a closed enum (typos are rejected at the schema)', () => {
+  const tool = buildTools().find((t) => t.name === 'list_queue_jobs')!;
+  const statusSchema = tool.inputShape.status as unknown as { safeParse: (v: unknown) => { success: boolean } };
+  assert.equal(statusSchema.safeParse('running').success, true);
+  assert.equal(statusSchema.safeParse('queued').success, true);
+  assert.equal(statusSchema.safeParse('runnning').success, false); // typo
+  assert.equal(statusSchema.safeParse('bogus').success, false);
+});
+
 test('post_team_steering reports no_active_team_run when no run is loaded', async () => {
   const ctx = makeStubCtx();
   const tool = buildTools().find((t) => t.name === 'post_team_steering')!;

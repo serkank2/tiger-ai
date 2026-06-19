@@ -2,6 +2,7 @@
 import { strictestLimit } from '~/lib/shellLimits';
 import type { BroadcastOutcome } from '~/composables/useSocket';
 import { useT } from '~/composables/useT';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 const { t } = useT();
 
@@ -156,7 +157,7 @@ function sendKey(ch: string) {
         <option :value="null" disabled>{{ t('terminals.chooseGroup') }}</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <button class="iconbtn" :title="t('terminals.manageGroups')" :aria-label="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</button>
+      <BaseButton class="iconbtn" variant="ghost" iconOnly :ariaLabel="t('terminals.manageGroups')" :title="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</BaseButton>
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -168,16 +169,16 @@ function sendKey(ch: string) {
         :aria-describedby="lengthWarning ? 'cmd-lenwarn' : undefined"
         spellcheck="false"
       />
-      <button type="submit" class="send" :disabled="!canSend">{{ t('terminals.send') }}</button>
+      <BaseButton type="submit" class="send" variant="primary" :disabled="!canSend">{{ t('terminals.send') }}</BaseButton>
       <p v-if="lengthWarning" id="cmd-lenwarn" class="lenwarn" role="status" aria-live="polite">⚠ {{ lengthWarning }}</p>
     </form>
 
     <!-- Screen-reader-only broadcast outcome announcer (visual feedback is via toasts/input clear). -->
     <p class="sr-only" role="status" aria-live="polite">{{ sendStatus }}</p>
 
-    <button class="iconbtn" :title="t('terminals.openComposer')" :aria-label="t('terminals.openComposer')" @click="emit('openComposer')">⤢</button>
+    <BaseButton class="iconbtn" variant="ghost" iconOnly :ariaLabel="t('terminals.openComposer')" :title="t('terminals.openComposer')" @click="emit('openComposer')">⤢</BaseButton>
 
-    <button class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{ t('nav.prompts') }}</button>
+    <BaseButton class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{ t('nav.prompts') }}</BaseButton>
 
     <div class="keys">
       <button
@@ -212,9 +213,9 @@ function sendKey(ch: string) {
       >▦</button>
     </div>
 
-    <button class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{ t('nav.templates') }}</button>
-    <button class="tiger" :title="t('terminals.openTiger')" @click="emit('openTiger')">Tiger</button>
-    <button class="new" @click="emit('create')">{{ t('terminals.newTerminal') }}</button>
+    <BaseButton class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{ t('nav.templates') }}</BaseButton>
+    <BaseButton class="tiger" :title="t('terminals.openTiger')" @click="emit('openTiger')">Tiger</BaseButton>
+    <BaseButton class="new" variant="secondary" @click="emit('create')">{{ t('terminals.newTerminal') }}</BaseButton>
   </header>
 </template>
 
@@ -234,16 +235,31 @@ function sendKey(ch: string) {
   align-items: center;
   gap: 8px;
 }
-.iconbtn {
-  border: 1px solid var(--border-strong);
+/* Icon-only controls keep their square footprint over BaseButton's ghost variant. */
+.iconbtn.btn {
   width: 32px;
   height: 32px;
-  color: var(--text-dim);
+  border-color: var(--border-strong);
   flex: none;
 }
-.iconbtn:hover {
+.iconbtn.btn:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* Dense toolbar: on narrow viewports let the controls wrap onto a second row
+   instead of overflowing/clipping. The command input keeps priority width. */
+@media (max-width: 880px) {
+  .bar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 12px;
+  }
+  .cmd {
+    flex-basis: 100%;
+    order: 99;
+  }
 }
 .seg {
   display: flex;
@@ -295,20 +311,7 @@ function sendKey(ch: string) {
   flex: 1;
   font-family: var(--font-mono);
 }
-.send {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 7px 14px;
-}
-.send:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-.send:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+/* .send uses BaseButton (primary) — accent fill + on-accent text handled by the token system. */
 .keys {
   display: flex;
   gap: 4px;
@@ -328,24 +331,15 @@ function sendKey(ch: string) {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.new {
-  border: 1px solid var(--border-strong);
-  padding: 7px 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-.new:hover {
+/* .new uses BaseButton (secondary) — no extra styling needed. */
+
+/* Tiger/Prompts/Templates shortcuts: BaseButton with the accent-outline identity. */
+.tiger.btn {
   border-color: var(--accent);
   color: var(--accent);
-}
-.tiger {
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  padding: 7px 12px;
-  font-weight: 700;
   flex: none;
 }
-.tiger:hover {
+.tiger.btn:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 </style>

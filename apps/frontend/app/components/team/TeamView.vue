@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useDialog } from '~/composables/useDialog';
 import { useTeamStore } from '~/stores/team';
 import { useConnectionStore } from '~/stores/connection';
 import BaseButton from '../ui/BaseButton.vue';
@@ -57,6 +58,17 @@ const terminalRole = computed(
   () => state.value?.roles.find((r) => r.id === selectedRoleId.value && r.terminalId) ?? null,
 );
 const isActive = computed(() => status.value === 'running' || status.value === 'paused' || status.value === 'blocked');
+
+const dialog = useDialog();
+async function closeRun(id: string) {
+  const ok = await dialog.confirm({
+    title: 'Close run',
+    message: 'End the run and kill the agent terminals? This cannot be resumed.',
+    confirmText: 'Close run',
+    danger: true,
+  });
+  if (ok) void team.close(id);
+}
 const connected = computed(() => connection.status === 'connected');
 
 // A Closed run had its persistent CLI sessions killed: it can neither Resume (no context to
@@ -168,7 +180,7 @@ async function reset() {
           variant="danger"
           :loading="team.isBusy(`close:${state.id}`)"
           title="End the run and kill the agent terminals"
-          @click="team.close(state.id)"
+          @click="closeRun(state.id)"
         >Close</BaseButton>
         <BaseButton
           size="sm"

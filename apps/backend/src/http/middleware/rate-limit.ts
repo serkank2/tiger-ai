@@ -33,6 +33,24 @@ export function rateLimit(opts: RateLimitOptions = {}) {
   const now = opts.now ?? Date.now;
   const buckets = new Map<string, Window>();
 
+  // Sweep expired buckets so the map can't grow without bound — under KAPLAN_ALLOW_REMOTE
+  // distinct client IPs would otherwise accumulate forever. Two complementary triggers:
+  //  - a periodic timer (unref'd so it never keeps the process alive), and
+  //  - an inline sweep every SWEEP_EVERY_INSERTS new keys (covers test clocks / no real timer).
+  const SWEEP_EVERY_INSERTS = 1024;
+  let insertsSinceSweep = 0;
+  const sweep = (t: number): void => {
+    for (const [k, win] of buckets) {
+      if (t >= win.resetAt) buckets.delete(k);
+    }
+  };
+  // Only arm the wall-clock timer for the real clock; injected test clocks rely on the
+  // insert-count sweep instead (and must not leave a dangling interval behind).
+  if (!opts.now) {
+    const timer = setInterval(() => sweep(Date.now()), windowMs);
+    timer.unref();
+  }
+
   return (req: Request, res: Response, next: NextFunction): void => {
     if (opts.skip?.(req)) return next();
 
@@ -42,6 +60,10 @@ export function rateLimit(opts: RateLimitOptions = {}) {
     if (!w || t >= w.resetAt) {
       w = { count: 0, resetAt: t + windowMs };
       buckets.set(key, w);
+      if (++insertsSinceSweep >= SWEEP_EVERY_INSERTS) {
+        insertsSinceSweep = 0;
+        sweep(t);
+      }
     }
     w.count += 1;
 

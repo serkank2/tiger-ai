@@ -48,6 +48,20 @@ test('tracks each client IP independently', () => {
   assert.equal(run(mw, fakeReq('10.0.0.2')), undefined); // different IP fresh
 });
 
+test('high distinct-IP volume across a rolled window stays correct (sweep does not corrupt live buckets)', () => {
+  let clock = 0;
+  const mw = rateLimit({ windowMs: 1000, max: 1, now: () => clock });
+  // Insert well past the inline-sweep threshold (1024) so the sweep path runs.
+  for (let i = 0; i < 2000; i++) {
+    assert.equal(run(mw, fakeReq(`10.0.${(i >> 8) & 255}.${i & 255}`)), undefined);
+  }
+  // Roll the window: previously-seen IPs are now expired and should be allowed afresh,
+  // and a brand-new IP is fresh too — proving the sweep never dropped a still-live bucket.
+  clock = 1000;
+  assert.equal(run(mw, fakeReq('10.0.0.0')), undefined);
+  assert.equal(run(mw, fakeReq('203.0.113.7')), undefined);
+});
+
 test('skip predicate exempts matching requests entirely', () => {
   const mw = rateLimit({ windowMs: 1000, max: 1, now: () => 0, skip: (req) => req.path === '/api/health/live' });
   const req = fakeReq('9.9.9.9', '/api/health/live');

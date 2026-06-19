@@ -31,7 +31,7 @@ import { artifactsFile } from '../team/message-bus.js';
 import { computeTeamChanges } from '../team/changes.js';
 import { commit as gitCommit, createPullRequest, stageAll } from '../git/write.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
-import { notFound } from './errors.js';
+import { badRequest, httpError, HttpError, notFound } from './errors.js';
 import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
@@ -44,12 +44,13 @@ const DEFAULT_PAGE = 50;
 
 type EngineRoleSeed = Omit<Partial<TeamRoleInstance>, 'status'>;
 
-function httpError(res: import('express').Response, status: number, message: string): void {
-  res.status(status).json({ error: { message } });
-}
-
-/** Map a team-template service / validation error to a clean HTTP response. */
-function sendTemplateError(res: import('express').Response, err: unknown): void {
+/**
+ * Convert a team-template service / validation error into an `HttpError` so the central
+ * error middleware emits the stable `{ error: { message, code } }` envelope. Returns the
+ * error to throw (callers `throw toTemplateHttpError(err)`), preserving the original status.
+ */
+function toTemplateHttpError(err: unknown): HttpError {
+  if (err instanceof HttpError) return err;
   const e = err as { status?: number; statusCode?: number; message?: string };
   const status =
     err instanceof TeamTemplateServiceError
@@ -59,14 +60,43 @@ function sendTemplateError(res: import('express').Response, err: unknown): void 
         : typeof e.statusCode === 'number'
           ? e.statusCode
           : 400;
-  httpError(res, status, e.message ?? 'team template request failed');
+  return httpError(status, statusToErrorCode(status), e.message ?? 'team template request failed');
 }
 
-/** Map an orchestrator error (it throws `Error & { status }`) to a clean HTTP response. */
-function sendOrchError(res: import('express').Response, err: unknown): void {
+/**
+ * Convert an orchestrator error (it throws `Error & { status }`) into an `HttpError`. 5xx
+ * messages are masked to a generic string (the central handler also masks, but we keep the
+ * prior behavior of not leaking orchestrator internals on a 500).
+ */
+function toOrchHttpError(err: unknown): HttpError {
+  if (err instanceof HttpError) return err;
   const e = err as { status?: number; message?: string };
   const status = typeof e.status === 'number' && e.status >= 400 && e.status < 600 ? e.status : 500;
-  httpError(res, status, status >= 500 ? 'internal error' : e.message ?? 'team request failed');
+  return httpError(status, statusToErrorCode(status), status >= 500 ? 'internal error' : e.message ?? 'team request failed');
+}
+
+/** Map an HTTP status onto the matching stable error code (mirrors errors.ts statusToCode). */
+function statusToErrorCode(status: number): import('./errors.js').ErrorCode {
+  switch (status) {
+    case 400:
+      return 'bad_request';
+    case 401:
+      return 'unauthorized';
+    case 403:
+      return 'forbidden';
+    case 404:
+      return 'not_found';
+    case 409:
+      return 'conflict';
+    case 413:
+      return 'payload_too_large';
+    case 422:
+      return 'validation_failed';
+    case 429:
+      return 'rate_limited';
+    default:
+      return status >= 500 ? 'internal' : 'bad_request';
+  }
 }
 
 /**
@@ -147,7 +177,7 @@ async function resolveRoles(ctx: AppCtx, body: Record<string, unknown>): Promise
     const template = await ctx.teamTemplates.get(templateId);
     return template.roles.map((role) => roleFromTemplate(role, template.id));
   }
-  throw Object.assign(new Error('provide a templateId or a non-empty roles list'), { status: 400 });
+  throw badRequest('provide a templateId or a non-empty roles list');
 }
 
 /** Read and project the conversation tail for a `/state` snapshot. */
@@ -159,9 +189,9 @@ async function recentTail(ctx: AppCtx): Promise<TeamMessage[]> {
 /** Ensure there is an active run and that the path id matches it. */
 function requireActiveRun(ctx: AppCtx, id: string): EngineTeamRunState {
   const state = ctx.teamOrchestrator.tryGetState();
-  if (!state) throw Object.assign(new Error('no active team run'), { status: 404 });
+  if (!state) throw notFound('no active team run');
   if (id && state.runId !== id) {
-    throw Object.assign(new Error(`team run ${id} is not the active run`), { status: 409 });
+    throw httpError(409, 'conflict', `team run ${id} is not the active run`);
   }
   return state;
 }
@@ -220,7 +250,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       const template = await ctx.teamTemplates.create(req.body ?? {});
       res.status(201).json({ template });
     } catch (err) {
-      sendTemplateError(res, err);
+      throw toTemplateHttpError(err);
     }
   });
 
@@ -229,7 +259,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       const template = await ctx.teamTemplates.update(req.params.id, req.body ?? {});
       res.json({ template });
     } catch (err) {
-      sendTemplateError(res, err);
+      throw toTemplateHttpError(err);
     }
   });
 
@@ -238,7 +268,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       const template = await ctx.teamTemplates.duplicate(req.params.id, req.body ?? {});
       res.status(201).json({ template });
     } catch (err) {
-      sendTemplateError(res, err);
+      throw toTemplateHttpError(err);
     }
   });
 
@@ -247,7 +277,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await ctx.teamTemplates.archive(req.params.id);
       res.json({ ok: true });
     } catch (err) {
-      sendTemplateError(res, err);
+      throw toTemplateHttpError(err);
     }
   });
 
@@ -276,8 +306,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const goal = asString(body.goal).trim();
     if (!goal) {
-      httpError(res, 400, 'team goal is required');
-      return;
+      throw badRequest('team goal is required');
     }
     // The Team is self-contained: it works on the folder the user picks. Fall back to
     // the last Team workspace (or the active Tiger project) when none is supplied.
@@ -286,15 +315,13 @@ export function createTeamRouter(ctx: AppCtx): Router {
     if (requested) {
       const dirCheck = await resolveExistingDir(requested);
       if (!dirCheck.ok) {
-        httpError(res, 400, `invalid project directory: ${dirCheck.reason}`);
-        return;
+        throw badRequest(`invalid project directory: ${dirCheck.reason}`);
       }
       workspace = dirCheck.path;
     } else {
       const known = knownWorkspace(ctx);
       if (!known) {
-        httpError(res, 400, 'pick a project folder for the team to work on');
-        return;
+        throw badRequest('pick a project folder for the team to work on');
       }
       workspace = known;
     }
@@ -347,8 +374,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const text = asString(body.body).trim();
     if (!text) {
-      httpError(res, 400, 'message body is required');
-      return;
+      throw badRequest('message body is required');
     }
     await orch.steer(text);
     res.json({ state: toTeamRunStateDto(orch.getState()) });
@@ -487,15 +513,14 @@ export function createTeamRouter(ctx: AppCtx): Router {
     }
     const workspace = active?.workspace ?? knownWorkspace(ctx);
     if (!workspace) {
-      httpError(res, 404, 'no team workspace is known');
-      return;
+      throw notFound('no team workspace is known');
     }
     try {
       const state = await orch.readRun(workspace, id);
       const tail = (await orch.listMessages(0, { workspace, runId: id })).slice(-RECENT_MESSAGES);
       res.json({ state: toTeamRunStateDto(state, tail) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -504,8 +529,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
     const active = orch.tryGetState();
     const workspace = active?.workspace ?? knownWorkspace(ctx);
     if (!workspace) {
-      httpError(res, 404, 'no team workspace is known');
-      return;
+      throw notFound('no team workspace is known');
     }
     const format = asString(req.query.format).toLowerCase() === 'markdown' ? 'markdown' : 'json';
     try {
@@ -514,7 +538,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       res.setHeader('Content-Disposition', `attachment; filename="${out.filename}"`);
       res.send(out.content);
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -530,7 +554,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.pauseRole(req.params.roleId);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -540,7 +564,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.resumeRole(req.params.roleId);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -550,14 +574,13 @@ export function createTeamRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const text = asString(body.body).trim();
     if (!text) {
-      httpError(res, 400, 'message body is required');
-      return;
+      throw badRequest('message body is required');
     }
     try {
       await orch.steerRole(req.params.roleId, text);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -568,7 +591,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.addRole(roleFromInput(req.body ?? {}, orch.getState().roles.length));
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -592,7 +615,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       });
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -603,7 +626,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.removeRole(req.params.roleId);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -626,14 +649,13 @@ export function createTeamRouter(ctx: AppCtx): Router {
       }
       const workspace = active?.workspace ?? knownWorkspace(ctx);
       if (!workspace) {
-        httpError(res, 404, 'no team workspace is known');
-        return;
+        throw notFound('no team workspace is known');
       }
       const state = await orch.readRun(workspace, id);
       const dto = toTeamRunStateDto(state);
       res.json({ attempts: dto.attempts ?? [], currentAttemptId: dto.currentAttemptId ?? null, promotedAttemptId: dto.promotedAttemptId ?? null });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -643,7 +665,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.createAttempt(req.params.id);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -653,7 +675,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.promoteAttempt(req.params.id, req.params.attemptId);
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -671,7 +693,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       await orch.mergeTaskWorktree(req.params.id, req.params.taskId, { cleanup: body.cleanup === true });
       res.json({ state: toTeamRunStateDto(orch.getState()) });
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 
@@ -681,7 +703,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
     try {
       res.json(await orch.attemptDiff(req.params.id, req.params.attemptId));
     } catch (err) {
-      sendOrchError(res, err);
+      throw toOrchHttpError(err);
     }
   });
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { resolveExistingDir } from '../util/paths.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
+import { badRequest, notFound } from './errors.js';
 import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import {
   TIGER_PROJECT_PROMPT_MAX_CHARS,
@@ -48,22 +49,17 @@ export function createTigerRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const dirCheck = await resolveExistingDir(body.path);
     if (!dirCheck.ok) {
-      res.status(400).json({ error: { message: `invalid workspace directory: ${dirCheck.reason}` } });
-      return;
+      throw badRequest(`invalid workspace directory: ${dirCheck.reason}`);
     }
     // Enforce the workspace boundary before any tiger/ scaffolding is created here.
     // Throws HttpError(403, 'workspace_not_allowed') handled by the central error middleware.
     assertWorkspaceAllowed(dirCheck.path);
     const prompt = typeof body.projectPrompt === 'string' ? body.projectPrompt : '';
     if (!prompt.trim()) {
-      res.status(400).json({ error: { message: 'projectPrompt is required' } });
-      return;
+      throw badRequest('projectPrompt is required');
     }
     if (prompt.length > TIGER_PROJECT_PROMPT_MAX_CHARS) {
-      res.status(400).json({
-        error: { message: `projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer` },
-      });
-      return;
+      throw badRequest(`projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer`);
     }
     await orch.initialize(dirCheck.path, prompt);
     rememberProject(ctx, dirCheck.path);
@@ -75,14 +71,10 @@ export function createTigerRouter(ctx: AppCtx): Router {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const prompt = typeof body.projectPrompt === 'string' ? body.projectPrompt : '';
     if (!prompt.trim()) {
-      res.status(400).json({ error: { message: 'projectPrompt is required' } });
-      return;
+      throw badRequest('projectPrompt is required');
     }
     if (prompt.length > TIGER_PROJECT_PROMPT_MAX_CHARS) {
-      res.status(400).json({
-        error: { message: `projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer` },
-      });
-      return;
+      throw badRequest(`projectPrompt must be ${TIGER_PROJECT_PROMPT_MAX_CHARS} characters or fewer`);
     }
     res.json(await orch.replaceProjectPrompt(prompt));
   });
@@ -96,8 +88,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.post('/projects/open', async (req, res) => {
     const dirCheck = await resolveExistingDir((req.body as { path?: unknown })?.path);
     if (!dirCheck.ok) {
-      res.status(400).json({ error: { message: `invalid project directory: ${dirCheck.reason}` } });
-      return;
+      throw badRequest(`invalid project directory: ${dirCheck.reason}`);
     }
     assertWorkspaceAllowed(dirCheck.path);
     await orch.attachWorkspace(dirCheck.path);
@@ -116,8 +107,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.delete('/projects', async (req, res) => {
     const dir = (req.body as { path?: unknown })?.path;
     if (typeof dir !== 'string' || !dir.trim()) {
-      res.status(400).json({ error: { message: 'path is required' } });
-      return;
+      throw badRequest('path is required');
     }
     if (ctx.state.tiger?.projects) {
       ctx.state.tiger.projects = ctx.state.tiger.projects.filter((p) => p !== dir);
@@ -129,8 +119,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.post('/stages/:stage/run', async (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {
-      res.status(404).json({ error: { message: 'unknown stage' } });
-      return;
+      throw notFound('unknown stage');
     }
     const cfg = buildStageConfig(ctx, (req.body ?? {}) as Record<string, unknown>);
     const auto = (req.body as { auto?: unknown })?.auto === true;
@@ -190,8 +179,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.post('/stages/:stage/retry', async (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {
-      res.status(404).json({ error: { message: 'unknown stage' } });
-      return;
+      throw notFound('unknown stage');
     }
     await orch.retryStage(stage);
     res.status(202).json(orch.getState());
@@ -206,8 +194,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.post('/stages/:stage/continue', (req, res) => {
     const stage = req.params.stage;
     if (!isStage(stage)) {
-      res.status(404).json({ error: { message: 'unknown stage' } });
-      return;
+      throw notFound('unknown stage');
     }
     orch.continueStage(stage);
     res.json(orch.getState());
@@ -217,8 +204,7 @@ export function createTigerRouter(ctx: AppCtx): Router {
   router.post('/route', (req, res) => {
     const target = (req.body ?? {}) as { target?: unknown };
     if (target.target !== 'executing-plan' && target.target !== 'task-review') {
-      res.status(400).json({ error: { message: 'target must be "executing-plan" or "task-review"' } });
-      return;
+      throw badRequest('target must be "executing-plan" or "task-review"');
     }
     orch.routeCorrection(target.target);
     res.status(202).json(orch.getState());

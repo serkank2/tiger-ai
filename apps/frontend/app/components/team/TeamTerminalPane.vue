@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 // Live view of one role agent's CLI terminal. Reuses the shared xterm view, so it
 // replays the full scrollback on attach and then streams live output — exactly the
@@ -11,17 +12,46 @@ const host = ref<HTMLElement | null>(null);
 const idRef = computed<string | null>(() => props.termId || null);
 
 useTerminalView(host, idRef, { compact: false, focusOnMount: true });
+
+// Overlay drawer accessibility: Esc to close and focus-restore on close. The xterm
+// view owns initial focus (focusOnMount), so we don't steal it here.
+let opener: HTMLElement | null = null;
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    emit('close');
+  }
+}
+onMounted(() => {
+  opener = (document.activeElement as HTMLElement | null) ?? null;
+});
+onBeforeUnmount(() => {
+  if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
+});
 </script>
 
 <template>
   <div class="term-pane">
     <div class="backdrop" @click="emit('close')" />
-    <div class="drawer">
+    <div
+      class="drawer"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="`Terminal — ${title}`"
+      @keydown="onKeydown"
+    >
       <div class="head">
-        <span class="dot" />
+        <span class="dot" aria-hidden="true" />
         <span class="title">{{ title }}</span>
         <code class="tid" :title="termId">{{ termId }}</code>
-        <button class="close" title="Close" @click="emit('close')">✕</button>
+        <BaseButton
+          class="close"
+          size="sm"
+          variant="ghost"
+          icon-only
+          aria-label="Close terminal"
+          @click="emit('close')"
+        >✕</BaseButton>
       </div>
       <div ref="host" class="host" />
     </div>
@@ -81,16 +111,6 @@ useTerminalView(host, idRef, { compact: false, focusOnMount: true });
 }
 .close {
   margin-left: auto;
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-}
-.close:hover {
-  background: var(--bg-elev-2);
-  color: var(--text);
 }
 .host {
   flex: 1;

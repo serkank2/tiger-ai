@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import { useDialog } from '~/composables/useDialog';
 import { useSocket } from '~/composables/useSocket';
 import { useConnectionStore } from '~/stores/connection';
 import { useQueueStore } from '~/stores/queue';
@@ -112,9 +114,21 @@ function clearSelection(): void {
   selectedIds.value = new Set();
 }
 
+const dialog = useDialog();
+
 async function runBulk(action: QueueBulkAction): Promise<void> {
   const ids = [...selectedIds.value];
   if (ids.length === 0 || queue.isBusy('bulk')) return;
+  if (action === 'cancel' || action === 'delete') {
+    const verb = action === 'delete' ? 'Delete' : 'Cancel';
+    const ok = await dialog.confirm({
+      title: `${verb} ${ids.length} job(s)`,
+      message: `${verb} ${ids.length} selected job(s)? This cannot be undone.`,
+      confirmText: verb,
+      danger: true,
+    });
+    if (!ok) return;
+  }
   try {
     await queue.bulk(action, ids);
     clearSelection();
@@ -171,6 +185,41 @@ async function onDrop(target: QueueJobView, ev: DragEvent): Promise<void> {
 function onDragEnd(): void {
   dragId.value = null;
   dragOverId.value = null;
+}
+
+// Roving-tabindex keyboard navigation for the listbox of jobs. ArrowUp/Down moves
+// the active row (and DOM focus); Enter/Space selects the focused row. Native
+// drag-and-drop above is unaffected — this only adds keyboard parity.
+function focusJobRow(id: string): void {
+  const el = document.querySelector<HTMLElement>(`[data-testid="job-row-${id}"]`);
+  el?.focus();
+}
+
+function onJobListKeydown(ev: KeyboardEvent): void {
+  const items = jobs.value;
+  if (items.length === 0) return;
+  const currentId = selectedJob.value?.id ?? items[0]!.id;
+  const idx = items.findIndex((job) => job.id === currentId);
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    const delta = ev.key === 'ArrowDown' ? 1 : -1;
+    const next = Math.min(items.length - 1, Math.max(0, idx + delta));
+    const nextId = items[next]!.id;
+    selectedJobId.value = nextId;
+    focusJobRow(nextId);
+  } else if (ev.key === 'Enter' || ev.key === ' ') {
+    ev.preventDefault();
+    selectedJobId.value = currentId;
+  } else if (ev.key === 'Home') {
+    ev.preventDefault();
+    selectedJobId.value = items[0]!.id;
+    focusJobRow(items[0]!.id);
+  } else if (ev.key === 'End') {
+    ev.preventDefault();
+    const last = items[items.length - 1]!.id;
+    selectedJobId.value = last;
+    focusJobRow(last);
+  }
 }
 
 watch(
@@ -395,10 +444,10 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
       </div>
       <span class="spacer" />
       <span v-if="queue.updatedAt" class="updated">Synced {{ formatTime(queue.updatedAt) }}</span>
-      <button class="head-btn" data-testid="refresh-queue" :disabled="queue.loading" @click="queue.load().catch(() => {})">
+      <BaseButton size="sm" variant="secondary" data-testid="refresh-queue" :loading="queue.loading" @click="queue.load().catch(() => {})">
         Refresh
-      </button>
-      <button class="head-btn" @click="emit('back')">Back to terminals</button>
+      </BaseButton>
+      <BaseButton size="sm" variant="secondary" @click="emit('back')">Back to terminals</BaseButton>
     </header>
 
     <main class="qbody">
@@ -424,7 +473,14 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               {{ queue.activeJob.currentStep ?? 'Starting' }} -
               {{ activeProgress.completed }}/{{ activeProgress.total }} steps
             </span>
-            <div class="progress" aria-label="Active job progress">
+            <div
+              class="progress"
+              role="progressbar"
+              aria-label="Active job progress"
+              :aria-valuenow="activeProgress.percent"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
               <span :style="{ width: `${activeProgress.percent}%` }" />
             </div>
           </template>
@@ -478,7 +534,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <b>Queue rule management</b>
             <span>Block dispatch from current provider usage and resume at the reset time.</span>
           </div>
-          <button type="button" :disabled="!editingRuleId || savingRule" @click="resetRuleDraft">New rule</button>
+          <BaseButton size="sm" variant="secondary" :disabled="!editingRuleId || savingRule" @click="resetRuleDraft">New rule</BaseButton>
         </div>
 
         <form class="rule-form" data-testid="rule-form" @submit.prevent="saveRule">
@@ -510,9 +566,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <input v-model="ruleDraft.enabled" data-testid="rule-enabled" type="checkbox" />
             <span>Enabled</span>
           </label>
-          <button class="primary" data-testid="save-rule" type="submit" :disabled="!canSaveRule">
-            {{ savingRule ? 'Saving...' : editingRuleId ? 'Update rule' : 'Create rule' }}
-          </button>
+          <BaseButton variant="primary" data-testid="save-rule" type="submit" :loading="savingRule" :disabled="!canSaveRule">
+            {{ editingRuleId ? 'Update rule' : 'Create rule' }}
+          </BaseButton>
         </form>
 
         <div v-if="queue.rules.length" class="rule-list" data-testid="rule-list">
@@ -521,16 +577,16 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               <b>{{ rule.name }}</b>
               <span>{{ ruleLabel(rule) }} / {{ rule.enabled ? 'enabled' : 'disabled' }}</span>
             </div>
-            <button type="button" data-testid="edit-rule" @click="editRule(rule)">Edit</button>
-            <button
-              type="button"
-              class="danger"
+            <BaseButton size="sm" variant="secondary" data-testid="edit-rule" @click="editRule(rule)">Edit</BaseButton>
+            <BaseButton
+              size="sm"
+              variant="danger"
               data-testid="delete-rule"
               :disabled="queue.isBusy(`rule:delete:${rule.id}`)"
               @click="deleteRule(rule)"
             >
               Delete
-            </button>
+            </BaseButton>
           </article>
         </div>
       </section>
@@ -574,9 +630,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 placeholder="Write the autonomous prompt to run..."
               />
             </label>
-            <button class="primary" data-testid="enqueue-submit" type="submit" :disabled="!canSubmit">
-              {{ queue.isBusy('enqueue') ? 'Enqueuing...' : 'Enqueue' }}
-            </button>
+            <BaseButton variant="primary" block data-testid="enqueue-submit" type="submit" :loading="queue.isBusy('enqueue')" :disabled="!canSubmit">
+              Enqueue
+            </BaseButton>
           </form>
 
           <div class="list-head">
@@ -596,12 +652,12 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <div v-if="selectedCount > 0" class="bulk-bar" data-testid="bulk-bar">
             <span class="bulk-count">{{ selectedCount }} selected</span>
             <div class="bulk-actions">
-              <button type="button" data-testid="bulk-pause" :disabled="queue.isBusy('bulk')" @click="runBulk('pause')">Pause</button>
-              <button type="button" data-testid="bulk-resume" :disabled="queue.isBusy('bulk')" @click="runBulk('resume')">Resume</button>
-              <button type="button" data-testid="bulk-retry" :disabled="queue.isBusy('bulk')" @click="runBulk('retry')">Retry</button>
-              <button type="button" class="danger" data-testid="bulk-cancel" :disabled="queue.isBusy('bulk')" @click="runBulk('cancel')">Cancel</button>
-              <button type="button" class="danger" data-testid="bulk-delete" :disabled="queue.isBusy('bulk')" @click="runBulk('delete')">Delete</button>
-              <button type="button" data-testid="bulk-clear" :disabled="queue.isBusy('bulk')" @click="clearSelection">Clear</button>
+              <BaseButton size="sm" variant="secondary" data-testid="bulk-pause" :disabled="queue.isBusy('bulk')" @click="runBulk('pause')">Pause</BaseButton>
+              <BaseButton size="sm" variant="secondary" data-testid="bulk-resume" :disabled="queue.isBusy('bulk')" @click="runBulk('resume')">Resume</BaseButton>
+              <BaseButton size="sm" variant="secondary" data-testid="bulk-retry" :disabled="queue.isBusy('bulk')" @click="runBulk('retry')">Retry</BaseButton>
+              <BaseButton size="sm" variant="danger" data-testid="bulk-cancel" :disabled="queue.isBusy('bulk')" @click="runBulk('cancel')">Cancel</BaseButton>
+              <BaseButton size="sm" variant="danger" data-testid="bulk-delete" :disabled="queue.isBusy('bulk')" @click="runBulk('delete')">Delete</BaseButton>
+              <BaseButton size="sm" variant="ghost" data-testid="bulk-clear" :disabled="queue.isBusy('bulk')" @click="clearSelection">Clear</BaseButton>
             </div>
           </div>
 
@@ -612,7 +668,14 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <b>No queued jobs</b>
             <span>Submit a prompt to start sequential autonomous execution.</span>
           </div>
-          <div v-else class="job-list" data-testid="job-list">
+          <div
+            v-else
+            class="job-list"
+            data-testid="job-list"
+            role="listbox"
+            aria-label="Ordered queue jobs"
+            @keydown="onJobListKeydown"
+          >
             <div
               v-for="job in jobs"
               :key="job.id"
@@ -620,6 +683,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               :class="{ selected: selectedJob?.id === job.id, 'drag-over': dragOverId === job.id, dragging: dragId === job.id, fixed: !isReorderable(job) }"
               :data-status="job.status"
               :data-testid="`job-row-${job.id}`"
+              role="option"
+              :aria-selected="selectedJob?.id === job.id"
+              :tabindex="selectedJob?.id === job.id ? 0 : -1"
               :draggable="isReorderable(job)"
               @click="selectedJobId = job.id"
               @dragstart="onDragStart(job, $event)"
@@ -663,37 +729,48 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </div>
 
           <div class="controls" aria-label="Queue job controls">
-            <button data-testid="move-up-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(-1)">Move up</button>
-            <button data-testid="move-down-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(1)">Move down</button>
-            <button
+            <BaseButton size="sm" variant="secondary" data-testid="move-up-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(-1)">Move up</BaseButton>
+            <BaseButton size="sm" variant="secondary" data-testid="move-down-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(1)">Move down</BaseButton>
+            <BaseButton
+              size="sm"
+              variant="secondary"
               data-testid="pause-job"
-              :disabled="!canPause(selectedJob) || queue.isBusy(`pause:${selectedJob.id}`)"
+              :loading="queue.isBusy(`pause:${selectedJob.id}`)"
+              :disabled="!canPause(selectedJob)"
               @click="runControl('pause')"
             >
               Pause
-            </button>
-            <button
+            </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="secondary"
               data-testid="resume-job"
-              :disabled="!canResume(selectedJob) || queue.isBusy(`resume:${selectedJob.id}`)"
+              :loading="queue.isBusy(`resume:${selectedJob.id}`)"
+              :disabled="!canResume(selectedJob)"
               @click="runControl('resume')"
             >
               Resume
-            </button>
-            <button
+            </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="secondary"
               data-testid="retry-job"
-              :disabled="!canRetry(selectedJob) || queue.isBusy(`retry:${selectedJob.id}`)"
+              :loading="queue.isBusy(`retry:${selectedJob.id}`)"
+              :disabled="!canRetry(selectedJob)"
               @click="runControl('retry')"
             >
               Retry
-            </button>
-            <button
-              class="danger"
+            </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="danger"
               data-testid="cancel-job"
-              :disabled="isTerminal(selectedJob.status) || queue.isBusy(`cancel:${selectedJob.id}`)"
+              :loading="queue.isBusy(`cancel:${selectedJob.id}`)"
+              :disabled="isTerminal(selectedJob.status)"
               @click="runControl('cancel')"
             >
               Cancel
-            </button>
+            </BaseButton>
           </div>
 
           <div class="detail-grid">
@@ -798,23 +875,6 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
 .conn.disconnected {
   background: var(--red);
 }
-.head-btn,
-.controls button,
-.primary {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 7px 12px;
-  font-weight: 600;
-}
-.head-btn:hover:not(:disabled),
-.controls button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 .qbody {
   flex: 1;
   min-height: 0;
@@ -893,21 +953,6 @@ button:disabled {
   gap: 6px;
   margin-left: auto;
 }
-.bulk-actions button {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 5px 9px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.bulk-actions button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.bulk-actions .danger {
-  border-color: var(--red);
-  color: var(--red);
-}
 .rule-editor {
   display: grid;
   gap: 10px;
@@ -931,18 +976,6 @@ button:disabled {
 .rule-card span {
   color: var(--text-dim);
   font-size: 12px;
-}
-.rule-editor-head button,
-.rule-card button {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 6px 10px;
-  font-weight: 600;
-}
-.rule-editor-head button:hover:not(:disabled),
-.rule-card button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 .rule-form {
   display: grid;
@@ -984,10 +1017,6 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.rule-card .danger {
-  border-color: var(--red);
-  color: var(--red);
 }
 .metric {
   min-height: 116px;
@@ -1086,14 +1115,6 @@ textarea {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 9px 10px;
-}
-.primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--bg);
-}
-.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
 }
 .list-head,
 .panel-head {
@@ -1273,13 +1294,6 @@ textarea {
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
-}
-.controls .danger {
-  border-color: var(--red);
-  color: var(--red);
-}
-.controls .danger:hover:not(:disabled) {
-  background: rgba(229, 86, 75, 0.12);
 }
 .detail-grid {
   display: grid;

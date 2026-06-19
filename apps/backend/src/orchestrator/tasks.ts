@@ -509,9 +509,17 @@ export async function reviewTaskFile(dir: string, id: string, reviewStatus: Revi
   await patchTaskFileContent(dir, id, { reviewStatus });
 }
 
-/** Parse an agent's self-reported execution result (`EXECUTION_RESULT: done|blocked: reason`). */
+/**
+ * Parse an agent's self-reported execution result (`EXECUTION_RESULT: done|blocked: reason`).
+ *
+ * The prompt contract requires the self-report as the FINAL line of the log, so we anchor the
+ * marker to the start of a line (tolerating leading list/quote/whitespace markers like `> `, `- `,
+ * `* `) and take the LAST matching line. Anchoring prevents the prompt text — which itself contains
+ * `EXECUTION_RESULT: …` as part of the instruction — from being misread when the agent echoes it
+ * mid-line; only a genuine self-report on its own line counts.
+ */
 export function parseExecutionResult(text: string): { status: 'done' | 'blocked'; reason: string } | null {
-  const re = /EXECUTION_RESULT\s*:\s*(done|blocked)\b[ \t]*[:-]?[ \t]*(.*)/gi;
+  const re = /^[ \t>*-]*EXECUTION_RESULT\s*:\s*(done|blocked)\b[ \t]*[:-]?[ \t]*(.*)$/gim;
   let m: RegExpExecArray | null;
   let last: { status: 'done' | 'blocked'; reason: string } | null = null;
   while ((m = re.exec(text))) {

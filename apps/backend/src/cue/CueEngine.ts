@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../obs/logger.js';
+import { config } from '../config.js';
 import type { AppCtx } from '../context.js';
 import { configFromObject, loadCueConfig } from './config-loader.js';
 import { CueFileWatcher } from './file-watcher.js';
@@ -20,6 +21,12 @@ const log = logger.child({ mod: 'cue.engine' });
 
 /** File-change debounce: collapse an editor save's burst of events into one cue fire. */
 const FILE_DEBOUNCE_MS = 500;
+/**
+ * Minimum gap between two fires of the SAME file.changed subscription. The debounce only collapses
+ * a single burst; without a cooldown, a subscription whose target writes back under the watched dir
+ * re-triggers itself in a hot loop. This caps the self-retrigger rate.
+ */
+const FILE_REFIRE_COOLDOWN_MS = 10_000;
 /** Cap how much upstream output we read for an agent.completed payload. */
 const SOURCE_OUTPUT_READ_MAX = 8000;
 
@@ -61,6 +68,8 @@ export class CueEngine {
   private onTeamState?: (state: { runId: string; status: string }) => void;
   private onTigerState?: (state: { currentStage: string | null; stages: Record<string, { status: string }> }) => void;
   private lastTeamStatus: string | null = null;
+  /** RunIds whose `completed` we have already fired on — keyed so back-to-back runs both fire. */
+  private firedTeamRunIds = new Set<string>();
   private lastTigerStageStatus = new Map<string, string>();
 
   constructor(opts: CueEngineOptions) {
@@ -155,10 +164,14 @@ export class CueEngine {
     const ws = this.workspace;
     if (!ws) return;
     const dir = path.resolve(ws, rt.sub.watch ?? '.');
+    // The directory this subscription's own action writes to. A change under it is almost
+    // certainly produced by the fire it triggered, so skipping it breaks the self-feedback loop.
+    const outputDir = this.outputTargetDir(rt.sub);
     const watcher = new CueFileWatcher({
       dir,
       debounceMs: FILE_DEBOUNCE_MS,
       onChange: (change) => {
+        if (outputDir && isPathInside(outputDir, change.path)) return;
         void this.dispatchIfMatch(rt, {
           event: 'file.changed',
           filePath: change.path,
@@ -168,6 +181,13 @@ export class CueEngine {
     });
     watcher.start();
     rt.watcher = watcher;
+  }
+
+  /** Resolve the directory a subscription writes its output under (for self-retrigger suppression). */
+  private outputTargetDir(sub: CueSubscription): string | null {
+    if (sub.target.kind !== 'queue') return null; // team steering writes nothing to the watched FS
+    const dest = sub.target.workspacePath ?? this.workspace;
+    return dest ? path.resolve(dest) : null;
   }
 
   private attachInterval(rt: SubRuntime): void {
@@ -185,6 +205,20 @@ export class CueEngine {
   }
 
   private attachOnce(rt: SubRuntime): void {
+    const at = rt.sub.at ? new Date(rt.sub.at).getTime() : NaN;
+    if (!Number.isFinite(at)) {
+      rt.lastError = 'invalid "at" timestamp';
+      log.warn('cue time.once: invalid at', { id: rt.sub.id, at: rt.sub.at });
+      return;
+    }
+    // A one-shot whose time already passed must NOT re-fire on every start()/reload(): the
+    // in-memory self-disable below is lost when reload() rebuilds subs from config. Treat a past
+    // `at` as already-fired and skip it (a fresh future `at` is required to re-arm it).
+    if (at <= Date.now()) {
+      rt.sub = { ...rt.sub, enabled: false };
+      log.debug('cue time.once is stale; skipped', { id: rt.sub.id, at: rt.sub.at });
+      return;
+    }
     const ms = msUntil(rt.sub.at);
     if (ms == null) {
       rt.lastError = 'invalid "at" timestamp';
@@ -203,13 +237,18 @@ export class CueEngine {
   // --- orchestrator completion listeners (agent.completed) ---
 
   private attachAgentListeners(): void {
-    this.lastTeamStatus = this.ctx.teamOrchestrator.tryGetState()?.status ?? null;
+    const initial = this.ctx.teamOrchestrator.tryGetState();
+    this.lastTeamStatus = initial?.status ?? null;
+    // Seed the watermark for an already-completed run so we don't re-fire it on attach.
+    if (initial?.status === 'completed' && initial.runId) this.firedTeamRunIds.add(initial.runId);
     this.onTeamState = (state) => {
       const status = state?.status;
       if (!status) return;
-      const wasDone = this.lastTeamStatus === 'completed';
       this.lastTeamStatus = status;
-      if (status === 'completed' && !wasDone) {
+      // Fire once per runId reaching completed. A single global "was previously completed" flag
+      // would suppress a second run that completes right after the first (both share status text).
+      if (status === 'completed' && state.runId && !this.firedTeamRunIds.has(state.runId)) {
+        this.firedTeamRunIds.add(state.runId);
         void this.onAgentCompleted('team', state.runId);
       }
     };
@@ -294,6 +333,15 @@ export class CueEngine {
   private async dispatchIfMatch(rt: SubRuntime, payload: CueEventPayload): Promise<void> {
     if (!this.running || rt.sub.enabled === false) return;
     if (!matchesFilter(rt.sub, payload)) return;
+    // Per-subscription cooldown for file.changed: even with debounce + output-dir skipping, a chain
+    // of edits under the watched dir could re-fire rapidly. Enforce a minimum gap between fires.
+    if (rt.sub.event === 'file.changed' && rt.lastFiredAt) {
+      const sinceLast = Date.now() - new Date(rt.lastFiredAt).getTime();
+      if (sinceLast < FILE_REFIRE_COOLDOWN_MS) {
+        log.debug('cue file.changed within cooldown; skipped', { id: rt.sub.id, sinceLast });
+        return;
+      }
+    }
     await this.fire(rt, payload);
   }
 
@@ -322,7 +370,12 @@ export class CueEngine {
     if (sub.prompt) return sub.prompt;
     if (sub.promptFile) {
       const ws = this.workspace;
-      const file = ws ? path.resolve(ws, sub.promptFile) : sub.promptFile;
+      const file = ws ? path.resolve(ws, sub.promptFile) : path.resolve(sub.promptFile);
+      // Containment: a `promptFile` with `../` segments must not escape the workspace and read an
+      // arbitrary host file into a prompt. Only enforce when we have a workspace to anchor to.
+      if (ws && !isPathInside(ws, file)) {
+        throw new Error(`promptFile escapes the workspace: ${sub.promptFile}`);
+      }
       return fs.readFile(file, 'utf8');
     }
     return '';
@@ -363,7 +416,7 @@ export class CueEngine {
 
   getStatus(): CueEngineStatus {
     return {
-      enabled: true,
+      enabled: config.cue.enabled,
       running: this.running,
       workspace: this.workspace,
       configPath: this.configPath,
@@ -386,4 +439,17 @@ export class CueEngine {
       rt.timeout = undefined;
     }
   }
+}
+
+/**
+ * True when `child` is the same path as, or nested inside, `parent`. Segment-aware (so `/a/foobar`
+ * is NOT inside `/a/foo`) and rejects `..` escapes. Both inputs should be resolved+normalized.
+ */
+export function isPathInside(parent: string, child: string): boolean {
+  if (!parent) return false;
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  if (rel === '') return true;
+  if (rel === '..' || rel.startsWith(`..${path.sep}`)) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
 }

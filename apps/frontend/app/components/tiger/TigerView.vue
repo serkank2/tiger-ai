@@ -11,6 +11,9 @@ import ProjectLauncher from '~/components/tiger/ProjectLauncher.vue';
 import RunAllModal from '~/components/tiger/RunAllModal.vue';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
 
 const emit = defineEmits<{ back: []; openTemplates: [] }>();
 const tiger = useTigerStore();
@@ -154,6 +157,46 @@ function cancelOutOfOrder() {
   pendingRun.value = null;
 }
 
+// Local pending flags so async control actions show a spinner / stay disabled during
+// the request → state-update round-trip and can't be double-clicked.
+const stopping = ref(false);
+const retrying = ref(false);
+const continuing = ref(false);
+const routing = ref(false);
+
+async function stop() {
+  stopping.value = true;
+  try {
+    await tiger.stop();
+  } finally {
+    stopping.value = false;
+  }
+}
+async function retryFailed() {
+  retrying.value = true;
+  try {
+    await tiger.retryStage(selectedStage.value);
+  } finally {
+    retrying.value = false;
+  }
+}
+async function continueDespite() {
+  continuing.value = true;
+  try {
+    await tiger.continueStage(selectedStage.value);
+  } finally {
+    continuing.value = false;
+  }
+}
+async function route(target: 'executing-plan' | 'task-review') {
+  routing.value = true;
+  try {
+    await tiger.routeCorrection(target);
+  } finally {
+    routing.value = false;
+  }
+}
+
 onMounted(() => {
   void tiger.load();
 });
@@ -170,9 +213,9 @@ onMounted(() => {
       </div>
       <span class="spacer" />
       <code v-if="tiger.workspace" class="ws" :title="tiger.state?.tigerRoot ?? ''">{{ tiger.state?.tigerRoot }}</code>
-      <button class="back" @click="emit('openTemplates')">Templates</button>
-      <button v-if="tiger.initialized" class="back" @click="backToProjects">← Projects</button>
-      <button class="back" @click="emit('back')">← Terminals</button>
+      <BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">Templates</BaseButton>
+      <BaseButton v-if="tiger.initialized" variant="secondary" size="sm" @click="backToProjects">← Projects</BaseButton>
+      <BaseButton variant="secondary" size="sm" @click="emit('back')">← Terminals</BaseButton>
     </header>
 
     <section v-if="!tiger.loaded" class="loading-shell">
@@ -180,9 +223,11 @@ onMounted(() => {
         v-if="tiger.loadError"
         title="Tiger is unavailable"
         :description="tiger.loadError"
-        tone="error"
+        tone="danger"
       >
-        <button class="back" @click="tiger.load()">Retry</button>
+        <template #actions>
+          <BaseButton variant="secondary" @click="tiger.load()">Retry</BaseButton>
+        </template>
       </EmptyState>
       <div v-else class="loading-card">
         <Spinner label="Loading Tiger workspace" />
@@ -196,7 +241,7 @@ onMounted(() => {
     <!-- New-project setup -->
     <section v-else-if="!tiger.initialized" class="setup">
       <div class="setup-head">
-        <button class="back" @click="mode = 'launcher'">← Projects</button>
+        <BaseButton variant="secondary" size="sm" @click="mode = 'launcher'">← Projects</BaseButton>
         <h2>New project</h2>
       </div>
       <p class="lead">
@@ -248,24 +293,27 @@ onMounted(() => {
           <span v-if="stageState?.continued" class="continued-badge">continued ✓</span>
           <span v-if="tiger.state?.autoAdvance" class="auto-badge">auto-advancing ▸</span>
           <span class="spacer" />
-          <button v-if="tiger.busy" class="stop" @click="tiger.stop()">■ Stop</button>
-          <button v-if="hasFailed && !tiger.busy" class="retry" @click="tiger.retryStage(selectedStage)">⟳ Retry failed</button>
-          <button
+          <BaseButton v-if="tiger.busy" class="stop" variant="danger" :loading="stopping" @click="stop">■ Stop</BaseButton>
+          <BaseButton v-if="hasFailed && !tiger.busy" class="retry" variant="secondary" :loading="retrying" @click="retryFailed">⟳ Retry failed</BaseButton>
+          <BaseButton
             v-if="stageState?.status === 'failed' && !stageState?.continued && !tiger.busy"
             class="continue"
-            @click="tiger.continueStage(selectedStage)"
+            variant="secondary"
+            :loading="continuing"
+            @click="continueDespite"
           >
             → Continue despite failures
-          </button>
-          <button class="run" :disabled="tiger.busy" @click="runStage(false)">▶ Run stage</button>
-          <button
+          </BaseButton>
+          <BaseButton class="run" variant="primary" :disabled="tiger.busy" @click="runStage(false)">▶ Run stage</BaseButton>
+          <BaseButton
             class="run-all"
+            variant="secondary"
             :disabled="tiger.busy"
             title="Configure every stage, then run them all automatically"
             @click="showRunAll = true"
           >
             ▶▶ Run all…
-          </button>
+          </BaseButton>
         </div>
 
         <p v-if="stageMeta.optional" class="opt-note">
@@ -297,8 +345,8 @@ onMounted(() => {
           <span class="rl">Correction routing</span>
           <span class="cycles">cycles {{ tiger.state?.correctionCycles ?? 0 }}/{{ tiger.state?.maxCorrectionCycles ?? 0 }}</span>
           <span class="spacer" />
-          <button :disabled="tiger.busy || atCycleLimit" @click="tiger.routeCorrection('executing-plan')">↩ Back to Execution</button>
-          <button :disabled="tiger.busy || atCycleLimit" @click="tiger.routeCorrection('task-review')">↩ Back to Task Review</button>
+          <BaseButton size="sm" variant="secondary" :disabled="tiger.busy || atCycleLimit" :loading="routing" @click="route('executing-plan')">↩ Back to Execution</BaseButton>
+          <BaseButton size="sm" variant="secondary" :disabled="tiger.busy || atCycleLimit" :loading="routing" @click="route('task-review')">↩ Back to Task Review</BaseButton>
         </div>
       </div>
 
@@ -401,15 +449,6 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.back {
-  border: 1px solid var(--border-strong);
-  padding: 7px 12px;
-  color: var(--text-dim);
-}
-.back:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .loading-shell {
   flex: 1;
   min-height: 0;
@@ -502,6 +541,7 @@ code {
 .stage-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
 }
@@ -533,29 +573,14 @@ code {
   color: var(--red);
   border-color: var(--red);
 }
-.run {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #1b1206;
-  font-weight: 700;
-  padding: 8px 16px;
-}
-.run:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 .run-all {
-  border: 1px solid var(--accent);
+  border-color: var(--accent);
   color: var(--accent);
-  font-weight: 700;
-  padding: 8px 14px;
+  background: transparent;
 }
 .run-all:hover:not(:disabled) {
   background: var(--accent-soft);
-}
-.run-all:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  border-color: var(--accent);
 }
 .auto-badge {
   font-size: 11px;
@@ -564,29 +589,14 @@ code {
   border-radius: 999px;
   padding: 1px 8px;
 }
-.stop {
-  border: 1px solid var(--red);
-  color: var(--red);
-  padding: 8px 14px;
-  font-weight: 600;
-}
-.retry {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 8px 14px;
-}
-.retry:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .continue {
-  border: 1px solid var(--amber);
+  border-color: var(--amber);
   color: var(--amber);
-  padding: 8px 14px;
-  font-weight: 600;
+  background: transparent;
 }
-.continue:hover {
-  background: rgba(224, 176, 58, 0.12);
+.continue:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border-color: var(--amber);
 }
 .continued-badge {
   font-size: 11px;
@@ -612,20 +622,6 @@ code {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-faint);
-}
-.route button {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 6px 12px;
-  font-size: 12px;
-}
-.route button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.route button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 .warn {
   margin: 0 0 10px;

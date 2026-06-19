@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import BaseButton from '~/components/ui/BaseButton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+
 const emit = defineEmits<{ create: [] }>();
 const terminals = useTerminalsStore();
 
@@ -14,7 +19,7 @@ const tiles = computed(() => terminals.items);
 
     <div v-if="terminals.loading && !terminals.loaded" class="grid loading-grid">
       <div v-for="i in 4" :key="i" class="loading-tile">
-        <Spinner v-if="i === 1" small label="Loading terminals" />
+        <Spinner v-if="i === 1" :size="14" label="Loading terminals" />
         <Skeleton :lines="5" />
       </div>
     </div>
@@ -24,7 +29,9 @@ const tiles = computed(() => terminals.items);
     </div>
 
     <EmptyState v-else title="No terminals yet." class="empty">
-      <button class="new" @click="emit('create')">+ Create one</button>
+      <template #actions>
+        <BaseButton variant="primary" @click="emit('create')">+ Create one</BaseButton>
+      </template>
     </EmptyState>
   </section>
 </template>
@@ -75,15 +82,5 @@ const tiles = computed(() => terminals.items);
   place-items: center;
   text-align: center;
   color: var(--text-faint);
-}
-.new {
-  margin-top: 12px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  padding: 7px 14px;
-  font-weight: 600;
-}
-.new:hover {
-  background: var(--accent-soft);
 }
 </style>

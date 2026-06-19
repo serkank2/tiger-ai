@@ -135,6 +135,21 @@ test('parseExecutionResult extracts the last reported result', () => {
   assert.equal(parseExecutionResult('nothing here'), null);
 });
 
+test('parseExecutionResult anchors to line start so an echoed instruction is not misread (#5)', () => {
+  // The prompt text itself contains "EXECUTION_RESULT: done" mid-sentence; that must not parse.
+  assert.equal(
+    parseExecutionResult('As the final line of your log write one of: EXECUTION_RESULT: done or blocked.'),
+    null,
+  );
+  // A genuine marker on its own line (optionally with a list/quote prefix) is parsed.
+  assert.deepEqual(parseExecutionResult('# Log\n> EXECUTION_RESULT: done'), { status: 'done', reason: '' });
+  // When the agent echoes the instruction AND then writes a real final line, the real one wins.
+  assert.deepEqual(
+    parseExecutionResult('Write EXECUTION_RESULT: done when finished.\n\nEXECUTION_RESULT: blocked: stuck'),
+    { status: 'blocked', reason: 'stuck' },
+  );
+});
+
 test('acquireLock is exclusive and releasable', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-lock-'));
   try {

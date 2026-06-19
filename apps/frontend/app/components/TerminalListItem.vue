@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
 import IconTrash from '~/components/IconTrash.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
 const props = defineProps<{ terminal: TerminalDto; active: boolean; selected: boolean }>();
 const emit = defineEmits<{
@@ -63,15 +64,24 @@ onBeforeUnmount(() => {
       <div v-if="terminal.lastOutput" class="out">{{ terminal.lastOutput }}</div>
     </div>
     <div class="actions" @click.stop>
-      <button v-if="!running" class="ic" title="Start" @click="emit('start')">▶</button>
-      <button v-else class="ic" title="Stop" @click="emit('stop')">■</button>
-      <button class="ic" title="Restart" @click="emit('restart')">⟳</button>
-      <button class="ic" title="Duplicate" @click="emit('duplicate')">⧉</button>
-      <button class="ic" title="Edit" @click="emit('edit')">✎</button>
-      <button class="ic danger" :class="{ confirm: confirming }" :title="confirming ? 'Click again to delete' : 'Delete'" @click="onDelete">
+      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Start terminal" title="Start" @click="emit('start')">▶</BaseButton>
+      <BaseButton v-else class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Stop terminal" title="Stop" @click="emit('stop')">■</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Restart terminal" title="Restart" @click="emit('restart')">⟳</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Duplicate terminal" title="Duplicate" @click="emit('duplicate')">⧉</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Edit terminal" title="Edit" @click="emit('edit')">✎</BaseButton>
+      <BaseButton
+        class="ic danger"
+        :class="{ confirm: confirming }"
+        size="sm"
+        variant="ghost"
+        iconOnly
+        :ariaLabel="confirming ? 'Confirm delete terminal' : 'Delete terminal'"
+        :title="confirming ? 'Click again to delete' : 'Delete'"
+        @click="onDelete"
+      >
         <template v-if="confirming">✓?</template>
         <IconTrash v-else />
-      </button>
+      </BaseButton>
     </div>
   </div>
 </template>
@@ -142,19 +152,14 @@ onBeforeUnmount(() => {
 .item.active .actions {
   display: flex;
 }
-.ic {
+/* Compact row controls. BaseButton (ghost) handles focus-visible/disabled/aria;
+   we only tighten the icon-only square size and keep the destructive accents. */
+.ic.btn {
   width: 26px;
   height: 26px;
   font-size: 12px;
-  color: var(--text-dim);
-  display: grid;
-  place-items: center;
 }
-.ic:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-.ic.danger:hover {
+.ic.danger:hover:not(:disabled) {
   color: var(--red);
 }
 .ic.confirm {

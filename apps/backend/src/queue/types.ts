@@ -186,6 +186,13 @@ export interface QueueRepositoryTx {
   listEvents(limit?: number): Promise<QueueEvent[]>;
   listRules(): Promise<QueueRule[]>;
   getLatestLimitSnapshot(provider: Exclude<QueueProvider, 'mixed'>): Promise<QueueLimitSnapshot | null>;
+  /**
+   * Latest snapshot per (provider, window) — one row for each distinct window_key, each the most
+   * recent for that window. The rule engine needs every window because a window-specific rule
+   * (e.g. windowKey '7d') must see its window's snapshot even when another window ('5h') was
+   * probed more recently. Returns an empty array when no snapshot exists for the provider.
+   */
+  getLatestLimitSnapshotsByWindow(provider: Exclude<QueueProvider, 'mixed'>): Promise<QueueLimitSnapshot[]>;
   updateJob(id: string, patch: QueueJobPatch): Promise<void>;
   /** Delete a job (and, via FK cascade in MySQL, its steps). Returns true if a row was removed. */
   deleteJob(id: string): Promise<boolean>;

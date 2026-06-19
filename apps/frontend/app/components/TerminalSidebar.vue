@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
 import IconTrash from '~/components/IconTrash.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
 
 const emit = defineEmits<{ create: []; edit: [terminal: TerminalDto] }>();
 const terminals = useTerminalsStore();
@@ -57,8 +61,8 @@ function groupSomeSelected(list: TerminalDto[]) {
   <aside class="sidebar">
     <div class="head">
       <span class="title">Terminals<span class="count">{{ terminals.items.length }}</span></span>
-      <Spinner v-if="terminals.loading && !terminals.loaded" small label="Loading" />
-      <button v-else class="new" @click="emit('create')">+ New</button>
+      <Spinner v-if="terminals.loading && !terminals.loaded" :size="14" label="Loading" />
+      <BaseButton v-else size="sm" variant="ghost" class="new" @click="emit('create')">+ New</BaseButton>
     </div>
 
     <div v-if="terminals.items.length" class="selbar" :class="{ active: terminals.someSelected }">
@@ -72,17 +76,21 @@ function groupSomeSelected(list: TerminalDto[]) {
         <span>{{ terminals.someSelected ? `${terminals.selectedIds.length} selected` : 'Select all' }}</span>
       </label>
       <span v-if="terminals.someSelected" class="acts">
-        <button class="act" title="Start selected" @click="terminals.startSelected()">▶</button>
-        <button class="act" title="Stop selected" @click="terminals.stopSelected()">■</button>
-        <button
+        <BaseButton class="act" size="sm" variant="ghost" iconOnly ariaLabel="Start selected" title="Start selected" @click="terminals.startSelected()">▶</BaseButton>
+        <BaseButton class="act" size="sm" variant="ghost" iconOnly ariaLabel="Stop selected" title="Stop selected" @click="terminals.stopSelected()">■</BaseButton>
+        <BaseButton
           class="act danger"
           :class="{ confirm: confirmBulk }"
+          size="sm"
+          variant="ghost"
+          iconOnly
+          :ariaLabel="confirmBulk ? 'Confirm delete all selected' : 'Delete selected'"
           :title="confirmBulk ? 'Click again to delete all selected' : 'Delete selected'"
           @click="onBulkDelete"
         >
           <template v-if="confirmBulk">✓?</template>
           <IconTrash v-else />
-        </button>
+        </BaseButton>
         <button class="link" @click="terminals.clearSelection()">clear</button>
       </span>
     </div>
@@ -108,8 +116,8 @@ function groupSomeSelected(list: TerminalDto[]) {
           <span class="gname">{{ groupName(gid) }}</span>
           <span class="count">{{ list.length }}</span>
           <span class="gacts">
-            <button class="gact" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</button>
-            <button class="gact" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</button>
+            <BaseButton class="gact" size="sm" variant="ghost" iconOnly :ariaLabel="`Start all in ${groupName(gid)}`" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</BaseButton>
+            <BaseButton class="gact" size="sm" variant="ghost" iconOnly :ariaLabel="`Stop all in ${groupName(gid)}`" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</BaseButton>
           </span>
         </div>
         <TerminalListItem
@@ -131,7 +139,9 @@ function groupSomeSelected(list: TerminalDto[]) {
       </template>
 
       <EmptyState v-if="!terminals.loading && !terminals.items.length" title="No terminals yet.">
-        <button class="new" @click="emit('create')">+ Create your first terminal</button>
+        <template #actions>
+          <BaseButton variant="primary" @click="emit('create')">+ Create your first terminal</BaseButton>
+        </template>
       </EmptyState>
     </div>
   </aside>
@@ -167,16 +177,9 @@ function groupSomeSelected(list: TerminalDto[]) {
   background: var(--bg-elev-2);
   border-radius: 999px;
 }
-.new {
-  border: 1px solid var(--border-strong);
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 600;
+/* Header "+ New" uses BaseButton (ghost) but keeps the accent text identity. */
+.new.btn {
   color: var(--accent);
-}
-.new:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
 }
 .selbar {
   display: flex;
@@ -208,18 +211,14 @@ function groupSomeSelected(list: TerminalDto[]) {
   align-items: center;
   gap: 4px;
 }
-.act {
+/* Bulk-select controls: BaseButton (ghost) keeps the accent identity; tighten size. */
+.act.btn {
   width: 24px;
   height: 24px;
   font-size: 11px;
   color: var(--accent);
-  display: grid;
-  place-items: center;
 }
-.act:hover {
-  background: var(--bg);
-}
-.act.danger:hover,
+.act.danger:hover:not(:disabled),
 .act.confirm {
   color: var(--red);
 }
@@ -272,18 +271,11 @@ function groupSomeSelected(list: TerminalDto[]) {
 .ghead:focus-within .gacts {
   display: flex;
 }
-.gact {
+/* Per-group quick actions: BaseButton (ghost), shrunk to the dense header scale. */
+.gact.btn {
   width: 20px;
   height: 20px;
   font-size: 10px;
-  color: var(--text-dim);
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-}
-.gact:hover {
-  color: var(--accent);
-  background: var(--bg);
 }
 .gdot {
   width: 8px;
@@ -293,8 +285,5 @@ function groupSomeSelected(list: TerminalDto[]) {
 }
 .gname {
   flex: 1;
-}
-:deep(.empty-state) .new {
-  margin-top: 12px;
 }
 </style>

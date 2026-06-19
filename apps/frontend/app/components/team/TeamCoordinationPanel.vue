@@ -32,6 +32,13 @@ async function merge(taskId: string): Promise<void> {
   await team.mergeWorktree(taskId, false).catch(() => {});
 }
 async function discard(taskId: string): Promise<void> {
+  const ok = await useDialog().confirm({
+    title: 'Discard worktree',
+    message: `Discard the worktree for ${taskId}? Its un-merged changes will be lost. This cannot be undone.`,
+    confirmText: 'Discard',
+    danger: true,
+  });
+  if (!ok) return;
   await team.mergeWorktree(taskId, true).catch(() => {});
 }
 </script>

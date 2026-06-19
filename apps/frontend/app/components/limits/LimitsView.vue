@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import EmptyState from '~/components/EmptyState.vue';
-import Skeleton from '~/components/Skeleton.vue';
-import Spinner from '~/components/Spinner.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseCheckbox from '~/components/ui/BaseCheckbox.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
 import { useConnectionStore } from '~/stores/connection';
 import { useLimitsStore } from '~/stores/limits';
 import type { LimitRule, LimitRuleInput, LimitSnapshot, TigerAgentType } from '~/types';
@@ -93,7 +94,16 @@ async function saveRule(rule: LimitRule) {
   }
 }
 
+const dialog = useDialog();
+
 async function removeRule(rule: LimitRule) {
+  const ok = await dialog.confirm({
+    title: 'Delete rule',
+    message: `Delete the ${rule.provider} / ${rule.windowKey} gate rule? This cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await limits.deleteRule(rule.id);
     delete drafts[rule.id];
@@ -156,7 +166,7 @@ onMounted(() => {
 <template>
   <section class="limits-view">
     <header class="limits-head">
-      <button class="back" type="button" @click="emit('back')">Back</button>
+      <BaseButton variant="secondary" @click="emit('back')">Back</BaseButton>
       <div class="head-copy">
         <h1>Limits</h1>
         <p>
@@ -165,10 +175,9 @@ onMounted(() => {
           {{ conn.status }}
         </p>
       </div>
-      <button class="refresh" type="button" :disabled="limits.refreshing" @click="refresh">
-        <Spinner v-if="limits.refreshing" small label="" />
-        <span>{{ limits.refreshing ? 'Refreshing' : 'Refresh' }}</span>
-      </button>
+      <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">
+        {{ limits.refreshing ? 'Refreshing' : 'Refresh' }}
+      </BaseButton>
     </header>
 
     <div class="state-row">
@@ -188,7 +197,9 @@ onMounted(() => {
       title="No limit snapshots"
       description="Refresh after a provider's usage data is available."
     >
-      <button class="empty-refresh" type="button" :disabled="limits.refreshing" @click="refresh">Refresh</button>
+      <template #actions>
+        <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">Refresh</BaseButton>
+      </template>
     </EmptyState>
 
     <template v-else>
@@ -239,7 +250,14 @@ onMounted(() => {
                   {{ percentText(snapshot.percentUsed) }}
                 </span>
               </div>
-              <div class="track" aria-hidden="true">
+              <div
+                class="track"
+                role="progressbar"
+                :aria-valuenow="normalizedPercent(snapshot.percentUsed) ?? 0"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="`${snapshot.label} usage`"
+              >
                 <div class="fill" :class="severityForPercent(snapshot.percentUsed)" :style="{ width: widthFor(snapshot) }" />
               </div>
               <dl class="snapshot-meta">
@@ -278,9 +296,15 @@ onMounted(() => {
                 </div>
               </dl>
               <p v-if="snapshot.error" class="inline-error">{{ snapshot.error }}</p>
-              <button class="raw-toggle" type="button" @click="toggleRaw(snapshot)">
+              <BaseButton
+                size="sm"
+                variant="ghost"
+                class="raw-toggle"
+                :aria-expanded="!!rawOpen[snapshot.id]"
+                @click="toggleRaw(snapshot)"
+              >
                 {{ rawOpen[snapshot.id] ? 'Hide raw panel' : 'Show raw panel' }}
-              </button>
+              </BaseButton>
               <pre v-if="rawOpen[snapshot.id]" class="raw-panel">{{ rawPanel(snapshot) }}</pre>
             </article>
           </div>
@@ -323,13 +347,10 @@ onMounted(() => {
                 :disabled="limits.savingRule"
               />
             </label>
-            <label class="checkline">
-              <input v-model="draftFor(rule).enabled" type="checkbox" :disabled="limits.savingRule" />
-              <span>Enabled</span>
-            </label>
+            <BaseCheckbox v-model="draftFor(rule).enabled" label="Enabled" :disabled="limits.savingRule" class="checkline" />
             <div class="rule-actions">
-              <button type="button" :disabled="limits.savingRule || !isDirty(rule)" @click="saveRule(rule)">Save</button>
-              <button type="button" class="danger" :disabled="limits.savingRule" @click="removeRule(rule)">Delete</button>
+              <BaseButton size="sm" :loading="limits.savingRule" :disabled="!isDirty(rule)" @click="saveRule(rule)">Save</BaseButton>
+              <BaseButton size="sm" variant="danger" :disabled="limits.savingRule" @click="removeRule(rule)">Delete</BaseButton>
             </div>
           </article>
         </div>
@@ -352,12 +373,10 @@ onMounted(() => {
             <span>Threshold %</span>
             <input v-model.number="newRule.thresholdPercent" type="number" min="0" max="100" :disabled="limits.savingRule" />
           </label>
-          <label class="checkline">
-            <input v-model="newRule.enabled" type="checkbox" :disabled="limits.savingRule" />
-            <span>Enabled</span>
-          </label>
+          <BaseCheckbox v-model="newRule.enabled" label="Enabled" :disabled="limits.savingRule" class="checkline" />
+
           <div class="rule-actions">
-            <button type="button" :disabled="limits.savingRule" @click="addRule">Add rule</button>
+            <BaseButton size="sm" variant="primary" :loading="limits.savingRule" @click="addRule">Add rule</BaseButton>
           </div>
         </article>
       </section>
@@ -446,37 +465,6 @@ h3 {
 .dotsep {
   color: var(--text-faint);
   margin: 0 5px;
-}
-.back,
-.refresh,
-.empty-refresh,
-.raw-toggle {
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elev);
-  color: var(--text);
-  font-weight: 700;
-}
-.back,
-.refresh {
-  height: 34px;
-  padding: 0 12px;
-}
-.refresh {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.back:hover,
-.refresh:hover:not(:disabled),
-.empty-refresh:hover:not(:disabled),
-.raw-toggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.refresh:disabled,
-.empty-refresh:disabled {
-  opacity: 0.55;
-  cursor: progress;
 }
 .state-row {
   flex-wrap: wrap;
@@ -657,8 +645,6 @@ dd {
 }
 .raw-toggle {
   margin-top: 10px;
-  padding: 5px 9px;
-  font-size: 11px;
 }
 .raw-panel {
   max-height: 240px;
@@ -725,38 +711,11 @@ dd {
   gap: 6px;
   align-self: end;
 }
-.rule-actions button {
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elev);
-  color: var(--text);
-  font-weight: 700;
-  border-radius: var(--radius-sm);
-}
-.rule-actions button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.rule-actions button.danger:hover:not(:disabled) {
-  border-color: var(--red);
-  color: var(--red);
-}
-.rule-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 .rule-notice {
   margin-top: 12px;
 }
 .checkline {
-  align-content: center;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-}
-.checkline input {
-  width: 16px;
-  height: 16px;
+  align-self: end;
 }
 .history-table {
   margin-top: 12px;

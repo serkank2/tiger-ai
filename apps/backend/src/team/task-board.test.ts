@@ -65,6 +65,49 @@ test('TaskBoard claims FIFO, completes, and tracks counts', async () => {
   }
 });
 
+// --- Finding #2: openTitles excludes `done` so rework can be re-assigned --------
+
+test('openTitles excludes done titles so a completed task title can be re-assigned (rework)', async () => {
+  const dir = await tmpRunDir();
+  try {
+    const board = new TaskBoard(dir);
+    await board.enqueue({ roleId: 'developer', title: 'Implement login', body: 'do it', createdAt: '2020-01-01T00:00:00.000Z' });
+    const claimed = await board.claimNext('developer', '2020-01-01T00:01:00.000Z');
+    // While open, the title is present in both `titles` and `openTitles`.
+    assert.ok((await board.titles('developer')).has('Implement login'));
+    assert.ok((await board.openTitles('developer')).has('Implement login'));
+
+    await board.complete(claimed!, '2020-01-01T00:02:00.000Z');
+    // After completion, `titles` still has it (across all states) but `openTitles` does NOT,
+    // so the dedup keyed on openTitles will let a rework re-assignment of the same title queue.
+    assert.ok((await board.titles('developer')).has('Implement login'));
+    assert.equal((await board.openTitles('developer')).has('Implement login'), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// --- Finding #5: board mutations are serialized (no double-claim) ----------------
+
+test('concurrent claimNext calls never double-claim the same task', async () => {
+  const dir = await tmpRunDir();
+  try {
+    const board = new TaskBoard(dir);
+    await board.enqueue({ roleId: 'developer', title: 'Only one', body: 'x', createdAt: '2020-01-01T00:00:00.000Z' });
+    // Two claims racing for a single queued task: serialization must hand the task to exactly
+    // one caller and return null to the other (no double-claim, no duplicate in-progress file).
+    const [a, b] = await Promise.all([
+      board.claimNext('developer', '2020-01-01T00:01:00.000Z'),
+      board.claimNext('developer', '2020-01-01T00:01:00.000Z'),
+    ]);
+    const claimedCount = [a, b].filter((t) => t !== null).length;
+    assert.equal(claimedCount, 1, 'exactly one of the racing claims must succeed');
+    assert.deepEqual(await board.counts('developer'), { todo: 0, inProgress: 1, done: 0 });
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('TaskBoard reports when every queue is clear and requeues failed work', async () => {
   const dir = await tmpRunDir();
   try {

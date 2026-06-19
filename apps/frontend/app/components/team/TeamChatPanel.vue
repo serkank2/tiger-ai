@@ -177,7 +177,7 @@ function loadOlder() {
 }
 .from-user .bubble {
   background: var(--accent-soft);
-  border-color: rgba(245, 158, 66, 0.3);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .from-system .bubble {
   background: transparent;
@@ -185,11 +185,11 @@ function loadOlder() {
 }
 .kind-blocker .bubble {
   border-color: var(--red);
-  background: rgba(229, 86, 75, 0.08);
+  background: var(--red-soft);
 }
 .kind-signoff .bubble {
   border-color: var(--green);
-  background: rgba(108, 197, 108, 0.07);
+  background: var(--green-soft);
 }
 .kind-decision .bubble, .kind-steering .bubble {
   border-color: var(--border-strong);

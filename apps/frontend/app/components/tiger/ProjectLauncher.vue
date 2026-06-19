@@ -1,6 +1,50 @@
 <script setup lang="ts">
+import BaseButton from '~/components/ui/BaseButton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+
 const emit = defineEmits<{ new: [] }>();
 const tiger = useTigerStore();
+const dialog = useDialog();
+
+// Local per-action pending state (the store has no per-project busy flag).
+const refreshing = ref(false);
+const opening = ref<string | null>(null);
+const forgetting = ref<string | null>(null);
+
+async function refresh() {
+  refreshing.value = true;
+  try {
+    await tiger.loadProjects();
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+async function open(path: string) {
+  opening.value = path;
+  try {
+    await tiger.openProject(path);
+  } finally {
+    opening.value = null;
+  }
+}
+
+async function forget(p: { path: string; name: string }) {
+  const ok = await dialog.confirm({
+    title: 'Forget project',
+    message: `Forget “${p.name}”? This removes it from the project list but does not delete any files on disk.`,
+    confirmText: 'Forget',
+    danger: true,
+  });
+  if (!ok) return;
+  forgetting.value = p.path;
+  try {
+    await tiger.forgetProject(p.path);
+  } finally {
+    forgetting.value = null;
+  }
+}
 
 function pct(p: { completedStages: number; totalStages: number }): number {
   return p.totalStages ? Math.round((p.completedStages / p.totalStages) * 100) : 0;
@@ -24,7 +68,16 @@ onMounted(() => {
     <div class="lhead">
       <h2>Projects</h2>
       <span class="spacer" />
-      <button class="ghost" title="Refresh" aria-label="Refresh projects" @click="tiger.loadProjects()">⟳</button>
+      <BaseButton
+        variant="secondary"
+        icon-only
+        aria-label="Refresh projects"
+        title="Refresh"
+        :loading="refreshing"
+        @click="refresh"
+      >
+        ⟳
+      </BaseButton>
     </div>
     <p class="lead">Continue a previous project, or create a new one.</p>
 
@@ -36,14 +89,25 @@ onMounted(() => {
       </button>
 
       <div v-if="tiger.projectsLoading && !tiger.projects.length" class="card skeleton-card">
-        <Spinner small label="Loading projects" />
+        <Spinner :size="14" label="Loading projects" />
         <Skeleton :lines="4" />
       </div>
 
       <div v-for="p in tiger.projects" :key="p.path" class="card" :class="{ missing: !p.exists }">
         <div class="ctop">
           <span class="cname" :title="p.path">📁 {{ p.name }}</span>
-          <button class="forget" title="Forget (does not delete files)" :aria-label="`Forget project ${p.name} (does not delete files)`" @click="tiger.forgetProject(p.path)">✕</button>
+          <BaseButton
+            class="forget"
+            variant="ghost"
+            size="sm"
+            icon-only
+            title="Forget (does not delete files)"
+            :aria-label="`Forget project ${p.name} (does not delete files)`"
+            :loading="forgetting === p.path"
+            @click="forget(p)"
+          >
+            ✕
+          </BaseButton>
         </div>
         <p class="cprompt">{{ p.promptPreview || (p.exists ? '(no prompt yet)' : 'Folder is missing') }}</p>
         <div class="cprog">
@@ -53,9 +117,16 @@ onMounted(() => {
         <div class="cfoot">
           <span class="cdate">{{ fmtDate(p.updatedAt) }}</span>
           <span class="spacer" />
-          <button class="open" :disabled="!p.exists" @click="tiger.openProject(p.path)">
+          <BaseButton
+            class="open"
+            variant="secondary"
+            size="sm"
+            :disabled="!p.exists"
+            :loading="opening === p.path"
+            @click="open(p.path)"
+          >
             {{ p.completedStages > 0 ? 'Continue →' : 'Open →' }}
-          </button>
+          </BaseButton>
         </div>
       </div>
     </div>
@@ -82,16 +153,6 @@ onMounted(() => {
 }
 .spacer {
   flex: 1;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  width: 34px;
-  height: 34px;
-  color: var(--text-dim);
-}
-.ghost:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 .lead {
   color: var(--text-dim);
@@ -158,15 +219,11 @@ onMounted(() => {
   flex: 1;
 }
 .forget {
-  width: 24px;
-  height: 24px;
-  color: var(--text-faint);
-  border: 1px solid transparent;
   flex: none;
+  color: var(--text-faint);
 }
 .forget:hover {
   color: var(--red);
-  border-color: var(--red);
 }
 .cprompt {
   margin: 0;
@@ -215,19 +272,12 @@ onMounted(() => {
   color: var(--text-faint);
 }
 .open {
-  border: 1px solid var(--accent);
+  border-color: var(--accent);
   color: var(--accent);
-  font-weight: 700;
-  padding: 6px 12px;
-  font-size: 12px;
+  background: transparent;
 }
 .open:hover:not(:disabled) {
   background: var(--accent-soft);
-}
-.open:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  border-color: var(--border-strong);
-  color: var(--text-faint);
+  border-color: var(--accent);
 }
 </style>

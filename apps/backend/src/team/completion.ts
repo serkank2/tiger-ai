@@ -464,11 +464,19 @@ function parseTime(iso: string | undefined): number | null {
 function latestByTime<T>(items: T[], getTime: (item: T) => string): T | null {
   let best: T | null = null;
   let bestMs = -Infinity;
-  for (const item of items) {
+  let bestIndex = -1;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
     const ms = parseTime(getTime(item));
-    if (ms !== null && ms >= bestMs) {
+    if (ms === null) continue;
+    // Finding #8: break a timestamp TIE by the monotonic insertion index, so the
+    // genuinely-latest appended record wins deterministically rather than depending on
+    // whether `>=` vs `>` happens to overwrite — two records with equal ms must not be able
+    // to resolve to either one based on iteration order alone.
+    if (ms > bestMs || (ms === bestMs && i > bestIndex)) {
       best = item;
       bestMs = ms;
+      bestIndex = i;
     }
   }
   if (best === null && items.length > 0) {

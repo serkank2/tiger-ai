@@ -67,8 +67,17 @@ export const useSettingsStore = defineStore('settings', () => {
   /** Set (or clear) the auth token used for backend shared-token auth and persist it. */
   function setAuthToken(token: string) {
     const next = token.trim();
+    if (next === authToken.value) return;
     authToken.value = next;
     persistAuthToken(next);
+    // The live WS only carries its token on the handshake, so reconnect to apply the
+    // new (or cleared) credential immediately — REST already picks it up per request.
+    // Lazily resolve useSocket so the store stays usable without a live transport (tests).
+    try {
+      useSocket().reconnect();
+    } catch {
+      /* no socket transport available (e.g. SSR / unit tests) — skip */
+    }
   }
 
   return { settings, loaded, loading, loadError, authToken, load, update, setAuthToken };

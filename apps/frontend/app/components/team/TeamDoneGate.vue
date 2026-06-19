@@ -38,7 +38,14 @@ function blockerLabel(code: string): string {
       <span class="title">Completion gate</span>
       <span class="frac">{{ signed }}/{{ total }} signed off</span>
     </div>
-    <div class="bar">
+    <div
+      class="bar"
+      role="progressbar"
+      :aria-valuenow="signed"
+      aria-valuemin="0"
+      :aria-valuemax="total"
+      :aria-label="`${signed} of ${total} roles signed off`"
+    >
       <div class="fill" :style="{ width: `${pct}%` }" />
     </div>
     <p v-if="done" class="state ok">✓ Every required role signed off — the work is complete.</p>

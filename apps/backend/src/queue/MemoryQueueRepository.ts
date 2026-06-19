@@ -166,6 +166,21 @@ export class MemoryQueueRepository implements QueueRepository {
     return snapshots[0] ? structuredClone(snapshots[0]) : null;
   }
 
+  async getLatestLimitSnapshotsByWindow(
+    provider: Exclude<QueueLimitSnapshot['provider'], never>,
+  ): Promise<QueueLimitSnapshot[]> {
+    // Keep the most recent snapshot per window_key for the provider.
+    const latestByWindow = new Map<string, QueueLimitSnapshot>();
+    for (const snapshot of this.limitSnapshots) {
+      if (snapshot.provider !== provider) continue;
+      const current = latestByWindow.get(snapshot.windowKey);
+      if (!current || snapshot.checkedAt.localeCompare(current.checkedAt) > 0) {
+        latestByWindow.set(snapshot.windowKey, snapshot);
+      }
+    }
+    return [...latestByWindow.values()].map((snapshot) => structuredClone(snapshot));
+  }
+
   async updateJob(id: string, patch: QueueJobPatch): Promise<void> {
     const job = this.jobs.get(id);
     if (!job) return;

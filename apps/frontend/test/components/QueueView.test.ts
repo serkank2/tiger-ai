@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, reactive } from 'vue';
 import QueueView from '~/components/queue/QueueView.vue';
+import { useDialogStore } from '~/stores/dialog';
 import type { QueueEvent, QueueJobView, QueueState, QueueStep, TigerStageId } from '~/types';
 
 const api = vi.hoisted(() => ({
@@ -102,9 +103,19 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
   };
 }
 
+// BaseButton relies on Nuxt's auto-imported `computed`, which the bare Vitest env
+// doesn't provide. Stub it with a plain <button> that forwards click + attrs
+// (data-testid/type fall through to the root element automatically).
+const BaseButtonStub = {
+  props: ['disabled', 'loading'],
+  emits: ['click'],
+  template:
+    '<button :disabled="disabled || loading" @click="$emit(\'click\', $event)"><slot /></button>',
+};
+
 async function mountQueue(initial: QueueState) {
   api.getQueueState.mockResolvedValue(initial);
-  const wrapper = mount(QueueView);
+  const wrapper = mount(QueueView, { global: { stubs: { BaseButton: BaseButtonStub } } });
   await flushPromises();
   await nextTick();
   return wrapper;
@@ -265,7 +276,14 @@ describe('QueueView', () => {
     await wrapper.find('[data-testid="select-job-second"]').setValue(true);
     expect(wrapper.find('[data-testid="bulk-bar"]').text()).toContain('2 selected');
 
+    // Bulk cancel is destructive: it now asks for confirmation via useDialog().
+    // Confirm the pending dialog so the bulk action proceeds.
     await wrapper.find('[data-testid="bulk-cancel"]').trigger('click');
+    await nextTick();
+    const dialog = useDialogStore();
+    const pending = dialog.current;
+    expect(pending).not.toBeNull();
+    dialog.settle(pending!.id, true);
     await flushPromises();
 
     expect(api.bulkQueue).toHaveBeenCalledWith('cancel', ['first', 'second']);

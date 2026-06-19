@@ -4,6 +4,7 @@ import type { AppCtx } from '../context.js';
 import type { TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
 import { asBool, isStringRecord, nonEmptyString, normalizeShell, toDimension } from './validate.js';
 import { resolveExistingDir } from '../util/paths.js';
+import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { badRequest, notFound } from './errors.js';
 
 /** Validate a groupId payload: must be null/absent or reference an existing group. */
@@ -72,6 +73,9 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
     if (!cwdCheck.ok) {
       throw badRequest(`invalid working directory: ${cwdCheck.reason}`);
     }
+    // Honor the workspace boundary (no-op unless KAPLAN_ENFORCE_WORKSPACE is on), so a raw
+    // terminal can't be spawned outside the allow-list just like Tiger/Team runs can't.
+    assertWorkspaceAllowed(cwdCheck.path);
     let shell = ctx.state.settings.defaultShell;
     if (body.shell !== undefined) {
       const s = normalizeShell(body.shell);
@@ -130,6 +134,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
       if (!cwdCheck.ok) {
         throw badRequest(`invalid working directory: ${cwdCheck.reason}`);
       }
+      assertWorkspaceAllowed(cwdCheck.path);
       patch.cwd = cwdCheck.path;
     }
     if ('initialCommand' in body) {

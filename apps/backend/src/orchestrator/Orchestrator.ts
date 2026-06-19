@@ -203,6 +203,13 @@ export class Orchestrator extends EventEmitter {
   private keptWorktrees = new Set<string>();
   /** Cached per-stage decision: is worktree-per-task active right now? Resolved once per stage. */
   private worktreeStageActive = false;
+  /**
+   * Semantic per-stage success, set by the claim-draining stages (executing-plan / task-review) from
+   * the TASK/FINDING outcomes rather than from CLI run.state. finalizeStage consults this so a stage
+   * whose work all ended blocked/needs-attention is NOT reported `completed` (which would otherwise
+   * satisfy auto-advance and the destructive auto-delete). Absent = no semantic override for the stage.
+   */
+  private stageSucceeded: Partial<Record<StageId, boolean>> = {};
 
   constructor(private readonly manager: TerminalManager, options: OrchestratorOptions = {}) {
     super();
@@ -512,7 +519,7 @@ export class Orchestrator extends EventEmitter {
     const stage = this.stages[stageId];
     if (stage.status !== 'completed') {
       this.autoAdvance = false; // stop the chain on failure/stop
-      void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`);
+      void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`).catch(() => {});
       this.emitState();
       return;
     }
@@ -524,7 +531,7 @@ export class Orchestrator extends EventEmitter {
       void this.cleanupAfterAutoRun();
       return;
     }
-    void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`);
+    void logNote(this.paths!.runLogFile, `Auto-advancing from ${stageId} to ${next}.`).catch(() => {});
     // Validate the next stage's upstream artifacts before auto-dispatching it: a missing/empty
     // upstream output stops the chain with a clear message instead of running a degenerate stage.
     void (async () => {
@@ -717,7 +724,7 @@ export class Orchestrator extends EventEmitter {
     void logNote(
       this.paths.runLogFile,
       `User chose to CONTINUE DESPITE FAILURES at stage ${stageId} (${STAGE_META[stageId].title}).`,
-    );
+    ).catch(() => {});
     this.emitState();
   }
 
@@ -743,7 +750,7 @@ export class Orchestrator extends EventEmitter {
     void logNote(
       this.paths.runLogFile,
       `Correction cycle ${this.correctionCycles}/${max}: routed unresolved issues back to ${STAGE_META[target].title}; downstream stages were reset.`,
-    );
+    ).catch(() => {});
     this.emitState();
   }
 
@@ -761,6 +768,8 @@ export class Orchestrator extends EventEmitter {
   private async executeStage(stageId: StageId, cfg: StageRunConfig): Promise<void> {
     const paths = this.paths!;
     const signal = this.abort!.signal;
+    // Clear any prior semantic outcome; the claim-draining stages set it fresh from task/finding state.
+    delete this.stageSucceeded[stageId];
     await fs.mkdir(paths.runtimeDir(stageId), { recursive: true }).catch(() => {});
     if (stageId === 'executing-plan') await this.reclaimStaleExecutionClaims();
     if (stageId === 'task-review') await this.reclaimStaleFindingClaims();
@@ -879,7 +888,9 @@ export class Orchestrator extends EventEmitter {
         ),
       );
       if (!claimed) return false;
-      await this.refreshActiveRunLease();
+      // A claim is correctness-critical: force a fresh refresh so this task's lease is genuinely
+      // extended for the current owner (never piggybacking on an in-flight heartbeat refresh).
+      await this.refreshActiveRunLease(true);
       await this.persistence.recordTaskClaim({
         workspace: this.workspace!,
         task: claimed.record,
@@ -901,7 +912,7 @@ export class Orchestrator extends EventEmitter {
       stage.runs.push(run);
       this.registerRun(run);
       await this.recordAgentSnapshot(run);
-      void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`);
+      void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`).catch(() => {});
       this.emitState();
 
       await this.executeAgentRun(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
@@ -949,6 +960,22 @@ export class Orchestrator extends EventEmitter {
     // Conflict worktrees are deliberately KEPT for inspection; everything else is force-removed.
     await this.pruneStageWorktrees();
     await this.refreshTasks();
+
+    // Derive semantic stage success from the TASK outcomes, not from CLI run.state. The completion
+    // gate downgrades tasks to `blocked` without ever touching run.state, so a stage whose tasks all
+    // ended blocked would otherwise finalize as `completed` (satisfying auto-advance + auto-delete on
+    // entirely-blocked work). A stage succeeds only when it was not aborted, produced at least one
+    // done task, and left NO task blocked.
+    const finalTasks = await listTaskRecords(paths.tasksDir);
+    const blocked = finalTasks.filter((t) => t.executionStatus === 'blocked').length;
+    const doneCount = finalTasks.filter((t) => t.executionStatus === 'done').length;
+    this.stageSucceeded['executing-plan'] = !signal.aborted && blocked === 0 && doneCount > 0;
+    if (!this.stageSucceeded['executing-plan'] && !stage.message) {
+      stage.message =
+        blocked > 0
+          ? `${blocked} task(s) ended blocked; the stage needs attention before advancing.`
+          : 'No tasks were completed.';
+    }
   }
 
   // --- git-worktree-per-task isolation helpers (no-ops unless the stage is active) ---
@@ -1156,6 +1183,26 @@ export class Orchestrator extends EventEmitter {
       await this.executeAgentRun(run, { reviewTaskIds: partitions.get(run.id) ?? [], reviewPhase: 'find' }, signal);
     });
 
+    // FIND-phase completion gate: a review that crashed/timed-out/emitted malformed output never
+    // wrote its REVIEW_RESULT sentinel. Its partition cannot be trusted as clean, so every task it
+    // was assigned is marked needs-attention at rollup (instead of silently rolling up to approved).
+    const needsAttentionTaskIds = new Set<string>();
+    for (const run of findRuns) {
+      const output = await fs.readFile(run.outputPath, 'utf8').catch(() => '');
+      const gate = evaluateCompletionGate(requiredSelfReport('task-review', 'find'), run.state === 'completed', output);
+      if (gate.ok) continue;
+      run.error = run.error ?? gate.reason;
+      const assigned = partitions.get(run.id) ?? [];
+      for (const id of assigned) needsAttentionTaskIds.add(id);
+      if (assigned.length) {
+        void logNote(
+          paths.runLogFile,
+          `Review agent ${run.label} did not complete its FIND phase (${gate.reason}); marking ${assigned.length} ` +
+            `task(s) as needing attention: ${assigned.join(', ')}.`,
+        ).catch(() => {});
+      }
+    }
+
     // Collect findings from the review logs into a per-finding work queue.
     const logs = await Promise.all(
       findRuns.map(async (r) => ({ label: r.label, content: await fs.readFile(r.outputPath, 'utf8').catch(() => '') })),
@@ -1187,7 +1234,8 @@ export class Orchestrator extends EventEmitter {
         if (!claimed) return false;
         const findingRecord = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
         if (findingRecord) {
-          await this.refreshActiveRunLease();
+          // Correctness-critical claim: force a fresh refresh (see refreshActiveRunLease).
+          await this.refreshActiveRunLease(true);
           await this.persistence.recordFindingClaim({
             workspace: this.workspace!,
             finding: findingRecord,
@@ -1200,7 +1248,7 @@ export class Orchestrator extends EventEmitter {
         stage.runs.push(run);
         this.registerRun(run);
         await this.recordAgentSnapshot(run);
-        void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`);
+        void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`).catch(() => {});
         this.emitState();
         await this.executeAgentRun(run, { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block }, signal);
         // Semantic completion gate: only a completed run that emits FIX_RESULT: fixed counts as fixed;
@@ -1209,7 +1257,7 @@ export class Orchestrator extends EventEmitter {
         const gate = evaluateCompletionGate(requiredSelfReport('task-review', 'fix'), run.state === 'completed', fixOutput);
         if (!gate.ok && gate.reason) {
           run.error = run.error ?? gate.reason;
-          void logNote(paths.runLogFile, `${run.label} did not resolve ${claimed.id}: ${gate.reason}`);
+          void logNote(paths.runLogFile, `${run.label} did not resolve ${claimed.id}: ${gate.reason}`).catch(() => {});
         }
         await finishFinding(paths.findingsDir, claimed.id, gate.ok ? 'fixed' : 'wontfix');
         const finalFinding = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
@@ -1233,13 +1281,30 @@ export class Orchestrator extends EventEmitter {
       });
     }
 
-    // Roll findings up into each task's review status.
+    // Roll findings up into each task's review status. A task whose review partition did not complete
+    // its FIND phase is forced to needs_fix (needs attention) regardless of finding count, so an
+    // un-reviewed task is never auto-approved on the strength of a crashed/empty review.
     const finalFindings = await listFindings(paths.findingsDir);
     for (const t of done) {
       const own = finalFindings.filter((f) => f.relatedTask === t.id);
-      const rs: ReviewStatus =
-        own.length === 0 ? 'approved' : own.every((f) => f.status === 'fixed') ? 'fixed' : 'needs_fix';
+      const rs: ReviewStatus = needsAttentionTaskIds.has(t.id)
+        ? 'needs_fix'
+        : own.length === 0
+          ? 'approved'
+          : own.every((f) => f.status === 'fixed')
+            ? 'fixed'
+            : 'needs_fix';
       await reviewTaskFile(paths.tasksDir, t.id, rs);
+    }
+    // Record whether the review stage actually succeeded so finalizeStage does not report a stage as
+    // completed when reviews were inconclusive or fixes did not resolve their findings (see #2/#3).
+    const unresolvedFindings = finalFindings.some((f) => f.status !== 'fixed');
+    this.stageSucceeded['task-review'] =
+      !signal.aborted && needsAttentionTaskIds.size === 0 && !unresolvedFindings;
+    if (!this.stageSucceeded['task-review'] && !stage.message) {
+      stage.message = needsAttentionTaskIds.size
+        ? `${needsAttentionTaskIds.size} task(s) need attention: their review did not complete or findings are unresolved.`
+        : 'Some findings were not resolved.';
     }
     await this.recordTaskRecords(await listTaskRecords(paths.tasksDir));
     await this.refreshTasks();
@@ -1288,12 +1353,13 @@ export class Orchestrator extends EventEmitter {
       this.findingsSummary = null;
       return;
     }
-    this.findingsSummary = (await hasFindings(this.paths.findingsDir))
-      ? summarizeFindings(await listFindings(this.paths.findingsDir))
-      : null;
+    // Single hasFindings + single listFindings — the previous double-read of each was redundant.
     if (await hasFindings(this.paths.findingsDir)) {
       const records = await listFindings(this.paths.findingsDir);
+      this.findingsSummary = summarizeFindings(records);
       await this.persistence.recordFindings(records.map((finding) => ({ workspace: this.workspace!, finding })));
+    } else {
+      this.findingsSummary = null;
     }
     this.emitState();
   }
@@ -1352,6 +1418,10 @@ export class Orchestrator extends EventEmitter {
       outputPath: run.outputPath,
       markerPath: run.markerPath,
       taskId: run.taskId,
+      // When a per-task git worktree is the run's cwd, state it as the working directory + boundary so
+      // the agent's code edits land in the worktree (captured by the diff/merge-back) instead of the
+      // shared .tiger root. composeWorkdir treats run.cwd === paths.root (the default) as no override.
+      workdir: run.cwd,
       ...extras,
       warning: this.upstreamContinuedWarning(run.stage),
     });
@@ -1359,8 +1429,12 @@ export class Orchestrator extends EventEmitter {
     await this.recordArtifactPath(run, 'prompt', run.promptPath);
     await this.recordArtifactPath(run, 'output', run.outputPath);
     await this.recordArtifactPath(run, 'marker', run.markerPath);
-    // Clear any stale marker so detection reflects this run only.
+    // Clear any stale marker AND any leftover output from a previous run of this same run slot so
+    // completion detection reflects THIS run only. Without clearing the output file, the idle/exit
+    // gate (and the semantic completion gate that reads run.outputPath) could accept a prior run's
+    // deliverable — e.g. a retried/re-dispatched agent that produces nothing would still look "done".
     await fs.rm(run.markerPath, { force: true }).catch(() => {});
+    await fs.rm(run.outputPath, { force: true }).catch(() => {});
 
     const session = new AgentSession({
       manager: this.manager,
@@ -1457,6 +1531,17 @@ export class Orchestrator extends EventEmitter {
     else if (interrupted) status = 'interrupted';
     else if (stopped) status = 'stopped';
     else status = 'failed';
+    // Semantic override: the claim-draining stages decide success from TASK/FINDING outcomes, not from
+    // CLI run.state. Even when every agent's run.state is `completed`, a stage whose tasks all ended
+    // blocked (or whose reviews were inconclusive / findings unresolved) must NOT be reported
+    // `completed`, or it would wrongly satisfy auto-advance and the destructive auto-delete. Downgrade
+    // a would-be `completed` to `failed` (needs attention). We never UPGRADE: a genuine fail/stop/
+    // interrupt outcome is preserved.
+    const semanticOutcome = this.stageSucceeded[stageId];
+    if (status === 'completed' && semanticOutcome === false) {
+      status = 'failed';
+      if (this.abort?.signal.aborted) status = 'stopped';
+    }
     stage.status = status;
     if (!stage.message) {
       stage.message =
@@ -1566,7 +1651,9 @@ export class Orchestrator extends EventEmitter {
   private async beginPersistentRun(): Promise<string> {
     if (!this.paths || !this.workspace) throw httpError(400, 'initialize a workspace first');
     if (this.activeRunId) {
-      await this.refreshActiveRunLease();
+      // Reusing an existing run: force a fresh refresh so resuming truly extends the lease for the
+      // current owner rather than piggybacking on a possibly-unrelated in-flight heartbeat.
+      await this.refreshActiveRunLease(true);
       this.startRunLeaseHeartbeat();
       return this.activeRunId;
     }
@@ -1607,7 +1694,7 @@ export class Orchestrator extends EventEmitter {
           void logNote(
             this.paths.runLogFile,
             `Execution lease refresh FAILED (${message}); aborting the run to prevent split-brain double execution.`,
-          );
+          ).catch(() => {});
         }
         this.escalateLeaseFailure(message);
       });
@@ -1634,8 +1721,18 @@ export class Orchestrator extends EventEmitter {
     await this.runLeaseRefresh?.catch(() => undefined);
   }
 
-  private async refreshActiveRunLease(): Promise<void> {
-    if (this.runLeaseRefresh) {
+  /**
+   * Renew the active run lease for the current owner.
+   *
+   * The background heartbeat (`force` omitted) may piggyback on an already in-flight refresh — that
+   * is fine for a periodic keep-alive. But a correctness-critical caller (a task/finding claim, or
+   * `beginPersistentRun`) MUST NOT piggyback: an in-flight refresh could have been issued before the
+   * relevant owner/runId was current, so awaiting it would return without actually extending THIS
+   * caller's lease. Such callers pass `force: true` to always issue a fresh refresh that renews for
+   * the owner/runId current at call time, guaranteeing a claim truly extends the lease it relies on.
+   */
+  private async refreshActiveRunLease(force = false): Promise<void> {
+    if (!force && this.runLeaseRefresh) {
       await this.runLeaseRefresh;
       return;
     }
@@ -1650,7 +1747,9 @@ export class Orchestrator extends EventEmitter {
         this.activeLeaseExpiresAt = leaseExpiresAt(ttlMs);
       }
     })();
-    this.runLeaseRefresh = refresh;
+    // Publish only the periodic refresh as the shared in-flight promise; a forced refresh is private
+    // to its caller so the heartbeat never adopts (and later nulls) someone else's critical renewal.
+    if (!force) this.runLeaseRefresh = refresh;
     try {
       await refresh;
     } finally {

@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureScaffold } from './scaffold.js';
-import { composePrompt, measurePromptSize } from './compose.js';
+import { composePrompt, composeWorkdir, measurePromptSize } from './compose.js';
 
 type TestPaths = Awaited<ReturnType<typeof ensureScaffold>>;
 
@@ -143,6 +143,66 @@ test('composePrompt reports measurable size and is smaller than the legacy pream
       execSize.characters < legacyExecSize.characters,
       `executing-plan prompt should shrink (${legacyExecSize.characters} -> ${execSize.characters} chars)`,
     );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('composeWorkdir returns the tiger root by default and the worktree path when isolating (#1)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-wd-'));
+  try {
+    const paths = await ensureScaffold(dir, 'Build something.');
+    // No workdir, or workdir === root -> the shared .tiger root (default-off behavior).
+    assert.equal(composeWorkdir({ paths }), paths.root);
+    assert.equal(composeWorkdir({ paths, workdir: paths.root }), paths.root);
+    // A distinct worktree path -> that worktree path.
+    const wt = path.join(dir, '.kaplan', 'worktrees', 'TASK-001');
+    assert.equal(composeWorkdir({ paths, workdir: wt }), wt);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('executing-plan prompt rebases working dir + boundary onto the worktree when isolating (#1)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-wt-'));
+  try {
+    const paths = await ensureScaffold(dir, 'Build something.');
+    const worktree = path.join(dir, '.kaplan', 'worktrees', 'TASK-007');
+    const outputPath = paths.outputFile('executing-plan', 'codex', 1);
+    const markerPath = paths.markerFile('executing-plan', 'run-wt');
+
+    const isolated = await composePrompt({
+      paths,
+      stage: 'executing-plan',
+      label: 'codex-01',
+      outputPath,
+      markerPath,
+      taskId: 'TASK-007',
+      taskBlock: '## TASK-007: Do it',
+      workdir: worktree,
+    });
+    // The stated working directory + boundary are the worktree, not the .tiger root.
+    assert.ok(isolated.includes(`isolated task worktree: ${worktree}`), 'states the worktree as the working dir');
+    assert.match(isolated, /worktree is the project working copy/);
+    assert.ok(isolated.includes(`worktree root (${worktree})`), 'the task section points at the worktree');
+    // The deliverable + marker remain the absolute .tiger paths (orchestration artifacts), carved out
+    // as the only permitted writes outside the boundary so the orchestrator can still read them.
+    assert.ok(isolated.includes(outputPath), 'keeps the absolute deliverable path under .tiger');
+    assert.ok(isolated.includes(markerPath), 'keeps the absolute marker path under .tiger');
+    assert.match(isolated, /EXCEPTION — orchestration artifacts only/);
+
+    // Default mode (no workdir): boundary is the .tiger root, exactly as before.
+    const shared = await composePrompt({
+      paths,
+      stage: 'executing-plan',
+      label: 'codex-01',
+      outputPath,
+      markerPath,
+      taskId: 'TASK-007',
+      taskBlock: '## TASK-007: Do it',
+    });
+    assert.ok(shared.includes(`Your working directory is the .tiger/ root: ${paths.root}`));
+    assert.ok(!shared.includes('isolated task worktree'), 'default mode has no worktree language');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

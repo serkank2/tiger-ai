@@ -115,6 +115,8 @@ function statusAllowsRetry(status: QueueJobStatus): boolean {
 export class QueueService extends EventEmitter {
   private readonly ruleEngine = new RuleEngine();
   private readonly providerConcurrency: QueueProviderConcurrency;
+  /** When >0, emitState() is coalesced (suppressed) so a batch can emit a single state at the end. */
+  private emitSuppressed = 0;
 
   constructor(private readonly repo: QueueRepository, providerConcurrency?: QueueProviderConcurrency) {
     super();
@@ -330,14 +332,22 @@ export class QueueService extends EventEmitter {
     const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim()))];
     const run = this.bulkRunner(action);
     const results: QueueBulkResult[] = [];
-    for (const id of unique) {
-      try {
-        const status = await run(id);
-        results.push({ id, ok: true, ...(status ? { status } : {}) });
-      } catch (err) {
-        results.push({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+    // Suppress the per-op state broadcasts; emit a single coalesced state after the batch so the
+    // UI reconciles once instead of N times (control/history events still fire per op).
+    this.emitSuppressed++;
+    try {
+      for (const id of unique) {
+        try {
+          const status = await run(id);
+          results.push({ id, ok: true, ...(status ? { status } : {}) });
+        } catch (err) {
+          results.push({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
       }
+    } finally {
+      this.emitSuppressed--;
     }
+    if (unique.length > 0) await this.emitState();
     return results;
   }
 
@@ -655,10 +665,13 @@ export class QueueService extends EventEmitter {
 
   private async evaluateRules(tx: QueueRepositoryTx, job: QueueJob, now: string): Promise<QueueRuleDecision> {
     const rules = await tx.listRules();
+    // Fetch the latest snapshot per (provider, window) so window-specific rules evaluate against
+    // their own window's snapshot (mirrors the limits engine). A single LIMIT-1 snapshot would
+    // silently skip any rule whose windowKey didn't match that one most-recent window.
     const snapshots = {
-      claude: await tx.getLatestLimitSnapshot('claude'),
-      codex: await tx.getLatestLimitSnapshot('codex'),
-      antigravity: await tx.getLatestLimitSnapshot('antigravity'),
+      claude: await tx.getLatestLimitSnapshotsByWindow('claude'),
+      codex: await tx.getLatestLimitSnapshotsByWindow('codex'),
+      antigravity: await tx.getLatestLimitSnapshotsByWindow('antigravity'),
     };
     return this.ruleEngine.evaluate(job, rules, snapshots, new Date(now));
   }
@@ -693,6 +706,9 @@ export class QueueService extends EventEmitter {
   }
 
   private async emitState(): Promise<void> {
+    // Coalesced during a bulk batch: the delegated single-job ops would otherwise each broadcast a
+    // full state. bulk() suppresses them and emits one reconciling state at the end.
+    if (this.emitSuppressed > 0) return;
     this.emit('state', await this.getState());
   }
 

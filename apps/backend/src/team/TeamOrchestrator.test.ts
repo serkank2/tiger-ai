@@ -1414,6 +1414,195 @@ test('listRuns and exportRun surface a persisted run read-only', async () => {
   }
 });
 
+// --- Finding #7: ambiguous verification prose is inconclusive, never `passed` ---
+
+test('an ambiguous prose verification is recorded inconclusive (skipped) and keeps the done-gate open', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-infer-'));
+  try {
+    let turnNo = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxTurns: 4,
+      runner: {
+        async runRoleTurn(input) {
+          turnNo += 1;
+          if (turnNo === 1) {
+            // Prose with NO clear pass/fail signal — must NOT be inferred as passed.
+            return {
+              status: 'completed',
+              messages: [{ from: input.role.id, kind: 'verification', body: 'I looked at the code and ran some things.' }],
+            };
+          }
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: 'done' }],
+            signoffs: [{}],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Infer ambiguous verification.',
+      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+    });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    // The ambiguous report was recorded as inconclusive (`skipped`), not `passed`.
+    const inferred = final.verifications.find((v) => v.summary?.startsWith('I looked at the code'));
+    assert.ok(inferred, 'the prose verification was recorded');
+    assert.equal(inferred?.status, 'skipped', 'ambiguous prose must be inconclusive, never passed');
+    // And the done-gate is NOT satisfied by an inconclusive verification.
+    assert.notEqual(final.status, 'completed');
+    const gate = TeamOrchestrator.computeDoneGate(final);
+    assert.ok(gate.openBlockers.some((b) => b.code === 'verification_failed'), 'the inconclusive verification blocks the gate');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
+// --- Finding #3: inbox messages survive a failed turn (re-delivered next time) ---
+
+test('a sendMessage inbox entry is preserved when the recipient turn fails, then delivered on a later success', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-inbox-'));
+  try {
+    let devTurns = 0;
+    let leadTurns = 0;
+    const inboxSeen: number[] = [];
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxTurns: 24,
+      maxConsecutiveFailures: 99, // never give up on a single failure during this test
+      completionGate: completeWhenSignedOff('developer'),
+      runner: {
+        async runRoleTurn(input) {
+          if (input.role.id === 'lead') {
+            leadTurns += 1;
+            // The Lead assigns work to the developer AND sends it ONE inbox note (only on its
+            // first turn, so later Lead turns do not enqueue additional notes and the count
+            // stays a clean measure of the single preserved note).
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Build the feature\nAcceptance: done.' }],
+              coordinationDirectives:
+                leadTurns === 1
+                  ? [{ verb: 'sendMessage', fromRoleId: 'lead', toRoleId: 'developer', title: 'Heads up', body: 'Watch the edge case.' }]
+                  : undefined,
+            };
+          }
+          // developer: record how many inbox items it saw this turn. The FIRST claimed turn
+          // fails (inbox must be preserved); the next succeeds and signs off.
+          devTurns += 1;
+          inboxSeen.push(input.inbox?.length ?? 0);
+          if (devTurns === 1) return { status: 'failed', reason: 'transient failure' };
+          return { status: 'completed', messages: [{ from: 'developer', kind: 'signoff', body: 'done' }], signoffs: [{}] };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Preserve inbox on failure.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch, 8000);
+
+    assert.equal(final.status, 'completed');
+    assert.ok(devTurns >= 2, 'the developer ran at least twice (a failed then a successful turn)');
+    // The inbox note was surfaced on the failed turn AND survived to be re-surfaced on the retry —
+    // it was NOT silently dropped by the failed turn.
+    assert.equal(inboxSeen[0], 1, 'the failed turn saw the inbox note');
+    assert.equal(inboxSeen[1], 1, 'the inbox note was re-delivered after the failure');
+    // Once a turn completed, the inbox is finally drained.
+    assert.deepEqual(final.inboxes?.developer ?? [], []);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
+// --- Finding #2: a completed task title can be re-assigned for rework ------------
+
+test('the Lead can re-assign a completed task title for rework (not silently deduped)', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-rework-'));
+  try {
+    const created = await new TeamOrchestrator({ executionPersistence: new MemoryExecutionPersistence() }).createTeamRun(
+      { workspace, goal: 'unused', roles: leadTeam() },
+    );
+    const runDir = path.join(workspace, '.tiger', 'team', created.runId);
+    const board = new TaskBoard(runDir);
+    // First assignment of "Fix the bug" → claimed → completed.
+    await board.enqueue({ roleId: 'developer', title: 'Fix the bug', body: 'first pass', createdAt: '2020-01-01T00:00:00.000Z' });
+    const claimed = await board.claimNext('developer', '2020-01-01T00:01:00.000Z');
+    await board.complete(claimed!, '2020-01-01T00:02:00.000Z');
+    assert.deepEqual(await board.counts('developer'), { todo: 0, inProgress: 0, done: 1 });
+
+    // A rework re-assignment of the SAME title must NOT be deduped against the done task — it
+    // must enqueue a fresh todo (the regression: openTitles excludes done, so this is allowed).
+    const openTitles = await board.openTitles('developer');
+    assert.equal(openTitles.has('Fix the bug'), false, 'no OPEN task with that title remains');
+    await board.enqueue({ roleId: 'developer', title: 'Fix the bug', body: 'rework pass', createdAt: '2020-01-01T00:03:00.000Z' });
+    assert.deepEqual(await board.counts('developer'), { todo: 1, inProgress: 0, done: 1 });
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
+// --- Finding #6: board-pending blocker excludes the open handoff (no double count) ---
+
+test('computeDoneGate does not double-count an open handoff in board_pending and handoff_pending', () => {
+  const base = TeamOrchestrator.computeDoneGate({
+    runId: 'r1',
+    workspace: '/x',
+    tigerRoot: '/x/.tiger',
+    status: 'running',
+    goal: 'g',
+    roles: [{ id: 'lead', name: 'Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: true, status: 'idle', taskCounts: { todo: 0, inProgress: 0, done: 0 } }],
+    round: 0,
+    turnCount: 0,
+    currentTurn: null,
+    turns: [],
+    directives: [],
+    signoffs: [],
+    verifications: [],
+    tasks: null,
+    findings: null,
+    messageCount: 0,
+    pendingSteeringCount: 0,
+    materialChangeAt: '2020-01-01T00:00:00.000Z',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  } as unknown as TeamRunState);
+  // No handoff, no board work → neither blocker present.
+  assert.equal(base.openBlockers.some((b) => b.code === 'board_pending'), false);
+  assert.equal(base.openBlockers.some((b) => b.code === 'handoff_pending'), false);
+
+  // Now: the target role has ONE in-progress task that IS the open handoff. It must surface as a
+  // handoff_pending blocker but NOT also as a board_pending blocker (the count nets to zero).
+  const withHandoff = TeamOrchestrator.computeDoneGate({
+    runId: 'r1',
+    workspace: '/x',
+    tigerRoot: '/x/.tiger',
+    status: 'running',
+    goal: 'g',
+    roles: [
+      { id: 'lead', name: 'Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: true, status: 'idle', taskCounts: { todo: 0, inProgress: 0, done: 0 } },
+      { id: 'dev', name: 'Dev', tool: 'codex', responsibilities: [], canWriteCode: true, requiredForSignoff: false, status: 'idle', taskCounts: { todo: 0, inProgress: 1, done: 0 } },
+    ],
+    handoffs: [{ id: 'h1', taskId: 'TASK-0001', fromRoleId: 'lead', toRoleId: 'dev', createdAt: '2020-01-01T00:00:00.000Z' }],
+    round: 0,
+    turnCount: 0,
+    currentTurn: null,
+    turns: [],
+    directives: [],
+    signoffs: [],
+    verifications: [],
+    tasks: null,
+    findings: null,
+    messageCount: 0,
+    pendingSteeringCount: 0,
+    materialChangeAt: '2020-01-01T00:00:00.000Z',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  } as unknown as TeamRunState);
+  assert.ok(withHandoff.openBlockers.some((b) => b.code === 'handoff_pending'), 'the open handoff is surfaced');
+  assert.equal(withHandoff.openBlockers.some((b) => b.code === 'board_pending'), false, 'the handoff task is not also board_pending');
+});
+
 test('resume rejects a genuinely ended run but a stopped run is resumable', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-resume-guard-'));
   try {

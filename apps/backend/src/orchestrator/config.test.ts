@@ -74,18 +74,22 @@ test('validateConfigPatch rejects shell metacharacters in an antigravity model l
   assert.match(String(err), /antigravity\.models/);
 });
 
-test('validateConfigPatch rejects an unknown antigravity default permission/model/effort', () => {
+test('validateConfigPatch rejects any defaults patch (defaults are source-authoritative, non-lossy)', () => {
   const current = defaultTigerConfig();
-  assert.match(
-    String(validateConfigPatch({ defaults: { antigravityPermission: 'nope' } }, current)),
-    /antigravityPermission/,
-  );
-  assert.match(
-    String(validateConfigPatch({ defaults: { antigravityModel: 'Not A Model' } }, current)),
-    /antigravityModel/,
-  );
-  assert.match(
-    String(validateConfigPatch({ defaults: { antigravityEffort: 'high' } }, current)),
-    /antigravityEffort/,
-  );
+  // normalizeConfig always reseeds defaults from code on load, so persisting a defaults patch would be
+  // a lossy round-trip (saved, then discarded on next load). The API rejects defaults patches outright
+  // so the contract is consistent: defaults change only in code.
+  for (const patch of [
+    { defaults: { antigravityPermission: 'nope' } },
+    { defaults: { claudeAgents: 3 } },
+    { defaults: { parallel: false } },
+  ]) {
+    assert.match(String(validateConfigPatch(patch, current)), /defaults are managed in code/);
+  }
+});
+
+test('validateConfigPatch still accepts non-defaults patches (cli/timing/execution)', () => {
+  const current = defaultTigerConfig();
+  assert.equal(validateConfigPatch({ execution: { maxConcurrent: 8 } }, current), null);
+  assert.equal(validateConfigPatch({ timing: { markerPollMs: 2000 } }, current), null);
 });

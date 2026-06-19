@@ -60,28 +60,55 @@ function missingSnapshotDecision(rule: QueueRule, provider: ConcreteProvider): Q
   };
 }
 
+/**
+ * Snapshots passed to the engine per concrete provider. Accepts either a single snapshot (legacy
+ * single-window shape) or an array of the latest snapshot per window. The array form lets a
+ * window-specific rule see its own window's snapshot even when another window was probed more
+ * recently — mirroring the limits engine which considers every window.
+ */
+export type ProviderSnapshots = Partial<
+  Record<ConcreteProvider, QueueLimitSnapshot | QueueLimitSnapshot[] | null>
+>;
+
+function snapshotsArray(value: QueueLimitSnapshot | QueueLimitSnapshot[] | null | undefined): QueueLimitSnapshot[] {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/** The snapshot whose window a rule applies to: an exact window match, or any window for 'any'. */
+function snapshotForRule(rule: QueueRule, snapshots: QueueLimitSnapshot[]): QueueLimitSnapshot | undefined {
+  if (rule.windowKey === 'any') {
+    // Prefer a usable (non-null percent) snapshot for an 'any' rule.
+    return snapshots.find((s) => s.percentUsed != null) ?? snapshots[0];
+  }
+  return snapshots.find((s) => s.windowKey === rule.windowKey);
+}
+
 export class RuleEngine {
   evaluate(
     job: QueueJob,
     rules: QueueRule[],
-    snapshots: Partial<Record<ConcreteProvider, QueueLimitSnapshot | null>>,
+    snapshots: ProviderSnapshots,
     now = new Date(),
   ): QueueRuleDecision {
     for (const provider of providersFor(job)) {
-      const snapshot = snapshots[provider] ?? null;
+      const providerSnapshots = snapshotsArray(snapshots[provider]);
       for (const rule of rules) {
         if (!applies(rule, job.provider, provider)) continue;
+        const snapshot = snapshotForRule(rule, providerSnapshots);
+        // No snapshot for this rule's window (or no usable percent) → block conservatively. A
+        // window-specific rule with no matching window is treated the same as a missing probe:
+        // we cannot prove dispatch is under the limit, so we hold until a fresh snapshot lands.
         if (!snapshot || snapshot.percentUsed == null) return missingSnapshotDecision(rule, provider);
-        if (rule.windowKey !== 'any' && rule.windowKey !== snapshot.windowKey) continue;
-        if (snapshot?.resetAt && new Date(snapshot.resetAt).getTime() <= now.getTime()) continue;
-        if (!compare(snapshot!.percentUsed!, rule.operator, rule.threshold)) continue;
-        const percent = snapshot!.percentUsed!.toFixed(snapshot!.percentUsed! % 1 === 0 ? 0 : 1);
-        const resumeAfter = snapshot!.resetAt ?? null;
+        if (snapshot.resetAt && new Date(snapshot.resetAt).getTime() <= now.getTime()) continue;
+        if (!compare(snapshot.percentUsed, rule.operator, rule.threshold)) continue;
+        const percent = snapshot.percentUsed.toFixed(snapshot.percentUsed % 1 === 0 ? 0 : 1);
+        const resumeAfter = snapshot.resetAt ?? null;
         return {
           allowed: false,
           ruleId: rule.id,
           resumeAfter,
-          reason: `${provider} ${snapshot!.windowKey} usage is ${percent}% (${rule.operator} ${rule.threshold}%).`,
+          reason: `${provider} ${snapshot.windowKey} usage is ${percent}% (${rule.operator} ${rule.threshold}%).`,
         };
       }
     }

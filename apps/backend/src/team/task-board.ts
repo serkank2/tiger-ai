@@ -66,6 +66,22 @@ export class TaskBoard {
   /** @param runDir absolute path to `.tiger/team/<runId>`. */
   constructor(private readonly runDir: string) {}
 
+  // Single async gate serializing ALL board MUTATIONS for this run (mirrors the message
+  // bus's `serialize`). `claimNext`, `complete`, `requeue`, `reopen`, and `enqueue` each do a
+  // non-atomic read-then-write/rename; without serialization the per-turn scheduler claim and a
+  // turn's own `claim` TaskDirective can interleave and double-claim or mis-file the same task.
+  // Reads stay lock-free (they tolerate a concurrent rename); only writers are serialized.
+  private mutateGate: Promise<unknown> = Promise.resolve();
+
+  private mutate<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutateGate.then(fn, fn);
+    this.mutateGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   private agentsDir(): string {
     return path.join(this.runDir, 'agents');
   }
@@ -104,7 +120,7 @@ export class TaskBoard {
   }
 
   /** Assign a task to a role by writing it into the role's `todo/` queue. */
-  async enqueue(input: {
+  enqueue(input: {
     roleId: string;
     title: string;
     body: string;
@@ -113,21 +129,23 @@ export class TaskBoard {
     relationship?: TaskRelationship;
     handoffId?: string;
   }): Promise<AgentTask> {
-    await this.ensureRole(input.roleId);
-    const id = await this.nextId(input.roleId);
-    const task: AgentTask = {
-      id,
-      roleId: input.roleId,
-      fromRoleId: input.fromRoleId,
-      title: input.title.slice(0, 200),
-      body: input.body,
-      status: 'todo',
-      relationship: input.relationship,
-      handoffId: input.handoffId,
-      createdAt: input.createdAt,
-    };
-    await this.write('todo', task);
-    return task;
+    return this.mutate(async () => {
+      await this.ensureRole(input.roleId);
+      const id = await this.nextId(input.roleId);
+      const task: AgentTask = {
+        id,
+        roleId: input.roleId,
+        fromRoleId: input.fromRoleId,
+        title: input.title.slice(0, 200),
+        body: input.body,
+        status: 'todo',
+        relationship: input.relationship,
+        handoffId: input.handoffId,
+        createdAt: input.createdAt,
+      };
+      await this.write('todo', task);
+      return task;
+    });
   }
 
   private file(status: AgentTaskStatus, task: Pick<AgentTask, 'roleId' | 'id'>): string {
@@ -166,25 +184,37 @@ export class TaskBoard {
   }
 
   /** Claim the oldest queued task for a role: move todo → in-progress. Null if none. */
-  async claimNext(roleId: string, now: string): Promise<AgentTask | null> {
-    const todo = await this.listTodo(roleId);
-    const task = todo[0];
-    if (!task) return null;
-    const moved: AgentTask = { ...task, status: 'in-progress', startedAt: now };
-    await this.write('in-progress', moved);
-    await fs.rm(this.file('todo', task), { force: true });
-    return moved;
+  claimNext(roleId: string, now: string): Promise<AgentTask | null> {
+    // Serialized: the read (listTodo) and the rename (write+rm) must be atomic relative to
+    // any other claim/file mutation, or two concurrent claims could both pick `todo[0]`.
+    return this.mutate(async () => {
+      const todo = await this.listTodo(roleId);
+      const task = todo[0];
+      if (!task) return null;
+      const moved: AgentTask = { ...task, status: 'in-progress', startedAt: now };
+      await this.write('in-progress', moved);
+      await fs.rm(this.file('todo', task), { force: true });
+      return moved;
+    });
   }
 
   /** Mark an in-progress task done: move in-progress → done. */
-  async complete(task: AgentTask, now: string): Promise<void> {
+  complete(task: AgentTask, now: string): Promise<void> {
+    return this.mutate(() => this.completeUnlocked(task, now));
+  }
+
+  private async completeUnlocked(task: AgentTask, now: string): Promise<void> {
     const moved: AgentTask = { ...task, status: 'done', completedAt: now };
     await this.write('done', moved);
     await fs.rm(this.file('in-progress', task), { force: true });
   }
 
   /** Return an in-progress task back to the queue (e.g. its turn failed): in-progress → todo. */
-  async requeue(task: AgentTask): Promise<void> {
+  requeue(task: AgentTask): Promise<void> {
+    return this.mutate(() => this.requeueUnlocked(task));
+  }
+
+  private async requeueUnlocked(task: AgentTask): Promise<void> {
     const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined };
     await this.write('todo', moved);
     await fs.rm(this.file('in-progress', task), { force: true });
@@ -195,13 +225,15 @@ export class TaskBoard {
    * it. Used when a per-task worktree merge conflicts AFTER the task was filed done: the task
    * must be honestly re-queued (it is no longer "done") without leaving a stale `done` file.
    */
-  async reopen(task: AgentTask): Promise<void> {
-    const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, completedAt: undefined };
-    await this.write('todo', moved);
-    await Promise.all([
-      fs.rm(this.file('in-progress', task), { force: true }),
-      fs.rm(this.file('done', task), { force: true }),
-    ]);
+  reopen(task: AgentTask): Promise<void> {
+    return this.mutate(async () => {
+      const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, completedAt: undefined };
+      await this.write('todo', moved);
+      await Promise.all([
+        fs.rm(this.file('in-progress', task), { force: true }),
+        fs.rm(this.file('done', task), { force: true }),
+      ]);
+    });
   }
 
   /**
@@ -210,15 +242,19 @@ export class TaskBoard {
    * (it can never reach `done`, so the completion gate's board check never clears). Returns
    * how many tasks were requeued.
    */
-  async requeueInProgress(roleIds: string[]): Promise<number> {
-    let requeued = 0;
-    for (const roleId of roleIds) {
-      for (const task of await this.listInProgress(roleId)) {
-        await this.requeue(task);
-        requeued += 1;
+  requeueInProgress(roleIds: string[]): Promise<number> {
+    // One serialized critical section over the whole sweep so a concurrent claim cannot
+    // interleave and re-claim a task this is mid-way through requeuing.
+    return this.mutate(async () => {
+      let requeued = 0;
+      for (const roleId of roleIds) {
+        for (const task of await this.listInProgress(roleId)) {
+          await this.requeueUnlocked(task);
+          requeued += 1;
+        }
       }
-    }
-    return requeued;
+      return requeued;
+    });
   }
 
   /** All task titles for a role across every state (used to dedupe re-assignments). */
@@ -229,6 +265,17 @@ export class TaskBoard {
       this.list(roleId, 'done'),
     ]);
     return new Set(all.flat().map((task) => task.title));
+  }
+
+  /**
+   * Titles of a role's OPEN tasks only (todo + in-progress) — i.e. work that is still
+   * outstanding. Used to dedupe re-assignments WITHOUT swallowing rework: once a titled
+   * task has been completed (`done`), the Lead must be able to re-assign the same title for
+   * a fresh rework cycle, so `done` titles are intentionally excluded here.
+   */
+  async openTitles(roleId: string): Promise<Set<string>> {
+    const open = await Promise.all([this.list(roleId, 'todo'), this.list(roleId, 'in-progress')]);
+    return new Set(open.flat().map((task) => task.title));
   }
 
   /** Find a task by id within a role's board, across all states. Null when not present. */

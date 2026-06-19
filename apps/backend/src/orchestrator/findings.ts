@@ -109,7 +109,7 @@ export async function listFindings(dir: string): Promise<FindingRecord[]> {
     const p = parseFindingFileName(name);
     if (!p) continue;
     const content = await fs.readFile(path.join(dir, name), 'utf8').catch(() => '');
-    const rel = /related task ([A-Za-z0-9_-]+)/i.exec(content);
+    const rel = /related task (TASK-[A-Za-z0-9_-]+)/i.exec(content);
     const titleM = /^#{1,2}\s+(FINDING[^\n]*)/im.exec(content);
     out.push({ id: p.id, status: p.status, title: (titleM?.[1] ?? p.id).trim(), relatedTask: rel?.[1] });
   }
@@ -157,7 +157,7 @@ export async function reclaimStaleFindings(
     }
     if (lockFile) await releaseLock(lockFile);
     const content = await fs.readFile(to, 'utf8').catch(() => '');
-    const rel = /related task ([A-Za-z0-9_-]+)/i.exec(content);
+    const rel = /related task (TASK-[A-Za-z0-9_-]+)/i.exec(content);
     const titleM = /^#{1,2}\s+(FINDING[^\n]*)/im.exec(content);
     reclaimed.push({ id: p.id, status: 'open', title: (titleM?.[1] ?? p.id).trim(), relatedTask: rel?.[1] });
   }
@@ -214,9 +214,38 @@ export async function finishFinding(dir: string, id: string, status: FindingStat
   await fs.rename(path.join(dir, name), path.join(dir, to)).catch(() => {});
 }
 
-/** Parse a fix agent's self-reported result: `FIX_RESULT: fixed|wontfix: reason`. */
+/**
+ * Parse a fix agent's self-reported result: `FIX_RESULT: fixed|wontfix: reason`.
+ *
+ * Like {@link parseExecutionResult}, the contract requires the marker as the FINAL line, so we
+ * anchor to the start of a line (tolerating leading list/quote markers) and take the LAST match.
+ * Anchoring prevents the prompt's own `FIX_RESULT: …` instruction text — when echoed mid-line — from
+ * being misread as a genuine self-report.
+ */
 export function parseFixResult(text: string): { status: 'fixed' | 'wontfix'; reason?: string } | null {
-  const m = /FIX_RESULT:\s*(fixed|wontfix)\s*(?::\s*(.*))?/i.exec(text);
-  if (!m) return null;
-  return { status: m[1]!.toLowerCase() as 'fixed' | 'wontfix', reason: m[2]?.trim() || undefined };
+  const re = /^[ \t>*-]*FIX_RESULT\s*:\s*(fixed|wontfix)\s*(?::\s*(.*))?$/gim;
+  let m: RegExpExecArray | null;
+  let last: { status: 'fixed' | 'wontfix'; reason?: string } | null = null;
+  while ((m = re.exec(text))) {
+    last = { status: m[1]!.toLowerCase() as 'fixed' | 'wontfix', reason: m[2]?.trim() || undefined };
+  }
+  return last;
+}
+
+/**
+ * Parse a FIND-phase review agent's sentinel self-report: `REVIEW_RESULT: clean|findings`.
+ *
+ * The orchestrator uses presence of this sentinel as the completion gate for the FIND phase: a
+ * review that crashes, times out, or emits malformed output never writes it, so its partition must
+ * be treated as needs-attention rather than auto-approved. Anchored to line start and last-match
+ * (same contract as the other self-reports) so the prompt's own echoed instruction is not misread.
+ */
+export function parseReviewResult(text: string): { status: 'clean' | 'findings' } | null {
+  const re = /^[ \t>*-]*REVIEW_RESULT\s*:\s*(clean|findings)\b.*$/gim;
+  let m: RegExpExecArray | null;
+  let last: { status: 'clean' | 'findings' } | null = null;
+  while ((m = re.exec(text))) {
+    last = { status: m[1]!.toLowerCase() as 'clean' | 'findings' };
+  }
+  return last;
 }

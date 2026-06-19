@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
 import { useApi } from '~/composables/useApi';
 import { useNoticesStore } from '~/stores/notices';
@@ -146,7 +146,61 @@ function refresh(): void {
   void team.loadChanges();
 }
 
-onMounted(refresh);
+// Hand-rolled side drawer (BaseModal's centered layout doesn't fit). Reproduce the
+// accessible-dialog basics inline: focus-trap, initial focus, focus-restore on close.
+// Nested commit/PR dialogs use BaseModal and Teleport out, so they own their own trap.
+const drawerRef = ref<HTMLElement | null>(null);
+let opener: HTMLElement | null = null;
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusables(): HTMLElement[] {
+  const root = drawerRef.value;
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el === document.activeElement,
+  );
+}
+
+function onDrawerKeydown(e: KeyboardEvent): void {
+  // A nested BaseModal (commit / PR) is open: let it handle keys via its own trap.
+  if (commitOpen.value || prOpen.value) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    emit('close');
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const root = drawerRef.value;
+  const els = focusables();
+  if (!root || els.length === 0) {
+    e.preventDefault();
+    root?.focus();
+    return;
+  }
+  const first = els[0]!;
+  const last = els[els.length - 1]!;
+  const active = document.activeElement as HTMLElement | null;
+  if (e.shiftKey) {
+    if (active === first || !root.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !root.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+onMounted(() => {
+  refresh();
+  opener = (document.activeElement as HTMLElement | null) ?? null;
+  (focusables()[0] ?? drawerRef.value)?.focus();
+});
+onBeforeUnmount(() => {
+  if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
+});
 
 // --- Stage / commit / PR (backend git-write routes) -----------------------
 // Read-only history views and non-git workspaces can't perform writes.
@@ -280,8 +334,16 @@ async function copyPrUrl(): Promise<void> {
 </script>
 
 <template>
-  <div class="changes-overlay" role="dialog" aria-label="Team changes" @keydown.esc="emit('close')">
-    <div class="changes-drawer">
+  <div class="changes-overlay" @mousedown.self="emit('close')">
+    <div
+      ref="drawerRef"
+      class="changes-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Team changes"
+      tabindex="-1"
+      @keydown="onDrawerKeydown"
+    >
       <header class="ch-head">
         <div class="ch-title">
           <strong>Changes</strong>
@@ -353,8 +415,14 @@ async function copyPrUrl(): Promise<void> {
           </ul>
 
           <section v-for="file in fileDiffs" :key="file.path" class="file-diff">
-            <button type="button" class="file-head" @click="toggle(file.path)">
-              <span class="chev">{{ collapsed[file.path] ? '▸' : '▾' }}</span>
+            <button
+              type="button"
+              class="file-head"
+              :aria-expanded="!collapsed[file.path]"
+              :aria-label="`${collapsed[file.path] ? 'Expand' : 'Collapse'} diff for ${file.path}`"
+              @click="toggle(file.path)"
+            >
+              <span class="chev" aria-hidden="true">{{ collapsed[file.path] ? '▸' : '▾' }}</span>
               <span class="badge" :class="`b-${file.status}`">{{ STATUS_LABEL[file.status] }}</span>
               <span class="fpath">{{ file.path }}</span>
             </button>
@@ -366,6 +434,7 @@ async function copyPrUrl(): Promise<void> {
                     type="button"
                     class="add-comment"
                     title="Comment on this line"
+                    aria-label="Comment on this line"
                     @click="startComment(file, line)"
                   >＋</button>
                   <span class="dl" :class="`d-${line.kind}`">{{ line.text }}</span>
@@ -426,7 +495,7 @@ async function copyPrUrl(): Promise<void> {
           @input="commitError = ''"
         />
       </label>
-      <p v-if="commitError" class="modal-err">{{ commitError }}</p>
+      <p v-if="commitError" class="modal-err" role="alert" aria-live="polite">{{ commitError }}</p>
       <template #footer>
         <BaseButton variant="ghost" @click="commitOpen = false">Cancel</BaseButton>
         <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">Commit</BaseButton>
@@ -448,7 +517,7 @@ async function copyPrUrl(): Promise<void> {
           <span>Base branch <i>(optional)</i></span>
           <input v-model="prBase" placeholder="e.g. main" aria-label="Base branch" />
         </label>
-        <p v-if="prError" class="modal-err">{{ prError }}</p>
+        <p v-if="prError" class="modal-err" role="alert" aria-live="polite">{{ prError }}</p>
       </template>
       <template v-else>
         <p class="modal-ok">Pull request created:</p>

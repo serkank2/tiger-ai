@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { buildTemplateConfigs, configInputError, isStage } from '../orchestrator/stage-config.js';
+import { logger } from '../obs/logger.js';
 import { BUILTIN_TEMPLATES, parseTemplateMd, templateSlug } from '../orchestrator/templates.js';
 import type { RunTemplate, StageId, StageRunConfig, TigerConfig } from '../orchestrator/types.js';
 
@@ -122,6 +123,9 @@ export class RunTemplateService {
 
   async importLegacyTemplates(dirs: string[]): Promise<void> {
     const seenDirs = [...new Set(dirs.map((dir) => path.resolve(dir)))];
+    // Hoist the full template scan out of the per-file loop: it does not change as we import, so a
+    // single fetch avoids an O(files) sweep of the whole table.
+    const existingNames = new Set((await this.repository.list(true)).map((t) => t.name.toLowerCase()));
     for (const dir of seenDirs) {
       const entries = (await fs.readdir(dir).catch(() => [] as string[]))
         .filter((name) => name.toLowerCase().endsWith('.md'))
@@ -130,11 +134,12 @@ export class RunTemplateService {
         const file = path.join(dir, entry);
         const sourceKey = sourceKeyForFile(file);
         if (await this.repository.findBySourceKey(sourceKey)) continue;
-        const content = await fs.readFile(file, 'utf8').catch(() => '');
+        const content = await this.readLegacyFile(file);
+        if (content == null) continue; // unreadable (ENOENT or logged error) — skip this file
         const parsed = parseTemplateMd(content, entry.replace(/\.md$/i, ''));
         if (!parsed) continue;
-        const existingNames = new Set((await this.repository.list(true)).map((t) => t.name.toLowerCase()));
         if (existingNames.has(parsed.name.toLowerCase())) continue;
+        existingNames.add(parsed.name.toLowerCase());
         await this.repository.create({
           id: nanoid(),
           name: normalizeTemplateName(parsed.name),
@@ -147,6 +152,24 @@ export class RunTemplateService {
           sourceKey,
         });
       }
+    }
+  }
+
+  /**
+   * Read a legacy template file. A missing file (ENOENT) is an expected race (e.g. a dir entry
+   * removed between readdir and read) and is silently skipped. Any OTHER error (permissions, I/O)
+   * is logged and skipped rather than masquerading as an empty file (which would mis-parse).
+   */
+  private async readLegacyFile(file: string): Promise<string | null> {
+    try {
+      return await fs.readFile(file, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      logger.warn('failed to read legacy template file; skipping', {
+        file,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
     }
   }
 

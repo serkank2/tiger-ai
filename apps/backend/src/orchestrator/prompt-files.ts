@@ -260,6 +260,13 @@ The smallest correct fix.
 
 If your assigned tasks have no problems, write exactly: No findings.
 
+As the FINAL line of your review log, you MUST write EXACTLY one of:
+
+    REVIEW_RESULT: clean
+    REVIEW_RESULT: findings
+
+Use \`clean\` when you reported no findings, \`findings\` when you reported one or more. This final line is mandatory: a review log without it is treated as an incomplete review that needs attention, not as an approval.
+
 `;
 
 /** FIX phase of review: each agent resolves exactly one assigned finding. */

@@ -235,6 +235,14 @@ export interface TeamRunState {
    * resolves/cleans them via the merge-back endpoint. Empty when the feature is OFF.
    */
   taskWorktrees?: TeamTaskWorktree[];
+  /**
+   * Ids of board tasks ACTIVELY claimed by an in-flight turn right now (one per running turn).
+   * Transient runtime bookkeeping — `[]` at rest. The done-gate excludes these from its
+   * board-pending blocker count: a task being worked THIS turn (e.g. the final required role
+   * taking its sign-off turn while still holding its claimed task) must not be double-counted
+   * as an outstanding queue item that keeps the run open (finding #6).
+   */
+  activeClaimedTaskIds?: string[];
   round: number;
   turnCount: number;
   currentTurn: TeamTurnRecord | null;
@@ -823,14 +831,26 @@ class DefaultCompletionGate implements TeamCompletionGate {
   }
 }
 
-/** Count Lead-assigned tasks still queued (todo) or in progress across every role's board. */
+/**
+ * Count Lead-assigned tasks still queued (todo) or in progress across every role's board that
+ * genuinely keep the run open, WITHOUT double-counting (finding #6):
+ *  - subtract the open `handoff` dependencies: each open handoff is a board task that is ALSO
+ *    counted by the separate `handoff_pending` gate, so leaving it here would block twice;
+ *  - subtract tasks ACTIVELY claimed by an in-flight turn: a task being worked this very turn
+ *    (e.g. the final required role taking its sign-off turn while holding its claimed task) is
+ *    not an outstanding queue item and must not, on its own, keep the run from completing.
+ * Clamped at 0 so a task that is both handoff-tagged and actively-claimed cannot drive the
+ * count negative.
+ */
 function teamBoardPending(state: TeamRunState): number {
-  let pending = 0;
+  let raw = 0;
   for (const role of state.roles) {
     const counts = role.taskCounts;
-    if (counts) pending += (counts.todo ?? 0) + (counts.inProgress ?? 0);
+    if (counts) raw += (counts.todo ?? 0) + (counts.inProgress ?? 0);
   }
-  return pending;
+  const handoffDup = openHandoffs(state.handoffs).length;
+  const activeClaimed = state.activeClaimedTaskIds?.length ?? 0;
+  return Math.max(0, raw - handoffDup - activeClaimed);
 }
 
 class MissingTeamTurnRunner implements TeamTurnRunner {
@@ -1532,19 +1552,31 @@ export class TeamOrchestrator extends EventEmitter {
     state.materialChangeAt = message.createdAt;
     this.staleSignoffs('Steering changed the run scope.');
     state.pendingSteeringCount = this.countPendingSteering();
-    const idledWaiting = state.status === 'blocked' && !this.loop;
+    // A run is "idled but resumable" when it has stopped its loop in a non-terminal-from-the-
+    // user's-view waiting state. That is NOT just `blocked`: an `interrupted` run (e.g. after a
+    // backend restart) is equally resumable, and we must also treat a `blocked` run whose loop
+    // reference is somehow still set as resumable rather than silently doing nothing (finding
+    // #9). A user-initiated `paused` run is intentionally NOT auto-resumed. A `running` run with
+    // a live loop is already picking work up, so nothing to do.
+    const isWaitingStatus = state.status === 'blocked' || state.status === 'interrupted';
+    const idledWaiting = isWaitingStatus || (state.status !== 'paused' && state.status !== 'running' && !this.loop);
     state.message = idledWaiting
       ? 'Your prompt was queued for the Lead; resuming the run so the Lead picks it up.'
       : 'Your prompt was queued for the Lead and will be picked up on the Lead\'s next turn.';
     await this.persistState();
     this.emitState();
-    // If the run had idled to a resumable waiting state (status 'blocked' with the loop
-    // stopped), a new Lead prompt should make it continue WITHOUT a separate manual resume:
-    // restart the loop so the Lead picks up the queued prompt. (A user-initiated 'paused'
-    // run is intentionally NOT auto-resumed.) Best-effort: if resume fails, the prompt is
-    // still queued and the user can resume manually.
-    if (idledWaiting) {
-      await this.resume().catch(() => undefined);
+    // Auto-resume an idled run so a new Lead prompt makes it continue WITHOUT a separate manual
+    // resume. Do NOT swallow a resume failure: surface it on the run message so the queued
+    // prompt is not silently stranded and the user knows a manual resume is needed.
+    if (idledWaiting && !this.loop) {
+      try {
+        await this.resume();
+      } catch (err) {
+        const reason = messageFromUnknown(err);
+        this.requireState().message = `Your prompt was queued, but the run could not auto-resume (${reason}); resume it manually.`;
+        await this.persistState().catch(() => undefined);
+        this.emitState();
+      }
     }
     return message;
   }
@@ -1583,9 +1615,28 @@ export class TeamOrchestrator extends EventEmitter {
     state.attempts ??= [];
     // The previously-active attempt (if any) is superseded by this new try; capture its
     // diff first so the comparison view keeps its result.
+    //
+    // Finding #1 — do NOT destroy the prior attempt's uncommitted work. The new attempt later
+    // wants to `reset --hard` the LIVE workspace to a clean base; that is only safe once the
+    // prior attempt's work is provably preserved on its own branch. We track whether it is:
+    //  - no prior, or prior was not git-isolated → nothing to preserve here.
+    //  - prior IS git-isolated → snapshot it, then VERIFY its branch advanced past its base.
+    // If verification fails AND the workspace still has changes, we refuse to reset (below).
     const prior = currentAttempt(state.attempts);
+    let priorWorkPreserved = true;
     if (prior) {
       await this.captureAttemptSummary(prior).catch(() => undefined);
+      if (prior.branch && prior.baseRef && prior.workspacePath) {
+        // Verify the snapshot commit actually landed on the prior branch.
+        priorWorkPreserved = await this.attemptBranchAdvanced(prior).catch(() => false);
+        if (!priorWorkPreserved) {
+          // The snapshot did not land. If the live workspace has no changes there is nothing to
+          // lose; otherwise the work exists ONLY in the working tree and a reset would destroy
+          // it — treat it as not-preserved so the destructive reset is skipped below.
+          const dirty = await this.workspaceHasChanges().catch(() => true);
+          priorWorkPreserved = !dirty;
+        }
+      }
       prior.status = prior.status === 'running' ? 'superseded' : prior.status;
     }
 
@@ -1616,11 +1667,26 @@ export class TeamOrchestrator extends EventEmitter {
         attempt.branch = worktree.branch;
         attempt.baseRef = worktree.baseRef;
         attempt.workspacePath = worktree.path;
-        // Start this attempt from a clean base so its diff samples ONLY its own work — the prior
-        // attempt's changes were already snapshotted onto its branch above and are safe there.
+        // Start this attempt from a clean base so its diff samples ONLY its own work — but ONLY
+        // when the prior attempt's work is provably preserved on its branch (finding #1). A blind
+        // `reset --hard` here would irrecoverably destroy uncommitted prior work if the snapshot
+        // above silently failed to land. When not preserved, refuse to reset: abort the new
+        // attempt with a clear, actionable error rather than destroying work.
+        if (!priorWorkPreserved) {
+          // Clean up the freshly-created (empty) worktree for the aborted attempt.
+          await removeWorktree({ repoDir: state.workspace, path: worktree.path, force: true }).catch(() => undefined);
+          throw httpError(
+            409,
+            `cannot start attempt #${attemptNumber}: the previous attempt's uncommitted work could not be preserved on its branch, ` +
+              `and starting cleanly would reset the workspace and destroy it. Promote, snapshot, or manually commit/stash the current work first.`,
+          );
+        }
         await runGit(state.workspace, ['reset', '--hard', worktree.baseRef]).catch(() => undefined);
         await runGit(state.workspace, ['clean', '-fd']).catch(() => undefined);
       } catch (err) {
+        // A deliberate abort (work-preservation guard) must propagate — never be downgraded to
+        // a silent in-place fallback that would then run with the prior work still mixed in.
+        if (isHttpError(err)) throw err;
         await this.appendSystemBlocker(
           `Could not isolate attempt #${attemptNumber} on its own git branch (${messageFromUnknown(err)}); it will run in place.`,
         ).catch(() => undefined);
@@ -1765,19 +1831,24 @@ export class TeamOrchestrator extends EventEmitter {
    * the team rarely produces only untracked files, so this captures the common case while
    * staying conflict-free (the worktree starts at the same baseRef). Best-effort.
    */
-  private async snapshotChangesToAttempt(attempt: TeamAttemptRecord): Promise<void> {
+  private async snapshotChangesToAttempt(attempt: TeamAttemptRecord): Promise<boolean> {
     const state = this.requireState();
     const baseRef = attempt.baseRef ?? 'HEAD';
     const worktreePath = attempt.workspacePath!;
     const patchRes = await runGit(state.workspace, ['diff', baseRef]);
-    if (!patchRes.ok || !patchRes.stdout.trim()) return; // nothing tracked-changed to snapshot
+    if (!patchRes.ok) return false; // could not even read the diff — treat as NOT snapshotted
+    if (!patchRes.stdout.trim()) return true; // nothing tracked-changed: there is no work to lose
     const patchFile = path.join(worktreePath, `.kaplan-attempt-${attempt.attemptNumber}.patch`);
-    await fs.writeFile(patchFile, patchRes.stdout, 'utf8').catch(() => undefined);
+    const wrote = await fs.writeFile(patchFile, patchRes.stdout, 'utf8').then(
+      () => true,
+      () => false,
+    );
+    if (!wrote) return false;
     const apply = await runGit(worktreePath, ['apply', '--whitespace=nowarn', patchFile]);
     await fs.rm(patchFile, { force: true }).catch(() => undefined);
-    if (!apply.ok) return; // could not replay cleanly; leave the branch at baseRef
+    if (!apply.ok) return false; // could not replay cleanly; leave the branch at baseRef
     await runGit(worktreePath, ['add', '-A']);
-    await runGit(worktreePath, [
+    const commit = await runGit(worktreePath, [
       '-c',
       'user.email=team@kaplan.local',
       '-c',
@@ -1787,6 +1858,30 @@ export class TeamOrchestrator extends EventEmitter {
       '-m',
       `Attempt #${attempt.attemptNumber} of team run ${state.runId}`,
     ]);
+    return commit.ok;
+  }
+
+  /**
+   * Verify a snapshot actually LANDED on the attempt's branch: its tip must differ from the
+   * base ref it branched from (i.e. the snapshot commit advanced the branch). This is the
+   * guard finding #1 relies on before destroying the live workspace — we only `reset --hard`
+   * the workspace once the prior attempt's work is provably preserved on its branch.
+   */
+  private async attemptBranchAdvanced(attempt: TeamAttemptRecord): Promise<boolean> {
+    if (!attempt.branch || !attempt.baseRef) return false;
+    const cwd = attempt.workspacePath ?? this.requireState().workspace;
+    const tip = await runGit(cwd, ['rev-parse', attempt.branch]);
+    const base = await runGit(cwd, ['rev-parse', attempt.baseRef]);
+    if (!tip.ok || !base.ok) return false;
+    const tipSha = tip.stdout.trim();
+    const baseSha = base.stdout.trim();
+    return tipSha.length > 0 && baseSha.length > 0 && tipSha !== baseSha;
+  }
+
+  /** True when the live workspace has any uncommitted (tracked or untracked) changes. */
+  private async workspaceHasChanges(): Promise<boolean> {
+    const status = await runGit(this.requireState().workspace, ['status', '--porcelain']);
+    return status.ok && status.stdout.trim().length > 0;
   }
 
   /** Compute the diff for a single attempt (for the per-attempt diff REST endpoint). */
@@ -2308,6 +2403,9 @@ export class TeamOrchestrator extends EventEmitter {
     role.lastTurnAt = turn.startedAt;
     role.activeTerminalId = terminalId;
     if (scheduled.task) this.turnTasks.set(turn.id, scheduled.task);
+    // Reflect the actively-claimed task ids onto the state so the done-gate excludes them from
+    // its board-pending blocker count while they are being worked (finding #6).
+    this.syncActiveClaimedTaskIds();
 
     // Part B: when worktree-per-task is ON and the workspace is a git repo, isolate this
     // claimed task in its own throwaway worktree; the turn then runs with that cwd. Best-effort:
@@ -2315,9 +2413,10 @@ export class TeamOrchestrator extends EventEmitter {
     // the OFF behavior. No-op when the feature is off, there is no claimed task, or it's non-git.
     const turnCwd = await this.maybeCreateTaskWorktree(turn, scheduled.task ?? null);
 
-    // Drain this role's inbox (sendMessage verbs) so the messages are surfaced in this turn's
-    // prompt; mark them delivered (they are then dropped from the inbox below).
-    const inbox = this.drainInbox(role.id);
+    // PEEK this role's inbox (sendMessage verbs) so the messages are surfaced in this turn's
+    // prompt, but DO NOT clear it yet: the entries are only dropped once the turn completes
+    // successfully (finding #3), so a failed/interrupted turn re-delivers them next time.
+    const { delivery: inbox, deliveredIds: inboxDeliveredIds } = this.peekInbox(role.id);
 
     await this.persistState();
     this.emitState();
@@ -2354,6 +2453,10 @@ export class TeamOrchestrator extends EventEmitter {
         return;
       }
       await this.applyTurnResult(turn, role, result);
+      // The inbox entries surfaced into this turn's prompt are one-shot, but only consumed
+      // once the turn actually COMPLETED. A failed/blocked/interrupted turn leaves them in the
+      // inbox so they are re-delivered next time (finding #3), mirroring steering re-delivery.
+      if (turn.status === 'completed') this.clearDeliveredInbox(role.id, inboxDeliveredIds);
     } catch (err) {
       if (signal.aborted) {
         this.interruptTurn(turn, 'Stopped by user.');
@@ -2369,6 +2472,8 @@ export class TeamOrchestrator extends EventEmitter {
       if (this.state?.currentTurn?.id === turn.id) this.state.currentTurn = null;
       // File this turn's claimed board task (done on success, requeued otherwise).
       await this.fileTurnTask(turn);
+      // The task is no longer actively-claimed; refresh the done-gate exclusion set.
+      this.syncActiveClaimedTaskIds();
       // Part B: capture the per-task diff and merge the worktree branch back (conflict-safe).
       // No-op when no worktree was created for this turn.
       await this.mergeBackTurnWorktree(turn, role, scheduled.task ?? null);
@@ -2586,15 +2691,36 @@ export class TeamOrchestrator extends EventEmitter {
     return this.getState();
   }
 
-  /** Drain a role's inbox into a delivery list (and clear the delivered entries). */
-  private drainInbox(roleId: string): { fromRoleId: string; title?: string; body: string; createdAt: string }[] {
-    const state = this.requireState();
-    const inbox = state.inboxes?.[roleId];
-    if (!inbox || inbox.length === 0) return [];
-    const delivered = inbox.map((m) => ({ fromRoleId: m.fromRoleId, title: m.title, body: m.body, createdAt: m.createdAt }));
-    // Inbox messages are one-shot: once surfaced at a turn they are removed.
-    state.inboxes![roleId] = [];
-    return delivered;
+  /**
+   * Peek a role's inbox for delivery into this turn's prompt WITHOUT clearing it. The entries
+   * are only removed once the turn COMPLETES successfully (see {@link clearDeliveredInbox}),
+   * mirroring the steering re-delivery policy — a failed/interrupted turn must not silently
+   * lose `sendMessage` items (finding #3). Returns the ids surfaced so the caller can clear
+   * exactly those after a successful turn (entries that arrived mid-turn are left for next time).
+   */
+  private peekInbox(roleId: string): {
+    delivery: { fromRoleId: string; title?: string; body: string; createdAt: string }[];
+    deliveredIds: string[];
+  } {
+    const inbox = this.requireState().inboxes?.[roleId];
+    if (!inbox || inbox.length === 0) return { delivery: [], deliveredIds: [] };
+    return {
+      delivery: inbox.map((m) => ({ fromRoleId: m.fromRoleId, title: m.title, body: m.body, createdAt: m.createdAt })),
+      deliveredIds: inbox.map((m) => m.id),
+    };
+  }
+
+  /**
+   * Remove the inbox entries that were surfaced to a role at a turn that COMPLETED. Only the
+   * ids actually delivered this turn are dropped; anything pushed into the inbox after the peek
+   * survives to the next turn. No-op when nothing was delivered (a failed/interrupted turn).
+   */
+  private clearDeliveredInbox(roleId: string, deliveredIds: string[]): void {
+    if (deliveredIds.length === 0) return;
+    const inbox = this.requireState().inboxes?.[roleId];
+    if (!inbox || inbox.length === 0) return;
+    const drop = new Set(deliveredIds);
+    this.requireState().inboxes![roleId] = inbox.filter((m) => !drop.has(m.id));
   }
 
   private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
@@ -2991,8 +3117,11 @@ export class TeamOrchestrator extends EventEmitter {
       }
 
       const title = this.taskTitle(message.body);
-      const titles = await this.taskBoard.titles(to);
-      if (titles.has(title)) continue; // a re-assignment of the same task — skip
+      // Dedup ONLY against OPEN titles (todo + in-progress). A title that has already been
+      // completed (`done`) must still be re-assignable so the Lead can queue REWORK on a
+      // finished task — deduping against `done` titles silently swallowed every such rework.
+      const titles = await this.taskBoard.openTitles(to);
+      if (titles.has(title)) continue; // a duplicate of still-OUTSTANDING work — skip
       await this.taskBoard.enqueue({
         roleId: to,
         fromRoleId: message.from,
@@ -3255,8 +3384,24 @@ export class TeamOrchestrator extends EventEmitter {
         // a board IO hiccup must not crash the run loop
       }
     }
-    if (applied > 0) await this.refreshWorkQueues();
+    if (applied > 0) {
+      await this.refreshWorkQueues();
+      // claim/complete/block directives mutated the in-flight claimed set; keep the done-gate
+      // exclusion list in step.
+      this.syncActiveClaimedTaskIds();
+    }
     return applied;
+  }
+
+  /**
+   * Mirror the set of task ids currently claimed by in-flight turns ({@link turnTasks}) onto
+   * `state.activeClaimedTaskIds`, so the pure done-gate can exclude actively-worked tasks from
+   * its board-pending blocker count (finding #6). Idempotent; safe to call after any change to
+   * `turnTasks`.
+   */
+  private syncActiveClaimedTaskIds(): void {
+    if (!this.state) return;
+    this.state.activeClaimedTaskIds = [...this.turnTasks.values()].map((task) => task.id);
   }
 
   /** File a turn's claimed board task: done on success, back to the queue otherwise. */
@@ -3899,19 +4044,31 @@ function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<GitRun
  * must not be misread as a failure just because it contains the substrings "error"/"fail".
  * We first neutralize "no/0/zero/without <failure-word>" phrasing, then look for a real
  * failure signal in what remains.
+ *
+ * Finding #7 — soundness: prose with NO clear pass/fail signal must NOT default to `passed`
+ * (that would let the done-gate be satisfied by an ambiguous, possibly-failing report). When
+ * neither a failure signal NOR an explicit pass signal is present, return `'skipped'`, which
+ * `toModelVerification` maps to `inconclusive` — a state the done-gate treats as NOT passing.
+ * The structured `VerificationDirective` remains the authoritative, preferred path.
  */
 function inferVerificationOutcome(body: string): TeamVerificationStatus {
-  const neutralized = body
-    .toLowerCase()
+  const lower = body.toLowerCase();
+  const neutralized = lower
     // "0 errors", "no failures", "zero warnings", "without errors", "free of regressions"
     .replace(/\b(?:0|no|zero|without|free\s+of|free\s+from)\s+(?:open\s+)?(?:errors?|failures?|failing|warnings?|regressions?|issues?)\b/g, ' ')
     // "all tests pass", "did pass", "tests passed" — keep positive phrasing from tripping fail words
     .replace(/\b(?:all\s+)?(?:tests?|checks?|builds?)\s+pass(?:ed|ing)?\b/g, ' ');
-  return /\b(fail|failed|failing|failure|error|errored|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/.test(
+  const failed = /\b(fail|failed|failing|failure|error|errored|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/.test(
     neutralized,
-  )
-    ? 'failed'
-    : 'passed';
+  );
+  if (failed) return 'failed';
+  // An explicit, affirmative pass signal in the ORIGINAL text (the neutralizer strips some of
+  // these for the fail check, so test the raw lowercased body here).
+  const passed = /\b(pass|passed|passing|succeed|succeeded|success|successful|green|ok|all good|works?|working|verified|no (?:errors?|failures?|issues?))\b/.test(
+    lower,
+  );
+  // Ambiguous prose with no clear signal → inconclusive (blocks the done-gate), never `passed`.
+  return passed ? 'passed' : 'skipped';
 }
 
 interface HttpError extends Error {
@@ -3922,4 +4079,8 @@ function httpError(status: number, message: string): HttpError {
   const err = new Error(message) as HttpError;
   err.status = status;
   return err;
+}
+
+function isHttpError(err: unknown): err is HttpError {
+  return err instanceof Error && typeof (err as Partial<HttpError>).status === 'number';
 }

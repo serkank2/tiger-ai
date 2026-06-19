@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
 import type { TeamRunStatus } from '~/types';
 import BaseButton from '~/components/ui/BaseButton.vue';
@@ -7,6 +7,59 @@ import Spinner from '~/components/ui/Spinner.vue';
 
 const emit = defineEmits<{ close: []; opened: [] }>();
 const team = useTeamStore();
+
+// This is a hand-rolled side drawer (BaseModal's centered layout doesn't fit), so it
+// reproduces the accessible-dialog basics inline: focus-trap, initial focus, and
+// focus-restore on close. Esc + role/aria-modal are wired in the template.
+const drawerRef = ref<HTMLElement | null>(null);
+let opener: HTMLElement | null = null;
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusables(): HTMLElement[] {
+  const root = drawerRef.value;
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el === document.activeElement,
+  );
+}
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    emit('close');
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const root = drawerRef.value;
+  const els = focusables();
+  if (!root || els.length === 0) {
+    e.preventDefault();
+    root?.focus();
+    return;
+  }
+  const first = els[0]!;
+  const last = els[els.length - 1]!;
+  const active = document.activeElement as HTMLElement | null;
+  if (e.shiftKey) {
+    if (active === first || !root.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !root.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+onMounted(() => {
+  opener = (document.activeElement as HTMLElement | null) ?? null;
+  (focusables()[0] ?? drawerRef.value)?.focus();
+});
+onBeforeUnmount(() => {
+  if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
+});
 
 const runs = computed(() => team.runHistory);
 const loading = computed(() => team.runHistoryLoading);
@@ -41,8 +94,16 @@ onMounted(() => void team.loadRuns());
 </script>
 
 <template>
-  <div class="hist-overlay" role="dialog" aria-label="Team run history" @keydown.esc="emit('close')">
-    <div class="hist-drawer">
+  <div class="hist-overlay" @mousedown.self="emit('close')">
+    <div
+      ref="drawerRef"
+      class="hist-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Team run history"
+      tabindex="-1"
+      @keydown="onKeydown"
+    >
       <header class="h-head">
         <strong>Run history</strong>
         <div class="h-actions">

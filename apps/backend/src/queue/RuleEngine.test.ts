@@ -188,6 +188,57 @@ test('RuleEngine still gates a mixed job that actually uses Antigravity', () => 
   assert.match(decision.reason, /antigravity 5h usage is 95%/);
 });
 
+test('RuleEngine evaluates a window-specific rule against its OWN window snapshot (multi-window)', () => {
+  // Review finding 2: a window-specific rule must see its window's snapshot even when another
+  // window was probed more recently. Passing an array of per-window snapshots fixes the prior
+  // single-latest-snapshot bug where a '7d' rule silently never fired because the latest snapshot
+  // happened to be a '5h' window.
+  const weeklyRule: QueueRule = { ...rule(), id: 'rule-7d', windowKey: '7d', threshold: 80 };
+  const decision = new RuleEngine().evaluate(
+    job('claude'),
+    [weeklyRule],
+    {
+      claude: [
+        // 5h is the most-recently-checked window but is under threshold and irrelevant to the rule.
+        { provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: '2026-06-18T08:59:00.000Z' },
+        // 7d window is over the rule's threshold; it must be the one evaluated.
+        { provider: 'claude', windowKey: '7d', percentUsed: 85, resetAt: '2026-06-25T00:00:00.000Z', checkedAt: '2026-06-18T08:00:00.000Z' },
+      ],
+    },
+    now,
+  );
+  assert.equal(decision.allowed, false);
+  assert.equal(decision.ruleId, 'rule-7d');
+  assert.match(decision.reason, /claude 7d usage is 85%/);
+  assert.equal(decision.resumeAfter, '2026-06-25T00:00:00.000Z');
+});
+
+test('RuleEngine blocks when the rule window has no snapshot even if another window exists', () => {
+  const weeklyRule: QueueRule = { ...rule(), id: 'rule-7d', windowKey: '7d', threshold: 80 };
+  const decision = new RuleEngine().evaluate(
+    job('claude'),
+    [weeklyRule],
+    {
+      // Only a 5h snapshot exists; the 7d rule cannot prove it is under the limit → block.
+      claude: [{ provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: null, checkedAt: now.toISOString() }],
+    },
+    now,
+  );
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason, /snapshot is unavailable/);
+});
+
+test('RuleEngine still accepts a single snapshot (back-compat) and evaluates its window', () => {
+  const decision = new RuleEngine().evaluate(
+    job('claude'),
+    [rule()],
+    { claude: { provider: 'claude', windowKey: '5h', percentUsed: 95, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: now.toISOString() } },
+    now,
+  );
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason, /claude 5h usage is 95%/);
+});
+
 test('RuleEngine allows dispatch below threshold or after the reset time', () => {
   const engine = new RuleEngine();
   assert.equal(

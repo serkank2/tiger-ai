@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { AppCtx } from '../context.js';
+import { config } from '../config.js';
+import { isWorkspaceAllowed } from '../security/workspace.js';
 
 /**
  * MCP tool definitions over Kaplan's task/run board. Kept transport-agnostic and
@@ -33,6 +35,17 @@ function defineTool<Shape extends z.ZodRawShape>(def: McpToolDef<Shape>): McpToo
 
 const QUEUE_PROVIDERS = ['claude', 'codex', 'antigravity', 'mixed'] as const;
 
+const QUEUE_STATUSES = [
+  'queued',
+  'running',
+  'blocked_by_limit',
+  'paused',
+  'completed',
+  'failed',
+  'canceled',
+  'retrying',
+] as const;
+
 /**
  * Build the full ordered tool list. Pure function of `z` only — the ctx is bound at
  * call time so the same defs serve both the live server and the test harness.
@@ -47,7 +60,7 @@ export function buildTools(): McpToolDef[] {
         'List the autonomous prompt-queue jobs (id, status, priority, provider, project, prompt preview). Optionally filter by status.',
       inputShape: {
         status: z
-          .string()
+          .enum(QUEUE_STATUSES)
           .optional()
           .describe('Optional exact status filter, e.g. "queued", "running", "completed", "failed".'),
       },
@@ -116,10 +129,27 @@ export function buildTools(): McpToolDef[] {
       },
       readOnly: false,
       async run(ctx, args) {
+        // An external MCP client could otherwise point an autonomous run at any host path.
+        // When a workspacePath is supplied, it MUST pass the same boundary check the HTTP
+        // layer enforces; reject anything outside the allowlist/data dir. When omitted, the
+        // queue service generates a safe path under the data dir, so we leave it unset.
+        let workspacePath = args.workspacePath;
+        if (workspacePath !== undefined) {
+          const check = isWorkspaceAllowed(
+            workspacePath,
+            config.security.workspaceAllowlist,
+            config.dataDir,
+            config.security.enforceWorkspaceBoundary,
+          );
+          if (!check.ok) {
+            return { ok: false, error: 'workspace_not_allowed', reason: check.reason };
+          }
+          workspacePath = check.path;
+        }
         const job = await ctx.queueService.enqueue({
           prompt: args.prompt,
           projectName: args.projectName,
-          workspacePath: args.workspacePath,
+          workspacePath,
           provider: args.provider,
           priority: args.priority,
           maxAttempts: args.maxAttempts,

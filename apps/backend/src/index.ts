@@ -278,19 +278,29 @@ async function shutdown(signal: string): Promise<void> {
   await autostartDone.catch(() => {});
   await orchestrator.killAgents();
   await manager.killAll();
+
+  // Safety net: if draining hangs on lingering sockets, force exit so shutdown can't wedge.
+  const forceExit = setTimeout(() => process.exit(0), 5000);
+  forceExit.unref();
+
+  // Drain network first, THEN release the DB pool. Closing the pool before the HTTP/WS
+  // servers would leave in-flight requests during the grace window hitting a dead pool.
+  // Stop accepting new connections and wait for the WS server then the HTTP server to close;
+  // only after the network is drained do we release the DB pool.
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   await closeDbPool();
-  wss.close();
-  server.close(() => process.exit(0));
-  // Safety net if server.close hangs on lingering sockets.
-  setTimeout(() => process.exit(0), 2000).unref();
+  clearTimeout(forceExit);
+  process.exit(0);
 }
 
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
-// Last-resort: kill child ptys instead of leaving them orphaned on an unexpected crash.
+// A single stray rejected promise must NOT tear down every running agent. Log it (with the
+// structured logger) and keep serving; only a truly unrecoverable `uncaughtException` (below)
+// warrants a full shutdown that kills child ptys.
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection', { err: reason });
-  void shutdown('unhandledRejection');
 });
 
 function legacyRunTemplateDirs(projects: string[]): string[] {

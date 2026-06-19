@@ -36,6 +36,26 @@ export interface ComposeOptions {
   warning?: string;
   /** requesting-code-review only: a short summary of the pipeline that produced the code. */
   summary?: string;
+  /**
+   * The directory the agent should actually work in and treat as its boundary. Defaults to the
+   * shared `.tiger` root (`paths.root`). When git-worktree-per-task isolation is active, the
+   * Orchestrator passes the per-task worktree path here so the agent's stated working directory,
+   * boundary, and code edits all land inside the worktree — where worktreeDiff/merge-back can
+   * capture them — instead of the shared `.tiger` root. The deliverable + completion marker still
+   * live under `.tiger` (they are orchestration artifacts, not project code), so when workdir is a
+   * worktree the preamble explicitly permits writing those two absolute paths outside the boundary.
+   */
+  workdir?: string;
+}
+
+/** The directory the agent works in and treats as its boundary (worktree when isolating, else .tiger root). */
+export function composeWorkdir(opts: Pick<ComposeOptions, 'paths' | 'workdir'>): string {
+  return opts.workdir && opts.workdir !== opts.paths.root ? opts.workdir : opts.paths.root;
+}
+
+/** True when the agent is isolated in a per-task worktree distinct from the shared .tiger root. */
+function isWorktreeWorkdir(opts: ComposeOptions): boolean {
+  return composeWorkdir(opts) !== opts.paths.root;
 }
 
 /** Cheap, deterministic size estimate for composed prompts. */
@@ -50,14 +70,18 @@ export function measurePromptSize(prompt: string): PromptSize {
 function preamble(opts: ComposeOptions): string {
   const outputRel = opts.paths.rel(opts.outputPath);
   const markerRel = opts.paths.rel(opts.markerPath);
-  return `# AUTOMATION CONTEXT — READ THIS FIRST
+  const head = `# AUTOMATION CONTEXT — READ THIS FIRST
 
 You are an autonomous Tiger pipeline background agent. No human is available for questions or approvals.
 
 - Do NOT ask any questions or wait for confirmation; make reasonable assumptions and proceed.
 - Work only toward the project goal below; avoid unrelated changes.
 - Write every document, log, report, and comment in clear, professional English.
-- Your agent ID is: ${opts.label}
+- Your agent ID is: ${opts.label}`;
+
+  // Default (no isolation): the .tiger root is both the working directory and the strict boundary.
+  if (!isWorktreeWorkdir(opts)) {
+    return `${head}
 - Your working directory is the .tiger/ root: ${opts.paths.root}
 - WORKSPACE BOUNDARY — STRICT: this .tiger/ root is the project root and the ONLY directory you may
   touch. Create/modify files and run commands only at or below it (relative paths); never write to,
@@ -69,6 +93,29 @@ You are an autonomous Tiger pipeline background agent. No human is available for
   FINAL action MUST be to create this marker file and write the single word "done" into it:
     ${opts.markerPath}
     (relative to the .tiger root: ${markerRel})
+  The orchestrator watches for this marker to know you are done. Do not create it early.
+`;
+  }
+
+  // Isolated mode: the agent is launched in a per-task git worktree. Its working directory AND
+  // boundary are the worktree, so all code edits land there (captured by the diff and merged back).
+  // The deliverable + marker are orchestration artifacts that live under .tiger (outside the
+  // worktree), so they are explicitly carved out as the ONLY permitted writes outside the boundary.
+  const workdir = composeWorkdir(opts);
+  return `${head}
+- Your working directory is your isolated task worktree: ${workdir}
+- WORKSPACE BOUNDARY — STRICT: this worktree is the project working copy and the ONLY directory whose
+  CODE you may modify. Make all source changes at or below it (prefer relative paths); never ".."
+  escape it. Doing your code edits here is REQUIRED — work done outside this worktree is lost and not
+  captured for merge-back.
+- EXCEPTION — orchestration artifacts only: your deliverable file and completion marker below live
+  outside the worktree (under the .tiger root). Writing those two exact absolute paths is allowed and
+  expected; do not write anything else outside the worktree.
+- Save your deliverable to exactly this file (absolute path):
+    ${opts.outputPath}
+- COMPLETION SIGNAL: when you have completely finished AND your deliverable file is written, your
+  FINAL action MUST be to create this marker file and write the single word "done" into it:
+    ${opts.markerPath}
   The orchestrator watches for this marker to know you are done. Do not create it early.
 `;
 }
@@ -203,11 +250,15 @@ export async function composePrompt(opts: ComposeOptions): Promise<string> {
   }
 
   if (stage === 'executing-plan' && opts.taskId) {
+    // In isolated mode the project to edit is the worktree; otherwise it is the shared .tiger root.
+    const projectLoc = isWorktreeWorkdir(opts)
+      ? `inside the project working copy at your worktree root (${composeWorkdir(opts)})`
+      : `inside the project under the .tiger/ root`;
     sections.push(
       `---\n\n# YOUR ASSIGNED TASK\n\nYou are assigned EXACTLY ONE task: **${opts.taskId}**. ` +
         `Implement only this task — do not start any other task.\n\n` +
         `The orchestrator owns task status and locking, so you do NOT need to edit the task list ` +
-        `yourself. Implement the task inside the project under the .tiger/ root, record what you did ` +
+        `yourself. Implement the task ${projectLoc}, record what you did ` +
         `in your execution log (your output file), and as the final line of your execution log write ` +
         `one of:\n    EXECUTION_RESULT: done\n    EXECUTION_RESULT: blocked: <short reason>\n\n` +
         `Task definition:\n\n${opts.taskBlock ?? '(your assigned task)'}`,
@@ -232,7 +283,10 @@ export async function composePrompt(opts: ComposeOptions): Promise<string> {
       `---\n\n# TASKS TO REVIEW (FIND PHASE)\n\n${assignedText}The implemented project lives under the ` +
         `.tiger/ root (${paths.root}); inspect the relevant files there and verify each task against its ` +
         `acceptance criteria. Report every problem as a \`## FINDING\` block in your review log (do NOT ` +
-        `fix anything in this phase). If there are no problems, write exactly: No findings.`,
+        `fix anything in this phase). If there are no problems, write exactly: No findings.\n\n` +
+        `As the FINAL line of your review log you MUST write EXACTLY one of \`REVIEW_RESULT: clean\` ` +
+        `(no findings) or \`REVIEW_RESULT: findings\` (one or more). A review log missing this line is ` +
+        `treated as incomplete and needing attention — it does NOT approve the tasks.`,
     );
   }
 

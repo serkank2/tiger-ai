@@ -11,6 +11,7 @@ import {
   parseFindingBlocks,
   parseFindingFileName,
   parseFixResult,
+  parseReviewResult,
   reclaimStaleFindings,
   splitFindingsToFiles,
   summarizeFindings,
@@ -57,6 +58,42 @@ test('parseFixResult parses fixed / wontfix', () => {
     reason: 'not reproducible',
   });
   assert.equal(parseFixResult('no marker here'), null);
+});
+
+test('parseFixResult anchors to line start and prefers the final non-empty marker line', () => {
+  // An echoed prompt instruction mid-sentence must NOT be parsed as a self-report.
+  assert.equal(parseFixResult('As the final line write `FIX_RESULT: fixed` (or wontfix).'), null);
+  // List/quote prefixes on a real result line are tolerated.
+  assert.deepEqual(parseFixResult('- FIX_RESULT: fixed'), { status: 'fixed', reason: undefined });
+  // The LAST genuine result line wins (the agent's true final answer).
+  assert.deepEqual(parseFixResult('FIX_RESULT: wontfix: tried\nthen retried\nFIX_RESULT: fixed'), {
+    status: 'fixed',
+    reason: undefined,
+  });
+});
+
+test('parseReviewResult requires the sentinel, anchors to line start, takes the last match', () => {
+  assert.deepEqual(parseReviewResult('No findings.\nREVIEW_RESULT: clean'), { status: 'clean' });
+  assert.deepEqual(parseReviewResult('## FINDING\nREVIEW_RESULT: findings'), { status: 'findings' });
+  assert.equal(parseReviewResult('a review with no sentinel at all'), null);
+  // An echoed instruction mid-line is not a sentinel.
+  assert.equal(parseReviewResult('write `REVIEW_RESULT: clean` as the final line.'), null);
+  // Last match wins.
+  assert.deepEqual(parseReviewResult('REVIEW_RESULT: findings\n…\nREVIEW_RESULT: clean'), { status: 'clean' });
+});
+
+test('relatedTask round-trips through split + listFindings using the strict TASK- form (#6)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-findings-rel-'));
+  try {
+    await splitFindingsToFiles([{ label: 'claude-01', content: LOG_A }], dir);
+    const recs = await listFindings(dir);
+    // The id parsed back from the file content must equal the strict id written by split, so the
+    // orchestrator's rollup equality (f.relatedTask === t.id) cannot silently drop a finding.
+    assert.equal(recs.find((f) => f.id === 'FINDING-001')?.relatedTask, 'TASK-001');
+    assert.equal(recs.find((f) => f.id === 'FINDING-002')?.relatedTask, 'TASK-002');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('findings queue: split, claim-by-rename, finish, summarize', async () => {

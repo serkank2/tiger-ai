@@ -459,7 +459,7 @@ onBeforeUnmount(() => {
         </button>
       </nav>
       <span class="spacer" />
-      <button class="back" @click="emit('back')">Back to Terminals</button>
+      <BaseButton variant="secondary" @click="emit('back')">Back to Terminals</BaseButton>
     </header>
 
     <main class="pbody">
@@ -648,16 +648,6 @@ onBeforeUnmount(() => {
 }
 .spacer {
   flex: 1;
-}
-.back {
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  padding: 7px 12px;
-  font-weight: 600;
-}
-.back:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 .pbody {
   flex: 1;

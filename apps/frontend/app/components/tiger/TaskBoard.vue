@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { TigerTaskSummary } from '~/types';
+import Spinner from '~/components/ui/Spinner.vue';
+import Skeleton from '~/components/ui/Skeleton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
 
 defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean }>();
 
@@ -20,7 +23,7 @@ const REVIEW = [
 
 <template>
   <div v-if="loading" class="loading-board">
-    <Spinner small label="Loading tasks" />
+    <Spinner :size="14" label="Loading tasks" />
     <Skeleton :lines="5" />
   </div>
 

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import BaseButton from '~/components/ui/BaseButton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+
 const terminals = useTerminalsStore();
 
 const host = ref<HTMLElement | null>(null);
@@ -9,6 +12,19 @@ const running = computed(
 );
 
 useTerminalView(host, activeId, { focusOnMount: true });
+
+// Local pending guard so the lifecycle controls show feedback and can't be
+// double-clicked during the async start/stop/restart transition.
+const pending = ref(false);
+async function runLifecycle(action: () => unknown | Promise<unknown>) {
+  if (pending.value) return;
+  pending.value = true;
+  try {
+    await action();
+  } finally {
+    pending.value = false;
+  }
+}
 </script>
 
 <template>
@@ -29,9 +45,16 @@ useTerminalView(host, activeId, { focusOnMount: true });
         failed{{ active.status.error?.message ? ': ' + active.status.error.message : '' }}
       </span>
       <span class="spacer" />
-      <button v-if="!running" class="pbtn go" @click="terminals.start(active.id)">▶ Start</button>
-      <button v-else class="pbtn" @click="terminals.stop(active.id)">■ Stop</button>
-      <button class="pbtn" @click="terminals.restart(active.id)">⟳ Restart</button>
+      <BaseButton
+        v-if="!running"
+        size="sm"
+        variant="primary"
+        :loading="pending"
+        @click="runLifecycle(() => terminals.start(active!.id))"
+        >▶ Start</BaseButton
+      >
+      <BaseButton v-else size="sm" :loading="pending" @click="runLifecycle(() => terminals.stop(active!.id))">■ Stop</BaseButton>
+      <BaseButton size="sm" :loading="pending" @click="runLifecycle(() => terminals.restart(active!.id))">⟳ Restart</BaseButton>
     </div>
 
     <div class="term-wrap">
@@ -94,24 +117,6 @@ useTerminalView(host, activeId, { focusOnMount: true });
 }
 .spacer {
   flex: 1;
-}
-.pbtn {
-  border: 1px solid var(--border-strong);
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.pbtn:hover {
-  color: var(--text);
-  border-color: var(--text-faint);
-}
-.pbtn.go {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.pbtn.go:hover {
-  background: var(--accent-soft);
 }
 .term-wrap {
   flex: 1;

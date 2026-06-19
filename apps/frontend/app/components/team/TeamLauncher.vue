@@ -67,8 +67,13 @@ async function duplicate(tpl: TeamTemplate) {
 }
 async function remove(tpl: TeamTemplate) {
   if (!tpl.id || tpl.builtin) return;
-  // eslint-disable-next-line no-alert
-  if (!confirm(`Delete team template "${tpl.name}"? This cannot be undone.`)) return;
+  const ok = await useDialog().confirm({
+    title: 'Delete team template',
+    message: `Delete team template "${tpl.name}"? This cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   await team.deleteTemplate(tpl.id).catch(() => {});
   if (selectedId.value === tpl.id) selectedId.value = team.templates[0]?.id ?? null;
 }
@@ -116,9 +121,9 @@ function onSaved(tpl: TeamTemplate) {
             </span>
           </div>
           <div class="tpl-actions" @click.stop>
-            <button type="button" @click="openEdit(tpl)">{{ tpl.builtin ? 'Customize' : 'Edit' }}</button>
-            <button type="button" @click="duplicate(tpl)">Duplicate</button>
-            <button v-if="!tpl.builtin" type="button" class="danger" @click="remove(tpl)">Delete</button>
+            <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{ tpl.builtin ? 'Customize' : 'Edit' }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">Duplicate</BaseButton>
+            <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">Delete</BaseButton>
           </div>
         </div>
         <p v-if="!templates.length" class="empty">No team templates available.</p>
@@ -274,22 +279,12 @@ h3.mt {
 }
 .tpl-actions {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   margin-top: var(--space-2);
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
 }
-.tpl-actions button {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  background: transparent;
-  border: none;
-  padding: 0;
-}
-.tpl-actions button:hover {
-  color: var(--accent);
-}
-.tpl-actions button.danger:hover {
+.tpl-actions .danger:hover {
   color: var(--red);
 }
 .compose {

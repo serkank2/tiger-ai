@@ -3,7 +3,7 @@ import type { StageId } from './types.js';
 import { STAGE_META, type TigerPaths } from './paths.js';
 import { STAGE_ORDER } from './types.js';
 import { parseExecutionResult } from './tasks.js';
-import { parseFixResult } from './findings.js';
+import { parseFixResult, parseReviewResult } from './findings.js';
 
 // ---------------------------------------------------------------------------
 // Semantic completion gate.
@@ -16,14 +16,16 @@ import { parseFixResult } from './findings.js';
 // ---------------------------------------------------------------------------
 
 /** The kind of self-report a stage/agent run requires (none = no semantic gate). */
-export type SelfReportKind = 'execution' | 'fix' | null;
+export type SelfReportKind = 'execution' | 'fix' | 'review' | null;
 
 /**
  * Which self-report token each stage's agents must emit. Execution (Stage 5) requires
- * `EXECUTION_RESULT`; the task-review FIX phase requires `FIX_RESULT`. The FIND phase and
- * every other stage produce free-form deliverables, so they have no semantic gate.
+ * `EXECUTION_RESULT`; the task-review FIX phase requires `FIX_RESULT`; the task-review FIND phase
+ * requires `REVIEW_RESULT` (so a crashed/timed-out review that emitted zero findings is treated as
+ * needs-attention, not silently `approved`). Every other stage produces a free-form deliverable, so
+ * it has no semantic gate.
  *
- * The fix phase is not a distinct StageId (it shares `task-review`), so callers pass the
+ * The fix/find phases are not distinct StageIds (they share `task-review`), so callers pass the
  * review phase explicitly via {@link requiredSelfReport}.
  */
 const STAGE_SELF_REPORT: Partial<Record<StageId, SelfReportKind>> = {
@@ -32,7 +34,7 @@ const STAGE_SELF_REPORT: Partial<Record<StageId, SelfReportKind>> = {
 
 /** The self-report kind required for a given stage (and, for task-review, phase). */
 export function requiredSelfReport(stage: StageId, reviewPhase?: 'find' | 'fix'): SelfReportKind {
-  if (stage === 'task-review') return reviewPhase === 'fix' ? 'fix' : null;
+  if (stage === 'task-review') return reviewPhase === 'fix' ? 'fix' : reviewPhase === 'find' ? 'review' : null;
   return STAGE_SELF_REPORT[stage] ?? null;
 }
 
@@ -63,6 +65,18 @@ export function evaluateCompletionGate(
     }
     if (reported.status === 'blocked') {
       return { ok: false, reason: reported.reason ? `agent reported blocked: ${reported.reason}` : 'agent reported blocked' };
+    }
+    return { ok: true };
+  }
+  if (kind === 'review') {
+    // FIND phase: the review must explicitly declare its outcome. An absent REVIEW_RESULT means the
+    // agent crashed/timed-out or produced malformed output — its partition cannot be trusted as clean.
+    const reported = parseReviewResult(output);
+    if (!reported) {
+      return {
+        ok: false,
+        reason: 'review agent did not emit a REVIEW_RESULT self-report; treating its partition as needs-attention',
+      };
     }
     return { ok: true };
   }

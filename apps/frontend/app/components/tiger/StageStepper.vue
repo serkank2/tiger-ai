@@ -4,22 +4,43 @@ import { TIGER_STAGES } from '~/lib/tigerStages';
 
 defineProps<{ stages: Record<TigerStageId, TigerStageState> | null }>();
 const selected = defineModel<TigerStageId>({ required: true });
+
+const tabRefs = ref<HTMLButtonElement[]>([]);
+
+// Roving-tabindex arrow navigation across the stage tabs: move selection and focus
+// in lockstep so the active stage is the single Tab stop.
+function onKeydown(e: KeyboardEvent, index: number) {
+  let next = index;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (index + 1) % TIGER_STAGES.length;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (index - 1 + TIGER_STAGES.length) % TIGER_STAGES.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = TIGER_STAGES.length - 1;
+  else return;
+  e.preventDefault();
+  selected.value = TIGER_STAGES[next]!.id;
+  void nextTick(() => tabRefs.value[next]?.focus());
+}
 </script>
 
 <template>
-  <nav class="stepper">
+  <nav class="stepper" role="tablist" aria-label="Tiger workflow stages">
     <button
-      v-for="s in TIGER_STAGES"
+      v-for="(s, i) in TIGER_STAGES"
       :key="s.id"
+      ref="tabRefs"
       type="button"
       class="step"
+      role="tab"
+      :aria-selected="selected === s.id"
+      :tabindex="selected === s.id ? 0 : -1"
       :class="[{ on: selected === s.id }, `st-${stages?.[s.id]?.status ?? 'not_started'}`]"
       @click="selected = s.id"
+      @keydown="onKeydown($event, i)"
     >
       <span class="num">{{ s.number }}</span>
       <span class="title">{{ s.title }}</span>
       <span v-if="s.optional" class="opt" title="Optional stage">opt</span>
-      <span class="dot" />
+      <span class="dot" aria-hidden="true" />
     </button>
   </nav>
 </template>
@@ -90,6 +111,11 @@ const selected = defineModel<TigerStageId>({ required: true });
 @keyframes blink {
   50% {
     opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-running .dot {
+    animation: none;
   }
 }
 </style>

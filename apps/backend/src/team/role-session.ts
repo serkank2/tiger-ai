@@ -38,14 +38,18 @@ export interface RunPromptInput {
   signal: AbortSignal;
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
     const onAbort = () => {
       clearTimeout(t);
+      // The abort path fires the listener; `{ once: true }` already removed it.
       resolve();
     };
     const t = setTimeout(() => {
+      // The timeout path must ALSO detach the abort listener, or a tight poll loop
+      // (runPrompt/awaitIdle) registers one listener per iteration that never fires,
+      // leaking thousands and tripping MaxListenersExceededWarning.
       signal.removeEventListener('abort', onAbort);
       resolve();
     }, ms);

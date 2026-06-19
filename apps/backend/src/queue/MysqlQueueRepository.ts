@@ -384,6 +384,48 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
     }
   }
 
+  async getLatestLimitSnapshotsByWindow(provider: Exclude<QueueProvider, 'mixed'>): Promise<QueueLimitSnapshot[]> {
+    // Latest snapshot per window_key for the provider. Pull recent rows ordered newest-first and
+    // keep the first row seen per window in JS — robust across MySQL versions without depending on
+    // window functions, and the per-window winner is whichever was checked most recently.
+    const primary = `
+      SELECT provider, window_key, percent_used, reset_at, checked_at, created_at
+      FROM limit_snapshots
+      WHERE provider = ? AND percent_used IS NOT NULL
+      ORDER BY checked_at DESC, created_at DESC
+    `;
+    const fallback = `
+      SELECT provider, window_key, usage_percent, reset_at, checked_at, created_at
+      FROM limit_snapshots
+      WHERE provider = ? AND usage_percent IS NOT NULL
+      ORDER BY checked_at DESC, created_at DESC
+    `;
+    const pickLatestPerWindow = (rows: LimitSnapshotRow[]): QueueLimitSnapshot[] => {
+      const seen = new Set<string>();
+      const out: QueueLimitSnapshot[] = [];
+      for (const row of rows) {
+        const snapshot = mapLimitSnapshot(row);
+        if (seen.has(snapshot.windowKey)) continue;
+        seen.add(snapshot.windowKey);
+        out.push(snapshot);
+      }
+      return out;
+    };
+    try {
+      const rows = await this.select<LimitSnapshotRow[]>(primary, [provider]);
+      return pickLatestPerWindow(rows);
+    } catch (err) {
+      if (!isMissingLimitTable(err)) throw err;
+    }
+    try {
+      const rows = await this.select<LimitSnapshotRow[]>(fallback, [provider]);
+      return pickLatestPerWindow(rows);
+    } catch (err) {
+      if (!isMissingLimitTable(err)) throw err;
+      return [];
+    }
+  }
+
   async updateJob(id: string, patch: QueueJobPatch): Promise<void> {
     const pairs: string[] = [];
     const values: unknown[] = [];

@@ -489,3 +489,35 @@ function fakeAgentConfig(orch: Orchestrator): StageRunConfig {
     mergeAgent: 'codex',
   };
 }
+
+test('an all-blocked execute stage is reported failed (not completed), so auto-advance cannot proceed (#2)', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-allblocked-'));
+  try {
+    const manager = new TerminalManager();
+    const orch = new Orchestrator(manager);
+    await orch.initialize(workspace, 'Project prompt');
+    // `idle` mode writes an output file WITHOUT an EXECUTION_RESULT self-report and then stays alive,
+    // so the agent idle-completes but the semantic gate downgrades its task to `blocked`.
+    installFakeCliConfig(orch, 'idle');
+    const paths = new TigerPaths(workspace);
+    await splitTasksToFiles(TASKS_MD, paths.tasksDir);
+
+    await orch.startStage('executing-plan', fakeAgentConfig(orch));
+    const deadline = Date.now() + 15000;
+    while (orch.getState().busy) {
+      if (Date.now() > deadline) assert.fail('execute stage did not finish');
+      await delay(10);
+    }
+
+    const state = orch.getState();
+    const stage = state.stages['executing-plan']!;
+    // The CLI run itself "completed" (idle), but the task ended blocked — so the stage must NOT be
+    // completed. Before the fix it would have reported completed and satisfied auto-advance/cleanup.
+    assert.notEqual(stage.status, 'completed', 'an all-blocked stage must not finalize as completed');
+    assert.equal(stage.status, 'failed');
+    assert.equal(state.tasks?.byExecution.blocked, 1);
+    assert.equal(state.tasks?.byExecution.done, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});

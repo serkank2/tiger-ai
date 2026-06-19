@@ -6,6 +6,9 @@ import {
   type RunTemplateUpdate,
 } from '../services/run-templates.js';
 import type { RunTemplate, StageId, StageRunConfig } from '../orchestrator/types.js';
+import { logger } from '../obs/logger.js';
+
+const log = logger.child({ mod: 'repo.run-templates' });
 
 interface RunTemplateRow extends RowDataPacket {
   id: string;
@@ -25,9 +28,19 @@ function dateIso(value: Date | string | null): string | null {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function parseConfigs(value: RunTemplateRow['configs_json']): Partial<Record<StageId, StageRunConfig>> {
-  if (typeof value === 'string') return JSON.parse(value) as Partial<Record<StageId, StageRunConfig>>;
-  return value;
+function parseConfigs(value: RunTemplateRow['configs_json'], id?: string): Partial<Record<StageId, StageRunConfig>> {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value) as Partial<Record<StageId, StageRunConfig>>;
+  } catch (err) {
+    // A single corrupted configs_json must not throw out of list() and break the whole
+    // templates endpoint. Degrade this row to empty configs and log it.
+    log.warn('run template configs_json is not valid JSON; using empty configs', {
+      id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return {};
+  }
 }
 
 function rowToTemplate(row: RunTemplateRow): RunTemplate {
@@ -36,7 +49,7 @@ function rowToTemplate(row: RunTemplateRow): RunTemplate {
     name: row.name,
     description: row.description ?? undefined,
     fromStage: row.from_stage ? (row.from_stage as StageId) : undefined,
-    configs: parseConfigs(row.configs_json),
+    configs: parseConfigs(row.configs_json, row.id),
     builtin: row.builtin === 1,
     version: row.version,
     createdAt: dateIso(row.created_at) ?? undefined,
