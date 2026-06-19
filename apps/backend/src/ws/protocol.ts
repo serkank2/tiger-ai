@@ -3,7 +3,14 @@ import type { OrchestratorState } from '../orchestrator/types.js';
 import type { QueueState } from '../queue/types.js';
 import type { PromptGenerationState } from '../services/PromptGenerationService.js';
 import type { LimitStatus } from '../limits/types.js';
-import type { TeamRunState, TeamMessage } from '../team/types.js';
+import type {
+  TeamRunState,
+  TeamMessage,
+  RoleSnapshot,
+  DoneGateState,
+  SteeringDirective,
+  TeamChangesEvent,
+} from '../team/types.js';
 
 // ---------------------------------------------------------------------------
 // WebSocket message protocol. One socket per browser window; terminals are
@@ -151,6 +158,30 @@ export interface TeamMessageMsg {
   runId: string;
   message: TeamMessage;
 }
+/** Compact per-role state update pushed whenever a role's live status changes. */
+export interface TeamRoleMsg {
+  type: 'team.role';
+  runId: string;
+  role: RoleSnapshot;
+}
+/** The run's done-gate snapshot pushed whenever completion progress changes. */
+export interface TeamDoneMsg {
+  type: 'team.done';
+  runId: string;
+  gate: DoneGateState;
+}
+/** A steering directive injected into the run, pushed to all peers. */
+export interface TeamSteeringMsg {
+  type: 'team.steering';
+  runId: string;
+  directive: SteeringDirective;
+}
+/** The run's git changeset summary, pushed when the working tree changes. */
+export interface TeamChangesMsg {
+  type: 'team.changes';
+  runId: string;
+  changes: TeamChangesEvent;
+}
 
 export type ServerMsg =
   | AttachedMsg
@@ -167,7 +198,11 @@ export type ServerMsg =
   | HistoryChangedMsg
   | LimitStateMsg
   | TeamStateMsg
-  | TeamMessageMsg;
+  | TeamMessageMsg
+  | TeamRoleMsg
+  | TeamDoneMsg
+  | TeamSteeringMsg
+  | TeamChangesMsg;
 
 const CLIENT_MSG_TYPES = new Set<string>([
   'term.attach',

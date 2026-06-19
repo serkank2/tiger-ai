@@ -207,6 +207,10 @@ export function useSocket() {
       case 'queue.state':
       case 'team.state':
       case 'team.message':
+      case 'team.role':
+      case 'team.done':
+      case 'team.steering':
+      case 'team.changes':
       case 'generation.state':
       case 'history.changed':
         emitServerEvent(msg);

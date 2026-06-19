@@ -509,11 +509,25 @@ export interface VerificationRecord {
   createdAt: string;
 }
 
+/** A single open completion gate, with a stable machine code and a human reason. */
+export interface DoneGateBlocker {
+  /**
+   * Machine-readable gate identifier. Known codes: tasks_blocked, tasks_incomplete,
+   * findings_open, verification_missing, verification_failed, steering_pending,
+   * no_signoff_roles, signoff_missing, signoff_stale, board_pending.
+   */
+  code: string;
+  message: string;
+}
+
 export interface DoneGateState {
+  /** True iff the FULL completion gate is satisfied — i.e. `openBlockers` is empty. */
   satisfied: boolean;
   requiredRoleIds: string[];
   signedOffRoleIds: string[];
   pendingRoleIds: string[];
+  /** Every gate still holding the run open (empty iff `satisfied`). */
+  openBlockers?: DoneGateBlocker[];
   evaluatedAt?: string;
 }
 
@@ -565,6 +579,103 @@ export interface RoleSnapshot {
   tasks?: { todo: number; inProgress: number; done: number };
 }
 
+export type TeamTurnSnapshotStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'stopped'
+  | 'interrupted';
+
+/** A compact per-turn record for the UI snapshot (the run's turn history). */
+export interface TeamTurnSnapshot {
+  id: string;
+  roleId: string;
+  roleName: string;
+  status: TeamTurnSnapshotStatus;
+  round: number;
+  startedAt: string;
+  endedAt?: string;
+  reason?: string;
+  terminalId?: string;
+  provider?: TeamAgentType;
+  durationMs?: number;
+}
+
+/** A compact verification record for the UI snapshot. */
+export interface TeamVerificationSnapshot {
+  id: string;
+  roleId?: string;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+  command?: string;
+  exitCode?: number;
+  summary?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+/** A compact sign-off record for the UI snapshot. */
+export interface TeamSignoffSnapshot {
+  id: string;
+  roleId: string;
+  roleName: string;
+  createdAt: string;
+  stale: boolean;
+  staleReason?: string;
+}
+
+/** Per-role rollup for {@link TeamMetrics}. */
+export interface TeamRoleMetrics {
+  roleId: string;
+  roleName: string;
+  provider?: TeamAgentType;
+  turnCount: number;
+  durationMs: number;
+}
+
+/** Per-role and per-run cost/duration metrics for the UI snapshot. */
+export interface TeamMetrics {
+  durationMs: number;
+  turnCount: number;
+  perRole: TeamRoleMetrics[];
+  /** null today — the CLIs run as interactive PTYs and do not self-report usage. */
+  tokens?: number | null;
+  cost?: number | null;
+}
+
+/** A compact summary of a past run, for the run-history list (newest first). */
+export interface TeamRunSummary {
+  runId: string;
+  name: string;
+  goal: string;
+  status: TeamRunStatus;
+  roleCount: number;
+  turnCount: number;
+  messageCount: number;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  closed: boolean;
+}
+
+export interface TeamRunsResponse {
+  runs: TeamRunSummary[];
+}
+
+/** Fields a mid-run role reconfigure may change. */
+export interface RoleReconfigureInput {
+  name?: string;
+  persona?: string;
+  tool?: TeamAgentType;
+  model?: string;
+  effort?: string;
+  permission?: string;
+  responsibilities?: string[];
+  canWriteCode?: boolean;
+  requiredForSignoff?: boolean;
+}
+
 export interface TeamRunState {
   id: string;
   name: string;
@@ -577,6 +688,14 @@ export interface TeamRunState {
   pendingSteering: SteeringDirective[];
   tasks?: TigerTaskSummary | null;
   findings?: TigerFindingsSummary | null;
+  /** The run's turn history (compact). */
+  turns?: TeamTurnSnapshot[];
+  /** The run's verification records (compact). */
+  verifications?: TeamVerificationSnapshot[];
+  /** The run's sign-off records (compact). */
+  signoffs?: TeamSignoffSnapshot[];
+  /** Per-role and per-run duration/provider (and token/cost when available) metrics. */
+  metrics?: TeamMetrics;
   turnCount?: number;
   round?: number;
   /** Human-readable status/intent line (e.g. a waiting reason when the Lead has idled). */
@@ -703,6 +822,43 @@ export interface TeamMessageEvent {
   type: 'team.message';
   runId?: string;
   message: TeamMessage;
+}
+
+/** `team.role` frame — a single role's live snapshot changed. */
+export interface TeamRoleEvent {
+  type: 'team.role';
+  runId: string;
+  role: RoleSnapshot;
+}
+
+/** `team.done` frame — the run's completion gate changed. */
+export interface TeamDoneEvent {
+  type: 'team.done';
+  runId: string;
+  gate: DoneGateState;
+}
+
+/** `team.steering` frame — a steering directive's ack/applied state changed. */
+export interface TeamSteeringEvent {
+  type: 'team.steering';
+  runId: string;
+  directive: SteeringDirective;
+}
+
+/** The compact changeset summary carried on a `team.changes` frame. */
+export interface TeamChangesEvent {
+  isGitRepo: boolean;
+  head: string | null;
+  branch: string | null;
+  summary: { files: number; insertions: number; deletions: number };
+  generatedAt: string;
+}
+
+/** `team.changes` frame — the working-tree changeset summary changed. */
+export interface TeamChangesFrame {
+  type: 'team.changes';
+  runId: string;
+  changes: TeamChangesEvent;
 }
 
 // --- Backend health (mirror of GET /api/health) ---
@@ -927,4 +1083,10 @@ export interface ServerMessage {
   code?: string;
   message?: string;
   ts?: number;
+  // Team live frames (team.role / team.done / team.steering / team.changes).
+  runId?: string;
+  role?: RoleSnapshot;
+  gate?: DoneGateState;
+  directive?: SteeringDirective;
+  changes?: TeamChangesEvent;
 }

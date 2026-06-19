@@ -17,11 +17,14 @@ import type {
   QueueRule,
   QueueState,
   CreateTeamRunResponse,
+  RoleConfigInput,
+  RoleReconfigureInput,
   TeamChanges,
   SteerResponse,
   TeamArtifact,
   TeamMessageHistoryParams,
   TeamMessagePage,
+  TeamRunsResponse,
   TeamRunStateResponse,
   TeamRunStartInput,
   TeamSteeringInput,
@@ -204,6 +207,27 @@ export function useApi() {
       req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/changes`),
     submitTeamSteering: (id: string, body: TeamSteeringInput) =>
       req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
+
+    // Run history + read-only rehydrate.
+    listTeamRuns: () => req<TeamRunsResponse>('/api/team/runs'),
+    getTeamRun: (id: string) => req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}`),
+    /** Absolute URL of the export download (json|markdown); the browser fetches it directly. */
+    teamExportUrl: (id: string, format: 'json' | 'markdown') =>
+      `${base}/api/team/runs/${encodeURIComponent(id)}/export?format=${format}`,
+
+    // Single-role control + mid-run role management.
+    pauseTeamRole: (id: string, roleId: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/pause`, { method: 'POST' }),
+    resumeTeamRole: (id: string, roleId: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/resume`, { method: 'POST' }),
+    steerTeamRole: (id: string, roleId: string, body: TeamSteeringInput) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/steer`, { method: 'POST', body }),
+    addTeamRole: (id: string, body: RoleConfigInput) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles`, { method: 'POST', body }),
+    reconfigureTeamRole: (id: string, roleId: string, body: RoleReconfigureInput) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body }),
+    removeTeamRole: (id: string, roleId: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
 
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),

@@ -11,6 +11,10 @@ import TeamDoneGate from './TeamDoneGate.vue';
 import TeamSteerBar from './TeamSteerBar.vue';
 import TeamTerminalPane from './TeamTerminalPane.vue';
 import TeamChangesPanel from './TeamChangesPanel.vue';
+import TeamMetricsPanel from './TeamMetricsPanel.vue';
+import TeamRunHistory from './TeamRunHistory.vue';
+import TeamRoleControls from './TeamRoleControls.vue';
+import TeamVerifications from './TeamVerifications.vue';
 
 const emit = defineEmits<{ back: [] }>();
 
@@ -44,6 +48,9 @@ const turnsLabel = computed(() => {
 // latest turn terminal as new turns start.
 const selectedRoleId = ref<string | null>(null);
 const showChanges = ref(false);
+const showHistory = ref(false);
+const showRoleControls = ref(false);
+const readOnly = computed(() => team.readOnly);
 const terminalRole = computed(
   () => state.value?.roles.find((r) => r.id === selectedRoleId.value && r.terminalId) ?? null,
 );
@@ -54,23 +61,35 @@ const connected = computed(() => connection.status === 'connected');
 // re-enter) nor be Closed again. `closed` overrides the status-based guesses below — a closed
 // run keeps status 'stopped', which would otherwise still offer both.
 const closed = computed(() => state.value?.closed === true);
-const canPause = computed(() => status.value === 'running');
+// A read-only history view must offer no live controls — only "Back to live" and export.
+const canPause = computed(() => !readOnly.value && status.value === 'running');
 // Stop is a resumable halt (role sessions stay alive), so a stopped run can Resume into the
 // same context; Close (hasLiveSessions) remains available to end those retained sessions.
 const canResume = computed(
   () =>
+    !readOnly.value &&
     !closed.value &&
     (status.value === 'paused' ||
       status.value === 'blocked' ||
       status.value === 'interrupted' ||
       status.value === 'stopped'),
 );
-const canStop = computed(() => isActive.value || status.value === 'interrupted');
+const canStop = computed(() => !readOnly.value && (isActive.value || status.value === 'interrupted'));
 // Persistent CLI terminals stay alive until the run completes/fails or is Closed, so a
 // Close (kill terminals) is offered for any non-terminal-and-done run that isn't already closed.
 const hasLiveSessions = computed(
-  () => !closed.value && status.value != null && status.value !== 'completed' && status.value !== 'failed',
+  () =>
+    !readOnly.value &&
+    !closed.value &&
+    status.value != null &&
+    status.value !== 'completed' &&
+    status.value !== 'failed',
 );
+
+async function returnToLive() {
+  showRoleControls.value = false;
+  await team.returnToLive().catch(() => {});
+}
 
 const STATUS_LABEL: Record<string, string> = {
   running: 'Running',
@@ -89,6 +108,7 @@ function statusLabel(s: string | null): string {
 async function reset() {
   // Returning to the launcher is a UI-only action; the run stays persisted and can be
   // re-opened by reloading state. We simply drop the active run from the view.
+  team.viewingRunId = null;
   team.state = null;
 }
 </script>
@@ -115,6 +135,10 @@ async function reset() {
       </div>
 
       <div v-if="state" class="controls">
+        <template v-if="readOnly">
+          <span class="ro-tag" title="Viewing a past run read-only">read-only</span>
+          <BaseButton size="sm" variant="primary" @click="returnToLive">Back to live</BaseButton>
+        </template>
         <BaseButton
           v-if="canPause"
           size="sm"
@@ -147,10 +171,18 @@ async function reset() {
         <BaseButton
           size="sm"
           variant="ghost"
-          title="See the real code changes the agents made (git diff)"
+          title="See the real code changes the agents made (git diff) and review them inline"
           @click="showChanges = true"
         >⌥ Changes</BaseButton>
-        <BaseButton v-if="!isActive" size="sm" variant="ghost" @click="reset">New run</BaseButton>
+        <BaseButton
+          size="sm"
+          variant="ghost"
+          title="Browse and re-open past runs (read-only)"
+          @click="showHistory = true"
+        >⏱ History</BaseButton>
+        <BaseButton size="sm" variant="ghost" title="Download the transcript as JSON" @click="team.exportRun('json')">⇩ JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" title="Download the transcript as Markdown" @click="team.exportRun('markdown')">⇩ MD</BaseButton>
+        <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">New run</BaseButton>
       </div>
     </header>
 
@@ -167,8 +199,19 @@ async function reset() {
         <div class="rail-head">
           <h3>Roles</h3>
           <span class="count">{{ state.roles.length }}</span>
+          <BaseButton
+            v-if="isActive && !readOnly"
+            size="sm"
+            variant="ghost"
+            class="manage-toggle"
+            :title="showRoleControls ? 'Hide role controls' : 'Pause / steer / edit / remove roles'"
+            @click="showRoleControls = !showRoleControls"
+          >{{ showRoleControls ? 'Done' : 'Manage' }}</BaseButton>
         </div>
-        <div class="roles">
+        <div v-if="showRoleControls" class="roles">
+          <TeamRoleControls v-for="role in state.roles" :key="role.id" :role="role" />
+        </div>
+        <div v-else class="roles">
           <TeamRoleTile
             v-for="role in state.roles"
             :key="role.id"
@@ -176,6 +219,10 @@ async function reset() {
             @select="selectedRoleId = role.id"
           />
         </div>
+
+        <TeamMetricsPanel :metrics="team.metrics" />
+        <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
+
         <details v-if="team.artifacts.length" class="artifacts">
           <summary>Artifacts · {{ team.artifacts.length }}</summary>
           <ul>
@@ -186,7 +233,7 @@ async function reset() {
 
       <main class="chat-pane">
         <TeamChatPanel />
-        <TeamSteerBar v-if="isActive" />
+        <TeamSteerBar v-if="isActive && !readOnly" />
       </main>
     </section>
 
@@ -198,6 +245,7 @@ async function reset() {
     />
 
     <TeamChangesPanel v-if="showChanges" @close="showChanges = false" />
+    <TeamRunHistory v-if="showHistory" @close="showHistory = false" @opened="showHistory = false" />
   </div>
 </template>
 
@@ -275,6 +323,18 @@ async function reset() {
 .controls {
   display: flex;
   gap: var(--space-2);
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.ro-tag {
+  align-self: center;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+.manage-toggle {
   margin-left: auto;
 }
 .placeholder {

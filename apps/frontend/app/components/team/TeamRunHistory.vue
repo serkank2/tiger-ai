@@ -1,0 +1,159 @@
+<script setup lang="ts">
+import { computed, onMounted } from 'vue';
+import { useTeamStore } from '~/stores/team';
+import type { TeamRunStatus } from '~/types';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import Spinner from '~/components/ui/Spinner.vue';
+
+const emit = defineEmits<{ close: []; opened: [] }>();
+const team = useTeamStore();
+
+const runs = computed(() => team.runHistory);
+const loading = computed(() => team.runHistoryLoading);
+const activeRunId = computed(() => team.activeRunId);
+
+const STATUS_LABEL: Record<TeamRunStatus, string> = {
+  running: 'Running',
+  paused: 'Paused',
+  blocked: 'Blocked',
+  completed: 'Completed',
+  failed: 'Failed',
+  stopped: 'Stopped',
+  interrupted: 'Interrupted',
+};
+
+function when(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+}
+
+async function open(runId: string): Promise<void> {
+  try {
+    await team.openRun(runId);
+    emit('opened');
+  } catch {
+    /* notices surface the error */
+  }
+}
+
+onMounted(() => void team.loadRuns());
+</script>
+
+<template>
+  <div class="hist-overlay" role="dialog" aria-label="Team run history" @keydown.esc="emit('close')">
+    <div class="hist-drawer">
+      <header class="h-head">
+        <strong>Run history</strong>
+        <div class="h-actions">
+          <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">Refresh</BaseButton>
+          <BaseButton size="sm" variant="ghost" icon-only aria-label="Close history" @click="emit('close')">✕</BaseButton>
+        </div>
+      </header>
+
+      <section v-if="loading && !runs.length" class="h-state">
+        <Spinner :size="20" /><span>Loading runs…</span>
+      </section>
+      <section v-else-if="!runs.length" class="h-state empty">
+        <p>No past runs for this workspace yet.</p>
+      </section>
+
+      <ul v-else class="run-list">
+        <li v-for="r in runs" :key="r.runId" class="run" :class="{ current: r.runId === activeRunId }">
+          <div class="r-main">
+            <div class="r-line">
+              <span class="r-name" :title="r.goal">{{ r.name }}</span>
+              <span class="r-status" :class="`st-${r.status}`">{{ STATUS_LABEL[r.status] ?? r.status }}</span>
+              <span v-if="r.runId === activeRunId" class="r-live">live</span>
+            </div>
+            <div class="r-meta">
+              <span>{{ r.roleCount }} roles</span>
+              <span>{{ r.turnCount }} turns</span>
+              <span>{{ r.messageCount }} msgs</span>
+              <span class="r-when">{{ when(r.startedAt ?? r.createdAt) }}</span>
+            </div>
+          </div>
+          <div class="r-controls">
+            <BaseButton
+              size="sm"
+              variant="ghost"
+              :loading="team.isBusy(`open:${r.runId}`)"
+              :disabled="r.runId === activeRunId && !team.readOnly"
+              @click="open(r.runId)"
+            >Open</BaseButton>
+            <BaseButton size="sm" variant="ghost" title="Download transcript as JSON" @click="team.exportRun('json', r.runId)">JSON</BaseButton>
+            <BaseButton size="sm" variant="ghost" title="Download transcript as Markdown" @click="team.exportRun('markdown', r.runId)">MD</BaseButton>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.hist-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 60;
+}
+.hist-drawer {
+  width: min(560px, 92vw);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+}
+.h-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.h-actions { display: flex; gap: var(--space-1); }
+.h-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  color: var(--text-dim);
+}
+.run-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+.run {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.run.current { background: var(--bg-elev); }
+.r-main { min-width: 0; flex: 1; }
+.r-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.r-name { font-weight: 600; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-status {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.st-running { color: var(--accent); border-color: var(--accent); }
+.st-completed { color: var(--green); border-color: var(--green); }
+.st-failed { color: var(--red); border-color: var(--red); }
+.st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
+.r-live { font-size: 10px; color: var(--green); }
+.r-meta { display: flex; gap: var(--space-2); margin-top: 2px; font-size: var(--text-xs); color: var(--text-faint); }
+.r-when { margin-left: auto; }
+.r-controls { display: flex; gap: var(--space-1); flex: none; }
+.h-state.empty { color: var(--text-dim); }
+</style>

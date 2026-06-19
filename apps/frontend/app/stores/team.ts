@@ -7,24 +7,37 @@ import { useNoticesStore } from '~/stores/notices';
 import { errText } from '~/lib/apiError';
 import type {
   CreateTeamRunResponse,
+  DoneGateState,
+  RoleConfigInput,
+  RoleReconfigureInput,
+  RoleSnapshot,
   RoleTemplate,
   SteerResponse,
   SteeringDirective,
   TeamArtifact,
   TeamChanges,
+  TeamChangesEvent,
+  TeamChangesFrame,
+  TeamDoneEvent,
   TeamMessage,
   TeamMessageEvent,
   TeamMessageHistoryParams,
   TeamMessagePage,
+  TeamRoleEvent,
   TeamRun,
   TeamRunState,
   TeamRunStateResponse,
   TeamRunStartInput,
+  TeamRunSummary,
+  TeamSignoffSnapshot,
   TeamStateEvent,
+  TeamSteeringEvent,
   TeamSteeringInput,
   TeamTemplate,
   TeamTemplatePayload,
   TeamTemplatesResponse,
+  TeamTurnSnapshot,
+  TeamVerificationSnapshot,
 } from '~/types';
 
 const DEFAULT_MESSAGE_LIMIT = 50;
@@ -119,6 +132,11 @@ export const useTeamStore = defineStore('team', () => {
   const artifacts = ref<TeamArtifact[]>([]);
   const changes = ref<TeamChanges | null>(null);
   const changesLoading = ref(false);
+  // Run history (newest first) and whether the currently-shown run is a read-only rehydrate
+  // of a past run (true) rather than the live active run (false/null).
+  const runHistory = ref<TeamRunSummary[]>([]);
+  const runHistoryLoading = ref(false);
+  const viewingRunId = ref<string | null>(null);
   const transcriptRunId = ref<string | null>(null);
   const nextCursor = ref<string | null>(null);
   const hasMoreMessages = ref(false);
@@ -139,10 +157,16 @@ export const useTeamStore = defineStore('team', () => {
   const activeRunId = computed(() => state.value?.id ?? null);
   const runs = computed(() => (state.value ? [state.value] : []));
   const roles = computed(() => state.value?.roles ?? []);
-  const turns = computed(() => [] as never[]);
+  // Snapshot DTO additions: previously stubbed as `[]`, now backed by the real run state.
+  const turns = computed<TeamTurnSnapshot[]>(() => state.value?.turns ?? []);
   const directives = computed(() => state.value?.pendingSteering ?? []);
-  const verifications = computed(() => [] as never[]);
-  const signOffs = computed(() => [] as never[]);
+  const verifications = computed<TeamVerificationSnapshot[]>(() => state.value?.verifications ?? []);
+  const signOffs = computed<TeamSignoffSnapshot[]>(() => state.value?.signoffs ?? []);
+  const metrics = computed(() => state.value?.metrics ?? null);
+  const openBlockers = computed(() => state.value?.doneGate?.openBlockers ?? []);
+  // True while showing a read-only rehydrate of a past run (history view), so control
+  // surfaces (steer / role controls) hide and live frames for other runs are ignored.
+  const readOnly = computed(() => viewingRunId.value != null && viewingRunId.value === state.value?.id);
   const busy = computed(() => Object.keys(busyKeys.value).length > 0);
 
   function setBusy(key: string, value: boolean): void {
@@ -524,16 +548,190 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
+  // --- Run history + read-only rehydrate -----------------------------------
+
+  async function loadRuns(): Promise<void> {
+    runHistoryLoading.value = true;
+    try {
+      const { runs: list } = await api.listTeamRuns();
+      runHistory.value = list;
+    } catch (error) {
+      recordFailure('Team run history failed', error);
+    } finally {
+      runHistoryLoading.value = false;
+    }
+  }
+
+  /** Open a past run read-only (rehydrate its snapshot without disturbing the live run). */
+  async function openRun(runId: string): Promise<void> {
+    setBusy(`open:${runId}`, true);
+    try {
+      const { state: next } = await api.getTeamRun(runId);
+      if (!next) throw new Error('Run not found');
+      viewingRunId.value = runId;
+      applyState(next);
+      const [page, nextArtifacts] = await Promise.all([
+        api.listTeamMessages(runId, { limit: DEFAULT_MESSAGE_LIMIT }),
+        api.listTeamArtifacts(runId).catch(() => [] as TeamArtifact[]),
+      ]);
+      replaceMessages(runId, normalizeMessagePage(page));
+      artifacts.value = nextArtifacts;
+    } catch (error) {
+      recordFailure('Open run failed', error);
+      throw error;
+    } finally {
+      setBusy(`open:${runId}`, false);
+    }
+  }
+
+  /** Leave the read-only history view and re-load the live active run. */
+  async function returnToLive(): Promise<void> {
+    viewingRunId.value = null;
+    await loadState();
+    const runId = activeRunId.value;
+    if (runId) await Promise.all([loadMessages({ runId }), loadArtifacts(runId)]);
+  }
+
+  /** Trigger a browser download of the run transcript/artifacts as JSON or markdown. */
+  function exportRun(format: 'json' | 'markdown', runId = activeRunId.value): void {
+    const id = runId;
+    if (!id) return;
+    const url = api.teamExportUrl(id, format);
+    if (typeof document === 'undefined') return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  // --- Single-role control + mid-run role management -----------------------
+
+  async function roleAction<T>(key: string, label: string, fn: () => Promise<T>): Promise<void> {
+    setBusy(key, true);
+    actionError.value = null;
+    try {
+      const response = await fn();
+      const next = normalizeStateResponse(response as TeamRunStateResponse);
+      if (next) applyState(next);
+      notices.push(label, 'info');
+    } catch (error) {
+      recordFailure(`${label} failed`, error);
+      throw error;
+    } finally {
+      setBusy(key, false);
+    }
+  }
+
+  function pauseRole(roleId: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction(`role-pause:${roleId}`, 'Role paused', () => api.pauseTeamRole(id, roleId));
+  }
+
+  function resumeRole(roleId: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction(`role-resume:${roleId}`, 'Role resumed', () => api.resumeTeamRole(id, roleId));
+  }
+
+  function steerRole(roleId: string, body: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction(`role-steer:${roleId}`, 'Message sent to role', () => api.steerTeamRole(id, roleId, { body }));
+  }
+
+  function addRole(role: RoleConfigInput, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction('role-add', 'Role added', () => api.addTeamRole(id, role));
+  }
+
+  function reconfigureRole(roleId: string, patch: RoleReconfigureInput, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction(`role-edit:${roleId}`, 'Role updated', () => api.reconfigureTeamRole(id, roleId, patch));
+  }
+
+  function removeRole(roleId: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    return roleAction(`role-remove:${roleId}`, 'Role removed', () => api.removeTeamRole(id, roleId));
+  }
+
+  // --- Incremental live-frame appliers (no full snapshot re-fetch) ----------
+
+  /** Is this frame for the run we are currently showing? Read-only history views ignore others. */
+  function isCurrentRun(runId: string): boolean {
+    return !!state.value && state.value.id === runId;
+  }
+
+  function applyRoleFrame(runId: string, role: RoleSnapshot): void {
+    if (!isCurrentRun(runId) || !state.value) return;
+    const roles = state.value.roles.map((r) => (r.id === role.id ? { ...r, ...role } : r));
+    if (!roles.some((r) => r.id === role.id)) roles.push(role);
+    state.value = { ...state.value, roles };
+  }
+
+  function applyDoneFrame(runId: string, gate: DoneGateState): void {
+    if (!isCurrentRun(runId) || !state.value) return;
+    state.value = { ...state.value, doneGate: gate };
+  }
+
+  function applySteeringFrame(runId: string, directive: SteeringDirective): void {
+    if (!isCurrentRun(runId) || !state.value) return;
+    const pending = state.value.pendingSteering.filter((d) => d.id !== directive.id);
+    // Acknowledged/applied directives drop out of the pending list; others stay reflected.
+    if (!directive.acknowledged) pending.push(directive);
+    state.value = { ...state.value, pendingSteering: pending };
+  }
+
+  function applyChangesFrame(runId: string, summary: TeamChangesEvent): void {
+    if (!isCurrentRun(runId)) return;
+    // Reflect the summary immediately; pull the full diff lazily via the existing REST route.
+    if (changes.value) {
+      changes.value = {
+        ...changes.value,
+        isGitRepo: summary.isGitRepo,
+        head: summary.head,
+        branch: summary.branch,
+        summary: summary.summary,
+        generatedAt: summary.generatedAt,
+      };
+    }
+    void loadChanges(runId).catch(() => {});
+  }
+
+  let unbindTeamRole: (() => void) | null = null;
+  let unbindTeamDone: (() => void) | null = null;
+  let unbindTeamSteering: (() => void) | null = null;
+  let unbindTeamChanges: (() => void) | null = null;
+
   function bindSocket(): () => void {
     if (!unbindTeamState || !unbindTeamMessage) {
       const socket = useSocket();
       unbindTeamState = socket.onServerEvent('team.state', (msg) => {
         const next = (msg as unknown as TeamStateEvent).state;
-        if (next) applyState(next);
+        // A live state push for the active run supersedes a read-only history view.
+        if (next && (!readOnly.value || next.id === state.value?.id)) {
+          if (next.id !== viewingRunId.value) viewingRunId.value = null;
+          applyState(next);
+        }
       });
       unbindTeamMessage = socket.onServerEvent('team.message', (msg) => {
         const message = (msg as unknown as TeamMessageEvent).message;
         if (message) appendMessage(message);
+      });
+      unbindTeamRole = socket.onServerEvent('team.role', (msg) => {
+        const e = msg as unknown as TeamRoleEvent;
+        if (e.role) applyRoleFrame(e.runId, e.role);
+      });
+      unbindTeamDone = socket.onServerEvent('team.done', (msg) => {
+        const e = msg as unknown as TeamDoneEvent;
+        if (e.gate) applyDoneFrame(e.runId, e.gate);
+      });
+      unbindTeamSteering = socket.onServerEvent('team.steering', (msg) => {
+        const e = msg as unknown as TeamSteeringEvent;
+        if (e.directive) applySteeringFrame(e.runId, e.directive);
+      });
+      unbindTeamChanges = socket.onServerEvent('team.changes', (msg) => {
+        const e = msg as unknown as TeamChangesFrame;
+        if (e.changes) applyChangesFrame(e.runId, e.changes);
       });
     }
 
@@ -552,9 +750,17 @@ export const useTeamStore = defineStore('team', () => {
     return () => {
       unbindTeamState?.();
       unbindTeamMessage?.();
+      unbindTeamRole?.();
+      unbindTeamDone?.();
+      unbindTeamSteering?.();
+      unbindTeamChanges?.();
       unwatchConnection?.();
       unbindTeamState = null;
       unbindTeamMessage = null;
+      unbindTeamRole = null;
+      unbindTeamDone = null;
+      unbindTeamSteering = null;
+      unbindTeamChanges = null;
       unwatchConnection = null;
     };
   }
@@ -574,6 +780,9 @@ export const useTeamStore = defineStore('team', () => {
     artifacts,
     changes,
     changesLoading,
+    runHistory,
+    runHistoryLoading,
+    viewingRunId,
     transcriptRunId,
     nextCursor,
     hasMoreMessages,
@@ -594,6 +803,9 @@ export const useTeamStore = defineStore('team', () => {
     directives,
     verifications,
     signOffs,
+    metrics,
+    openBlockers,
+    readOnly,
     busy,
     isBusy,
     applyState,
@@ -622,6 +834,16 @@ export const useTeamStore = defineStore('team', () => {
     closeRun: close,
     steer,
     steerRun: steer,
+    loadRuns,
+    openRun,
+    returnToLive,
+    exportRun,
+    pauseRole,
+    resumeRole,
+    steerRole,
+    addRole,
+    reconfigureRole,
+    removeRole,
     bindSocket,
   };
 });
