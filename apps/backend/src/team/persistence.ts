@@ -146,6 +146,31 @@ export interface TeamSignoffRecord {
   updatedAt: string;
 }
 
+/** Status union for a recorded attempt (mirrors `team/types.ts` TeamAttemptStatus). */
+export type TeamAttemptStatus = 'running' | 'completed' | 'failed' | 'promoted' | 'superseded';
+
+/** Captured diff summary for an attempt. */
+export interface TeamAttemptSummary {
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+export interface TeamAttemptRecord {
+  id: string;
+  runId: string;
+  attemptNumber: number;
+  status: TeamAttemptStatus;
+  branch: string | null;
+  baseRef: string | null;
+  workspacePath: string | null;
+  summary: TeamAttemptSummary | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  promotedAt: string | null;
+  createdAt: string;
+}
+
 export interface LoadedTeamRun {
   run: TeamRunRecord;
   roles: TeamRoleRecord[];
@@ -239,6 +264,28 @@ export interface TeamSignoffInput {
   summary?: string | null;
 }
 
+export interface CreateTeamAttemptInput {
+  id?: string;
+  runId: string;
+  attemptNumber: number;
+  status?: TeamAttemptStatus;
+  branch?: string | null;
+  baseRef?: string | null;
+  workspacePath?: string | null;
+  summary?: TeamAttemptSummary | null;
+  startedAt?: string | null;
+}
+
+export interface UpdateTeamAttemptInput {
+  status?: TeamAttemptStatus;
+  branch?: string | null;
+  baseRef?: string | null;
+  workspacePath?: string | null;
+  summary?: TeamAttemptSummary | null;
+  completedAt?: string | null;
+  promotedAt?: string | null;
+}
+
 export interface TeamLeaseConflict {
   runId: string;
   leaseOwner: string;
@@ -279,6 +326,14 @@ export interface TeamPersistence {
   recordDirective(input: TeamDirectiveInput): Promise<TeamDirectiveRecord>;
   recordVerification(input: TeamVerificationInput): Promise<TeamVerificationRecord>;
   recordSignoff(input: TeamSignoffInput): Promise<TeamSignoffRecord>;
+  /** Create a new attempt row for a run. */
+  createAttempt(input: CreateTeamAttemptInput): Promise<TeamAttemptRecord>;
+  /** Patch an existing attempt (status/summary/branch/timestamps). */
+  updateAttempt(id: string, patch: UpdateTeamAttemptInput): Promise<TeamAttemptRecord | null>;
+  /** List a run's attempts ordered by attempt number (oldest first). */
+  listAttempts(runId: string): Promise<TeamAttemptRecord[]>;
+  /** Mark an attempt promoted (status → 'promoted', stamp promotedAt). */
+  markAttemptPromoted(id: string, promotedAt?: string): Promise<TeamAttemptRecord | null>;
   loadRun(runId: string): Promise<LoadedTeamRun | null>;
   reconcileTeamOnBoot(input: TeamReconcileInput): Promise<TeamReconcileResult>;
 }
@@ -471,8 +526,45 @@ export const TEAM_TEMPLATES_MIGRATION = {
   statements: TEAM_TEMPLATES_MIGRATION_STATEMENTS,
 };
 
+// ---------------------------------------------------------------------------
+// Attempt model (vibe-kanban). A run's work can be tried multiple times; each
+// attempt is recorded with its own branch + base ref + worktree + diff summary
+// + outcome, so attempts can be compared side-by-side and the best PROMOTED.
+//
+// New, additive migration (never alters the immutable team_runs migration). The
+// id continues the team-migration sequence with a date+name key.
+// ---------------------------------------------------------------------------
+
+const TEAM_ATTEMPTS_MIGRATION_ID = '20260619_team_attempts';
+
+const TEAM_ATTEMPTS_MIGRATION_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS team_attempts (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    run_id VARCHAR(64) NOT NULL,
+    attempt_number INT NOT NULL DEFAULT 1,
+    status VARCHAR(32) NOT NULL DEFAULT 'running',
+    branch VARCHAR(512) NULL,
+    base_ref VARCHAR(512) NULL,
+    workspace_path VARCHAR(1024) NULL,
+    summary_json JSON NULL,
+    started_at DATETIME(3) NULL,
+    completed_at DATETIME(3) NULL,
+    promoted_at DATETIME(3) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_team_attempts_run_number (run_id, attempt_number),
+    INDEX idx_team_attempts_run (run_id, attempt_number),
+    CONSTRAINT fk_team_attempts_run FOREIGN KEY (run_id) REFERENCES team_runs(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+];
+
+/** Adds the `team_attempts` table (Attempt model). Runs after TEAM_MIGRATION. */
+export const TEAM_ATTEMPTS_MIGRATION = {
+  id: TEAM_ATTEMPTS_MIGRATION_ID,
+  statements: TEAM_ATTEMPTS_MIGRATION_STATEMENTS,
+};
+
 /** Ordered team migrations applied by both `migrate()` and `MySqlTeamPersistence.ensureSchema`. */
-const TEAM_MIGRATIONS = [TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION];
+const TEAM_MIGRATIONS = [TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION, TEAM_ATTEMPTS_MIGRATION];
 
 // ---------------------------------------------------------------------------
 // Noop implementation — used when persistence is disabled (no DB configured)
@@ -524,6 +616,22 @@ export class NoopTeamPersistence implements TeamPersistence {
     return signoffRecordFromInput(input);
   }
 
+  async createAttempt(input: CreateTeamAttemptInput): Promise<TeamAttemptRecord> {
+    return attemptRecordFromInput(input);
+  }
+
+  async updateAttempt(): Promise<TeamAttemptRecord | null> {
+    return null;
+  }
+
+  async listAttempts(): Promise<TeamAttemptRecord[]> {
+    return [];
+  }
+
+  async markAttemptPromoted(): Promise<TeamAttemptRecord | null> {
+    return null;
+  }
+
   async loadRun(): Promise<LoadedTeamRun | null> {
     return null;
   }
@@ -545,6 +653,7 @@ export class MemoryTeamPersistence implements TeamPersistence {
   readonly directives = new Map<string, TeamDirectiveRecord[]>();
   readonly verifications = new Map<string, TeamVerificationRecord[]>();
   readonly signoffs = new Map<string, Map<string, TeamSignoffRecord>>();
+  readonly attempts = new Map<string, TeamAttemptRecord[]>();
 
   async init(): Promise<void> {}
 
@@ -666,6 +775,33 @@ export class MemoryTeamPersistence implements TeamPersistence {
     byRole.set(input.roleKey, record);
     this.signoffs.set(input.runId, byRole);
     return clone(record);
+  }
+
+  async createAttempt(input: CreateTeamAttemptInput): Promise<TeamAttemptRecord> {
+    const record = attemptRecordFromInput(input);
+    const list = this.attempts.get(input.runId) ?? [];
+    list.push(record);
+    this.attempts.set(input.runId, list);
+    return clone(record);
+  }
+
+  async updateAttempt(id: string, patch: UpdateTeamAttemptInput): Promise<TeamAttemptRecord | null> {
+    for (const list of this.attempts.values()) {
+      const record = list.find((a) => a.id === id);
+      if (record) {
+        applyAttemptPatch(record, patch);
+        return clone(record);
+      }
+    }
+    return null;
+  }
+
+  async listAttempts(runId: string): Promise<TeamAttemptRecord[]> {
+    return (this.attempts.get(runId) ?? []).slice().sort((a, b) => a.attemptNumber - b.attemptNumber).map(clone);
+  }
+
+  async markAttemptPromoted(id: string, promotedAt = nowIso()): Promise<TeamAttemptRecord | null> {
+    return this.updateAttempt(id, { status: 'promoted', promotedAt });
   }
 
   async loadRun(runId: string): Promise<LoadedTeamRun | null> {
@@ -982,6 +1118,63 @@ export class MySqlTeamPersistence implements TeamPersistence {
     return record;
   }
 
+  async createAttempt(input: CreateTeamAttemptInput): Promise<TeamAttemptRecord> {
+    await this.init();
+    const record = attemptRecordFromInput(input);
+    await this.exec(
+      `INSERT INTO team_attempts
+        (id, run_id, attempt_number, status, branch, base_ref, workspace_path, summary_json,
+         started_at, completed_at, promoted_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.runId,
+        record.attemptNumber,
+        record.status,
+        record.branch,
+        record.baseRef,
+        record.workspacePath,
+        jsonOrNull(record.summary),
+        sqlDate(record.startedAt),
+        sqlDate(record.completedAt),
+        sqlDate(record.promotedAt),
+        sqlDate(record.createdAt),
+      ],
+    );
+    return record;
+  }
+
+  async updateAttempt(id: string, patch: UpdateTeamAttemptInput): Promise<TeamAttemptRecord | null> {
+    await this.init();
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (patch.status !== undefined) (sets.push('status = ?'), values.push(patch.status));
+    if (patch.branch !== undefined) (sets.push('branch = ?'), values.push(patch.branch));
+    if (patch.baseRef !== undefined) (sets.push('base_ref = ?'), values.push(patch.baseRef));
+    if (patch.workspacePath !== undefined) (sets.push('workspace_path = ?'), values.push(patch.workspacePath));
+    if (patch.summary !== undefined) (sets.push('summary_json = ?'), values.push(jsonOrNull(patch.summary)));
+    if (patch.completedAt !== undefined) (sets.push('completed_at = ?'), values.push(sqlDate(patch.completedAt)));
+    if (patch.promotedAt !== undefined) (sets.push('promoted_at = ?'), values.push(sqlDate(patch.promotedAt)));
+    if (sets.length > 0) {
+      await this.exec(`UPDATE team_attempts SET ${sets.join(', ')} WHERE id = ?`, [...values, id]);
+    }
+    const rows = await this.rows<TeamAttemptRow[]>(`SELECT * FROM team_attempts WHERE id = ? LIMIT 1`, [id]);
+    return rows[0] ? attemptFromRow(rows[0]) : null;
+  }
+
+  async listAttempts(runId: string): Promise<TeamAttemptRecord[]> {
+    await this.init();
+    const rows = await this.rows<TeamAttemptRow[]>(
+      `SELECT * FROM team_attempts WHERE run_id = ? ORDER BY attempt_number ASC`,
+      [runId],
+    );
+    return rows.map(attemptFromRow);
+  }
+
+  async markAttemptPromoted(id: string, promotedAt = nowIso()): Promise<TeamAttemptRecord | null> {
+    return this.updateAttempt(id, { status: 'promoted', promotedAt });
+  }
+
   async loadRun(runId: string): Promise<LoadedTeamRun | null> {
     await this.init();
     const runRows = await this.rows<TeamRunRow[]>(`SELECT * FROM team_runs WHERE id = ? LIMIT 1`, [runId]);
@@ -1213,6 +1406,35 @@ function signoffRecordFromInput(input: TeamSignoffInput): TeamSignoffRecord {
   };
 }
 
+function attemptRecordFromInput(input: CreateTeamAttemptInput): TeamAttemptRecord {
+  const now = nowIso();
+  return {
+    id: input.id ?? nanoid(),
+    runId: input.runId,
+    attemptNumber: input.attemptNumber,
+    status: input.status ?? 'running',
+    branch: input.branch ?? null,
+    baseRef: input.baseRef ?? null,
+    workspacePath: input.workspacePath ?? null,
+    summary: input.summary ?? null,
+    startedAt: input.startedAt ?? now,
+    completedAt: null,
+    promotedAt: null,
+    createdAt: now,
+  };
+}
+
+/** Apply an attempt patch in place (used by the in-memory store). */
+function applyAttemptPatch(record: TeamAttemptRecord, patch: UpdateTeamAttemptInput): void {
+  if (patch.status !== undefined) record.status = patch.status;
+  if (patch.branch !== undefined) record.branch = patch.branch;
+  if (patch.baseRef !== undefined) record.baseRef = patch.baseRef;
+  if (patch.workspacePath !== undefined) record.workspacePath = patch.workspacePath;
+  if (patch.summary !== undefined) record.summary = patch.summary;
+  if (patch.completedAt !== undefined) record.completedAt = patch.completedAt;
+  if (patch.promotedAt !== undefined) record.promotedAt = patch.promotedAt;
+}
+
 // ---------------------------------------------------------------------------
 // Row → record mappers (MySQL)
 // ---------------------------------------------------------------------------
@@ -1327,6 +1549,31 @@ function signoffFromRow(row: TeamSignoffRow): TeamSignoffRecord {
     summary: row.summary ?? null,
     createdAt: dateIso(row.created_at) ?? nowIso(),
     updatedAt: dateIso(row.updated_at) ?? nowIso(),
+  };
+}
+
+function attemptFromRow(row: TeamAttemptRow): TeamAttemptRecord {
+  const summary = parseJson(row.summary_json) as TeamAttemptSummary | null;
+  return {
+    id: row.id,
+    runId: row.run_id,
+    attemptNumber: row.attempt_number ?? 1,
+    status: (row.status as TeamAttemptStatus) ?? 'running',
+    branch: row.branch ?? null,
+    baseRef: row.base_ref ?? null,
+    workspacePath: row.workspace_path ?? null,
+    summary:
+      summary && typeof summary === 'object'
+        ? {
+            files: Number(summary.files ?? 0),
+            insertions: Number(summary.insertions ?? 0),
+            deletions: Number(summary.deletions ?? 0),
+          }
+        : null,
+    startedAt: dateIso(row.started_at),
+    completedAt: dateIso(row.completed_at),
+    promotedAt: dateIso(row.promoted_at),
+    createdAt: dateIso(row.created_at) ?? nowIso(),
   };
 }
 
@@ -1501,4 +1748,19 @@ interface TeamSignoffRow extends RowDataPacket {
   summary: string | null;
   created_at: Date | string | null;
   updated_at: Date | string | null;
+}
+
+interface TeamAttemptRow extends RowDataPacket {
+  id: string;
+  run_id: string;
+  attempt_number: number | null;
+  status: string;
+  branch: string | null;
+  base_ref: string | null;
+  workspace_path: string | null;
+  summary_json: string | object | null;
+  started_at: Date | string | null;
+  completed_at: Date | string | null;
+  promoted_at: Date | string | null;
+  created_at: Date | string | null;
 }

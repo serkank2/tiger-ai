@@ -676,6 +676,38 @@ export interface RoleReconfigureInput {
   requiredForSignoff?: boolean;
 }
 
+/** Lifecycle of a single attempt (mirrors the backend TeamAttemptStatus). */
+export type TeamAttemptStatus = 'running' | 'completed' | 'failed' | 'promoted' | 'superseded';
+
+/** Captured diff summary for an attempt. */
+export interface TeamAttemptSummary {
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+/** A compact per-attempt record for the UI (vibe-kanban Attempt model). */
+export interface TeamAttemptSnapshot {
+  id: string;
+  attemptNumber: number;
+  status: TeamAttemptStatus;
+  branch: string | null;
+  baseRef: string | null;
+  summary: TeamAttemptSummary | null;
+  startedAt: string;
+  completedAt?: string;
+  promotedAt?: string;
+  current: boolean;
+  promoted: boolean;
+}
+
+/** GET /api/team/runs/:id/attempts response. */
+export interface TeamAttemptsResponse {
+  attempts: TeamAttemptSnapshot[];
+  currentAttemptId: string | null;
+  promotedAttemptId: string | null;
+}
+
 export interface TeamRunState {
   id: string;
   name: string;
@@ -696,6 +728,12 @@ export interface TeamRunState {
   signoffs?: TeamSignoffSnapshot[];
   /** Per-role and per-run duration/provider (and token/cost when available) metrics. */
   metrics?: TeamMetrics;
+  /** The run's recorded attempts (vibe-kanban Attempt model), oldest first. */
+  attempts?: TeamAttemptSnapshot[];
+  /** The currently-active attempt id, if any. */
+  currentAttemptId?: string | null;
+  /** The promoted attempt id, if one has been promoted into the base branch. */
+  promotedAttemptId?: string | null;
   turnCount?: number;
   round?: number;
   /** Human-readable status/intent line (e.g. a waiting reason when the Lead has idled). */

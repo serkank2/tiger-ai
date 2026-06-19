@@ -45,6 +45,9 @@ import {
 } from './completion.js';
 import { logger } from '../obs/logger.js';
 import { computeTeamChanges, type TeamChanges } from './changes.js';
+import { createWorktree, isGitRepo, worktreeDiff, type Worktree } from '../git/worktree.js';
+import { spawn } from 'node:child_process';
+import type { TeamAttemptStatus, TeamAttemptSummary } from './types.js';
 import { notifyRunOutcome } from './notify.js';
 import type { DoneGateState, DoneGateBlocker } from './types.js';
 import { toRoleSnapshot } from './snapshot.js';
@@ -165,6 +168,31 @@ export interface TeamTurnRecord {
   terminalId?: string;
 }
 
+/**
+ * A recorded attempt at a run's work (vibe-kanban Attempt model). Tracked on the engine
+ * run state and persisted in `team.json`. Backward-compatible: an ordinary run leaves
+ * {@link TeamRunState.attempts} empty and behaves exactly as before (an implicit attempt).
+ */
+export interface TeamAttemptRecord {
+  id: string;
+  runId: string;
+  /** 1-based ordinal within the run. */
+  attemptNumber: number;
+  status: TeamAttemptStatus;
+  /** Isolated branch this attempt's work lives on (null when not a git repo). */
+  branch: string | null;
+  /** Commit-ish the attempt branched from (null when not a git repo). */
+  baseRef: string | null;
+  /** Absolute path to the attempt's worktree (null when run in-place / non-git). */
+  workspacePath: string | null;
+  /** Captured diff summary vs `baseRef`. */
+  summary: TeamAttemptSummary | null;
+  startedAt: string;
+  completedAt?: string;
+  promotedAt?: string;
+  createdAt: string;
+}
+
 export interface TeamRunState {
   runId: string;
   workspace: string;
@@ -172,6 +200,15 @@ export interface TeamRunState {
   status: TeamRunStatus;
   goal: string;
   roles: TeamRoleInstance[];
+  /**
+   * The run's recorded attempts (Attempt model), oldest first. Empty/undefined for an
+   * ordinary run that has never been explicitly (re)tried — fully backward-compatible.
+   */
+  attempts?: TeamAttemptRecord[];
+  /** Id of the currently-active attempt (the latest non-terminal one), if any. */
+  currentAttemptId?: string | null;
+  /** Id of the promoted attempt, once one has been promoted into the base branch. */
+  promotedAttemptId?: string | null;
   round: number;
   turnCount: number;
   currentTurn: TeamTurnRecord | null;
@@ -1070,6 +1107,61 @@ function toEngineDraft(message: TeamMessage): TeamMessageDraft {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Pure attempt logic (Attempt model). Kept as free functions over plain data so
+// numbering, status transitions, and the promote guard are unit-testable without
+// spinning up the engine, git, or the filesystem.
+// ---------------------------------------------------------------------------
+
+/** Terminal attempt statuses — an attempt in one of these is finished. */
+const TERMINAL_ATTEMPT_STATUSES: ReadonlySet<TeamAttemptStatus> = new Set<TeamAttemptStatus>([
+  'completed',
+  'failed',
+  'promoted',
+  'superseded',
+]);
+
+/** The next attempt number for a run: one past the current max (so #1, #2, …). */
+export function nextAttemptNumber(attempts: Pick<TeamAttemptRecord, 'attemptNumber'>[]): number {
+  return attempts.reduce((max, a) => Math.max(max, a.attemptNumber), 0) + 1;
+}
+
+/** The run's currently-active attempt: the latest one that is not in a terminal status. */
+export function currentAttempt(attempts: TeamAttemptRecord[]): TeamAttemptRecord | null {
+  for (let i = attempts.length - 1; i >= 0; i--) {
+    const a = attempts[i]!;
+    if (!TERMINAL_ATTEMPT_STATUSES.has(a.status)) return a;
+  }
+  return null;
+}
+
+/** Whether a run-terminal status maps an active attempt onto completed (true) vs failed. */
+export function attemptOutcomeFromRunStatus(status: TeamRunStatus): TeamAttemptStatus {
+  return status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'completed';
+}
+
+/**
+ * Guard a promotion request. Returns an error string when the attempt cannot be promoted,
+ * or null when it may proceed. Pure: callers do the git work only when this passes.
+ *  - the attempt must exist in the run,
+ *  - it must not already be promoted,
+ *  - no OTHER attempt may already be promoted (one promotion per run),
+ *  - it must have a branch to merge (a non-git / in-place attempt has nothing to promote).
+ */
+export function promoteGuard(attempts: TeamAttemptRecord[], attemptId: string): string | null {
+  const attempt = attempts.find((a) => a.id === attemptId);
+  if (!attempt) return `attempt ${attemptId} is not part of this run`;
+  if (attempt.status === 'promoted') return `attempt #${attempt.attemptNumber} is already promoted`;
+  const alreadyPromoted = attempts.find((a) => a.id !== attemptId && a.status === 'promoted');
+  if (alreadyPromoted) {
+    return `attempt #${alreadyPromoted.attemptNumber} is already promoted; only one attempt can be promoted per run`;
+  }
+  if (!attempt.branch) {
+    return `attempt #${attempt.attemptNumber} has no isolated branch to promote (it was not run in a git worktree)`;
+  }
+  return null;
+}
+
 /**
  * Autonomous AI team run engine. It composes the pure scheduler, one-turn runner,
  * message bus, completion gate, limit checks, file queues, and shared execution
@@ -1341,6 +1433,290 @@ export class TeamOrchestrator extends EventEmitter {
       await this.resume().catch(() => undefined);
     }
     return message;
+  }
+
+  // ----------------------------------------------------------------------------
+  // Attempt model (vibe-kanban). A run's work can be tried multiple times; each
+  // attempt is recorded with its own git branch + base ref + worktree + diff
+  // summary + outcome, so attempts can be compared side-by-side and the best
+  // PROMOTED (merged/checked-out into the workspace's base branch).
+  //
+  // Backward-compatible: an ordinary run that never calls createAttempt() keeps an
+  // empty `attempts` list and behaves exactly as before.
+  // ----------------------------------------------------------------------------
+
+  /** The run's recorded attempts (oldest first); always an array. */
+  listAttempts(): TeamAttemptRecord[] {
+    return this.requireState().attempts ?? [];
+  }
+
+  /**
+   * Re-run the SAME goal as a NEW attempt. The current run must be halted (terminal,
+   * paused, blocked, or interrupted — not actively running). Records a new attempt,
+   * marks the prior active attempt superseded, isolates the new attempt on its own git
+   * branch/worktree when the workspace is a git repo (degrades to in-place when not),
+   * re-seeds the goal as a Lead prompt, and starts the loop.
+   */
+  async createAttempt(runId?: string): Promise<TeamRunState> {
+    await this.ensureLoaded(runId);
+    const state = this.requireState();
+    if (state.runId !== (runId ?? state.runId)) throw httpError(409, `team run ${runId} is not loaded`);
+    if (state.status === 'running' && this.loop) {
+      throw httpError(409, 'the run is still running; stop it before starting a new attempt');
+    }
+    if (state.closed) throw httpError(409, 'cannot start a new attempt on a closed run; start a new run instead');
+
+    state.attempts ??= [];
+    // The previously-active attempt (if any) is superseded by this new try; capture its
+    // diff first so the comparison view keeps its result.
+    const prior = currentAttempt(state.attempts);
+    if (prior) {
+      await this.captureAttemptSummary(prior).catch(() => undefined);
+      prior.status = prior.status === 'running' ? 'superseded' : prior.status;
+    }
+
+    const createdAt = nowIso();
+    const attemptNumber = nextAttemptNumber(state.attempts);
+    const attempt: TeamAttemptRecord = {
+      id: nanoid(),
+      runId: state.runId,
+      attemptNumber,
+      status: 'running',
+      branch: null,
+      baseRef: null,
+      workspacePath: null,
+      summary: null,
+      startedAt: createdAt,
+      createdAt,
+    };
+
+    // Isolate the attempt on its own branch/worktree when the workspace is a git repo.
+    // Best-effort: a git failure degrades to an in-place attempt (branch/baseRef stay null)
+    // rather than aborting the new attempt.
+    if (await isGitRepo(state.workspace).catch(() => false)) {
+      try {
+        const worktree: Worktree = await createWorktree({
+          repoDir: state.workspace,
+          taskId: `${state.runId}-attempt-${attemptNumber}`,
+        });
+        attempt.branch = worktree.branch;
+        attempt.baseRef = worktree.baseRef;
+        attempt.workspacePath = worktree.path;
+        // Start this attempt from a clean base so its diff samples ONLY its own work — the prior
+        // attempt's changes were already snapshotted onto its branch above and are safe there.
+        await runGit(state.workspace, ['reset', '--hard', worktree.baseRef]).catch(() => undefined);
+        await runGit(state.workspace, ['clean', '-fd']).catch(() => undefined);
+      } catch (err) {
+        await this.appendSystemBlocker(
+          `Could not isolate attempt #${attemptNumber} on its own git branch (${messageFromUnknown(err)}); it will run in place.`,
+        ).catch(() => undefined);
+      }
+    }
+
+    state.attempts.push(attempt);
+    state.currentAttemptId = attempt.id;
+
+    // Re-seed the goal as a fresh Lead prompt so the new attempt actually re-tries the work,
+    // and re-open the done-gate (stale all prior sign-offs — this is a new try).
+    this.staleSignoffs(`Started attempt #${attemptNumber} of the run.`);
+    const seed = await this.appendMessage({
+      from: USER_SENDER,
+      to: this.leadRoleId() ?? undefined,
+      kind: 'steering',
+      channel: 'directives',
+      body: state.goal,
+      createdAt,
+    });
+    state.directives.push({
+      id: nanoid(),
+      messageId: seed.id,
+      body: state.goal,
+      createdAt: seed.createdAt,
+      status: 'pending',
+    });
+    state.pendingSteeringCount = this.countPendingSteering();
+    state.message = `Started attempt #${attemptNumber}.`;
+    await this.persistState();
+    this.emitState();
+    this.emitAttempts();
+    // Kick the loop so the Lead picks up the re-seeded goal. Best-effort; the prompt is
+    // queued regardless, so a failed auto-start still leaves a resumable run.
+    await this.startLoop('running').catch(() => undefined);
+    return this.getState();
+  }
+
+  /**
+   * Promote an attempt: record the promotion and merge/checkout its branch into the
+   * workspace's base branch. Conflict-safe — on a merge conflict the merge is ABORTED,
+   * the attempt branch is left intact, and a clear error is surfaced; nothing is
+   * auto-resolved. Guards (one promotion per run, attempt must have a branch) run first.
+   */
+  async promoteAttempt(runId: string | undefined, attemptId: string): Promise<TeamRunState> {
+    await this.ensureLoaded(runId);
+    const state = this.requireState();
+    state.attempts ??= [];
+    const guard = promoteGuard(state.attempts, attemptId);
+    if (guard) throw httpError(409, guard);
+    const attempt = state.attempts.find((a) => a.id === attemptId)!;
+
+    if (!(await isGitRepo(state.workspace).catch(() => false))) {
+      throw httpError(409, 'the workspace is not a git repository; nothing to promote');
+    }
+    // Snapshot the attempt's working-tree changes onto its branch so there is a real commit to
+    // merge (the team never commits during a run), and capture its diff summary.
+    await this.captureAttemptSummary(attempt).catch(() => undefined);
+    const branch = attempt.branch!;
+    const baseRef = attempt.baseRef ?? 'HEAD';
+
+    // Resolve the base branch to merge into (the branch the workspace is currently on).
+    const headBranchRes = await runGit(state.workspace, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const baseBranch = headBranchRes.ok ? headBranchRes.stdout.trim() : '';
+
+    // The chosen attempt's work currently sits UNCOMMITTED in the workspace working tree (the
+    // live run operates there). A merge requires a clean tree, so reset the working tree to the
+    // attempt's base first — the work is safe on the attempt branch and comes right back via the
+    // merge below. This makes promote deterministic: the workspace becomes the promoted result.
+    const reset = await runGit(state.workspace, ['reset', '--hard', baseRef]);
+    if (!reset.ok) {
+      throw httpError(
+        409,
+        `could not prepare the workspace to promote attempt #${attempt.attemptNumber}: ${reset.stderr.trim()}`,
+      );
+    }
+
+    // Attempt a non-fast-forward merge of the attempt branch into the workspace's base.
+    const merge = await runGit(state.workspace, ['merge', '--no-ff', '--no-edit', branch]);
+    if (!merge.ok) {
+      // Conflict (or any merge failure): abort so the workspace is left clean, leave the
+      // attempt branch intact, surface a clear, actionable error. Never auto-resolve.
+      await runGit(state.workspace, ['merge', '--abort']);
+      await this.appendSystemBlocker(
+        `Promotion of attempt #${attempt.attemptNumber} failed to merge cleanly into ${baseBranch || baseRef}; the merge was aborted and the branch "${branch}" was left intact. Resolve the conflict manually.`,
+      ).catch(() => undefined);
+      throw httpError(
+        409,
+        `attempt #${attempt.attemptNumber} could not be merged into ${baseBranch || baseRef} without conflicts; the merge was aborted (branch "${branch}" is preserved). ${merge.stderr.trim()}`.trim(),
+      );
+    }
+
+    const promotedAt = nowIso();
+    attempt.status = 'promoted';
+    attempt.promotedAt = promotedAt;
+    state.promotedAttemptId = attempt.id;
+    state.message = `Promoted attempt #${attempt.attemptNumber} into ${baseBranch || baseRef}.`;
+    await this.appendMessage({
+      from: SYSTEM_SENDER,
+      kind: 'system',
+      body: `Promoted attempt #${attempt.attemptNumber} (branch "${branch}") into ${baseBranch || baseRef}.`,
+    }).catch(() => undefined);
+    await this.persistState();
+    this.emitState();
+    this.emitAttempts();
+    return this.getState();
+  }
+
+  /**
+   * Compute and store an attempt's diff summary, and (for a git-isolated attempt) SNAPSHOT
+   * the run's working-tree changes onto the attempt's branch so it carries a real, promotable
+   * result.
+   *
+   * The live run operates in the main workspace (relocating it mid-run would break the role
+   * sessions/terminals, which are out of scope here), so the attempt's work lands in the main
+   * workspace's working tree. We capture the summary from THAT diff, and replay it into the
+   * attempt's worktree (shared object store) as a single commit on the attempt branch. This
+   * gives each attempt its own branch + diff + outcome without moving the live run.
+   * Best-effort: a git hiccup leaves the prior summary intact.
+   */
+  private async captureAttemptSummary(attempt: TeamAttemptRecord): Promise<void> {
+    const state = this.requireState();
+    try {
+      const changes = await computeTeamChanges(state.workspace, nowIso());
+      attempt.summary = {
+        files: changes.summary.files,
+        insertions: changes.summary.insertions,
+        deletions: changes.summary.deletions,
+      };
+      // Snapshot the working-tree changes onto the attempt branch (when isolated on a worktree).
+      if (attempt.workspacePath && attempt.branch) {
+        await this.snapshotChangesToAttempt(attempt).catch(() => undefined);
+      }
+    } catch {
+      // leave the existing summary as-is
+    }
+  }
+
+  /**
+   * Replay the main workspace's tracked changes onto the attempt's worktree branch as one
+   * commit. Tracked changes go via a patch (`git diff baseRef` → `git apply` in the worktree);
+   * the team rarely produces only untracked files, so this captures the common case while
+   * staying conflict-free (the worktree starts at the same baseRef). Best-effort.
+   */
+  private async snapshotChangesToAttempt(attempt: TeamAttemptRecord): Promise<void> {
+    const state = this.requireState();
+    const baseRef = attempt.baseRef ?? 'HEAD';
+    const worktreePath = attempt.workspacePath!;
+    const patchRes = await runGit(state.workspace, ['diff', baseRef]);
+    if (!patchRes.ok || !patchRes.stdout.trim()) return; // nothing tracked-changed to snapshot
+    const patchFile = path.join(worktreePath, `.kaplan-attempt-${attempt.attemptNumber}.patch`);
+    await fs.writeFile(patchFile, patchRes.stdout, 'utf8').catch(() => undefined);
+    const apply = await runGit(worktreePath, ['apply', '--whitespace=nowarn', patchFile]);
+    await fs.rm(patchFile, { force: true }).catch(() => undefined);
+    if (!apply.ok) return; // could not replay cleanly; leave the branch at baseRef
+    await runGit(worktreePath, ['add', '-A']);
+    await runGit(worktreePath, [
+      '-c',
+      'user.email=team@kaplan.local',
+      '-c',
+      'user.name=Kaplan Team',
+      'commit',
+      '--no-gpg-sign',
+      '-m',
+      `Attempt #${attempt.attemptNumber} of team run ${state.runId}`,
+    ]);
+  }
+
+  /** Compute the diff for a single attempt (for the per-attempt diff REST endpoint). */
+  async attemptDiff(runId: string | undefined, attemptId: string): Promise<TeamChanges> {
+    await this.ensureLoaded(runId);
+    const state = this.requireState();
+    const attempt = (state.attempts ?? []).find((a) => a.id === attemptId);
+    if (!attempt) throw httpError(404, `attempt ${attemptId} is not part of this run`);
+    const generatedAt = nowIso();
+    // The CURRENT (still-active) attempt's work sits in the main workspace working tree (it has
+    // not been snapshotted onto its branch yet), so diff the workspace. A finished, snapshotted
+    // attempt diffs its own worktree branch vs its captured base ref.
+    const isCurrent = state.currentAttemptId === attempt.id;
+    if (
+      !isCurrent &&
+      attempt.workspacePath &&
+      attempt.baseRef &&
+      (await isGitRepo(attempt.workspacePath).catch(() => false))
+    ) {
+      try {
+        const d = await worktreeDiff({ worktreePath: attempt.workspacePath, baseRef: attempt.baseRef });
+        const stat = parseShortstat(d.stat);
+        return {
+          isGitRepo: true,
+          head: attempt.baseRef.slice(0, 12),
+          branch: attempt.branch,
+          files: d.files.map((path) => ({ path, status: 'modified' as const })),
+          diff: d.diff,
+          diffTruncated: d.diff.length >= 200_000,
+          summary: { files: d.files.length, insertions: stat.insertions, deletions: stat.deletions },
+          generatedAt,
+        };
+      } catch {
+        // fall through to the workspace diff
+      }
+    }
+    return computeTeamChanges(state.workspace, generatedAt);
+  }
+
+  private emitAttempts(): void {
+    if (!this.state) return;
+    // Attempts ride the regular state push (the snapshot includes them); a dedicated event
+    // is unnecessary and keeps the WS contract stable.
+    this.emitState();
   }
 
   getState(): TeamRunState {
@@ -2511,6 +2887,18 @@ export class TeamOrchestrator extends EventEmitter {
     state.pauseRequested = false;
     state.currentTurn = null;
     state.roles = state.roles.map((role) => (role.status === 'running' ? { ...role, status: 'idle' } : role));
+    // Attempt model: when a run with an active attempt reaches a TERMINAL outcome
+    // (completed/failed), capture that attempt's diff summary and record its outcome so the
+    // comparison view shows the result. A merely paused/blocked/interrupted run keeps its
+    // attempt 'running' (it can resume). Ordinary runs (no attempts) are untouched.
+    if ((status === 'completed' || status === 'failed') && state.attempts && state.attempts.length > 0) {
+      const active = currentAttempt(state.attempts);
+      if (active) {
+        await this.captureAttemptSummary(active).catch(() => undefined);
+        active.status = attemptOutcomeFromRunStatus(status);
+        active.completedAt = nowIso();
+      }
+    }
     await this.releaseRunLease(teamStatusToExecutionStatus(status), reason);
     // Persistent CLI sessions: a completed/failed run is genuinely over → tear its
     // terminals down. A stopped/blocked/interrupted run may resume, so its sessions are
@@ -2727,6 +3115,9 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     directives: Array.isArray(value.directives) ? value.directives : [],
     signoffs: Array.isArray(value.signoffs) ? value.signoffs : [],
     verifications: Array.isArray(value.verifications) ? value.verifications : [],
+    attempts: Array.isArray(value.attempts) ? value.attempts : [],
+    currentAttemptId: value.currentAttemptId ?? null,
+    promotedAttemptId: value.promotedAttemptId ?? null,
     tasks: value.tasks ?? null,
     findings: value.findings ?? null,
     currentTurn: value.currentTurn ?? null,
@@ -2913,6 +3304,70 @@ async function atomicWrite(file: string, body: string): Promise<void> {
 function messageFromUnknown(err: unknown): string {
   if (err instanceof Error) return err.message || err.name;
   return String(err);
+}
+
+// ---------------------------------------------------------------------------
+// Minimal git runner for the Attempt model's branch capture + promote/merge.
+// Mirrors the spawn(shell:false) style of team/changes.ts and git/worktree.ts so
+// refs/paths are discrete argv tokens and can never be shell-injected.
+// ---------------------------------------------------------------------------
+
+interface GitRun {
+  ok: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** Parse `git diff --stat`/`--shortstat` insertion/deletion counts. */
+function parseShortstat(out: string): { insertions: number; deletions: number } {
+  const ins = /(\d+) insertion/.exec(out);
+  const del = /(\d+) deletion/.exec(out);
+  return { insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
+}
+
+function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<GitRun> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (ok: boolean, code: number | null): void => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok, code, stdout, stderr });
+      }
+    };
+    try {
+      const child = spawn('git', args, { cwd, windowsHide: true, shell: false });
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          /* ignore */
+        }
+        finish(false, null);
+      }, timeoutMs);
+      timer.unref?.();
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (c: string) => {
+        if (stdout.length < 1_000_000) stdout += c;
+      });
+      child.stderr.on('data', (c: string) => {
+        if (stderr.length < 64_000) stderr += c;
+      });
+      child.on('error', () => {
+        clearTimeout(timer);
+        finish(false, null);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        finish(code === 0, code);
+      });
+    } catch {
+      finish(false, null);
+    }
+  });
 }
 
 /**

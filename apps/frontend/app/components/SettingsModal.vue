@@ -30,6 +30,7 @@ const form = reactive({
   shellPath: s?.defaultShell.path ?? '',
   appendNewlineByDefault: s?.commandRouting.appendNewlineByDefault ?? true,
   startTerminalOnSend: s?.commandRouting.startTerminalOnSend ?? false,
+  authToken: settings.authToken ?? '',
 });
 
 const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
@@ -102,6 +103,8 @@ async function checkCwd() {
 async function save() {
   error.value = '';
   clearServerErrors();
+  // Client-only, persisted to localStorage — independent of server-side settings validation.
+  settings.setAuthToken(form.authToken);
   if (form.defaultCwd.trim() && !defaultCwdShapeError.value) await checkCwd();
   if (hasFieldError.value || cwdState.value === 'checking') return;
 
@@ -213,6 +216,20 @@ async function save() {
         <label class="check">
           <input v-model="form.startTerminalOnSend" type="checkbox" />
           <span>Start a stopped terminal when a command is sent to it</span>
+        </label>
+      </div>
+
+      <div class="group">
+        <span class="group-title">Security</span>
+        <label class="field" style="margin: 10px 0 0">
+          <span>API auth token <i>(only if the backend sets KAPLAN_AUTH_TOKEN)</i></span>
+          <input
+            v-model="form.authToken"
+            type="password"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="leave empty for local (no auth)"
+          />
         </label>
       </div>
 

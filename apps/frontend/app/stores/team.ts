@@ -29,6 +29,7 @@ import type {
   TeamRunStateResponse,
   TeamRunStartInput,
   TeamRunSummary,
+  TeamAttemptSnapshot,
   TeamSignoffSnapshot,
   TeamStateEvent,
   TeamSteeringEvent,
@@ -163,6 +164,9 @@ export const useTeamStore = defineStore('team', () => {
   const verifications = computed<TeamVerificationSnapshot[]>(() => state.value?.verifications ?? []);
   const signOffs = computed<TeamSignoffSnapshot[]>(() => state.value?.signoffs ?? []);
   const metrics = computed(() => state.value?.metrics ?? null);
+  // Attempt model (vibe-kanban): the run's recorded attempts + which is promoted.
+  const attempts = computed<TeamAttemptSnapshot[]>(() => state.value?.attempts ?? []);
+  const promotedAttemptId = computed(() => state.value?.promotedAttemptId ?? null);
   const openBlockers = computed(() => state.value?.doneGate?.openBlockers ?? []);
   // True while showing a read-only rehydrate of a past run (history view), so control
   // surfaces (steer / role controls) hide and live frames for other runs are ignored.
@@ -654,6 +658,56 @@ export const useTeamStore = defineStore('team', () => {
     return roleAction(`role-remove:${roleId}`, 'Role removed', () => api.removeTeamRole(id, roleId));
   }
 
+  // --- Attempt model (vibe-kanban): try N times, compare, promote the best -----
+
+  /** Start a new attempt re-running the same goal (records + isolates + restarts the run). */
+  async function createAttempt(runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    setBusy('attempt-new', true);
+    actionError.value = null;
+    try {
+      const next = normalizeStateResponse(await api.createTeamAttempt(id) as TeamRunStateResponse);
+      if (next) applyState(next);
+      notices.push('Started a new attempt', 'info');
+    } catch (error) {
+      recordFailure('New attempt failed', error);
+      throw error;
+    } finally {
+      setBusy('attempt-new', false);
+    }
+  }
+
+  /** Promote an attempt: merge/checkout its branch into the workspace base branch. */
+  async function promoteAttempt(attemptId: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    setBusy(`attempt-promote:${attemptId}`, true);
+    actionError.value = null;
+    try {
+      const next = normalizeStateResponse(await api.promoteTeamAttempt(id, attemptId) as TeamRunStateResponse);
+      if (next) applyState(next);
+      notices.push('Attempt promoted', 'info');
+    } catch (error) {
+      recordFailure('Promote attempt failed', error);
+      throw error;
+    } finally {
+      setBusy(`attempt-promote:${attemptId}`, false);
+    }
+  }
+
+  /** Load a single attempt's diff (same shape as `changes`) for side-by-side comparison. */
+  async function loadAttemptDiff(attemptId: string, runId?: string): Promise<void> {
+    const id = currentRunOrThrow(runId);
+    changesLoading.value = true;
+    try {
+      changes.value = await api.getTeamAttemptDiff(id, attemptId);
+    } catch (error) {
+      recordFailure('Attempt diff failed', error);
+      throw error;
+    } finally {
+      changesLoading.value = false;
+    }
+  }
+
   // --- Incremental live-frame appliers (no full snapshot re-fetch) ----------
 
   /** Is this frame for the run we are currently showing? Read-only history views ignore others. */
@@ -804,6 +858,8 @@ export const useTeamStore = defineStore('team', () => {
     verifications,
     signOffs,
     metrics,
+    attempts,
+    promotedAttemptId,
     openBlockers,
     readOnly,
     busy,
@@ -844,6 +900,9 @@ export const useTeamStore = defineStore('team', () => {
     addRole,
     reconfigureRole,
     removeRole,
+    createAttempt,
+    promoteAttempt,
+    loadAttemptDiff,
     bindSocket,
   };
 });

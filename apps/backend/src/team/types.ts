@@ -351,6 +351,81 @@ export interface TeamRun {
 }
 
 // ---------------------------------------------------------------------------
+// Attempts: a run's work can be tried multiple times. Each attempt is recorded
+// with its own git branch + diff summary + outcome (vibe-kanban "Attempt model").
+// Attempts reframe a run as SOLUTION SAMPLING: try N times, compare side-by-side,
+// then PROMOTE the best one (merge/checkout its branch into the workspace base).
+// ---------------------------------------------------------------------------
+
+/**
+ * Lifecycle of a single attempt:
+ *  - `running`   — the attempt is the run's currently-active try.
+ *  - `completed` — the attempt finished its work (its diff summary is captured).
+ *  - `failed`    — the attempt ended without producing a usable result.
+ *  - `promoted`  — this attempt's branch was merged/checked out into the base.
+ *  - `superseded`— a newer attempt was started, so this one is no longer current
+ *                  (its branch/diff are preserved for comparison).
+ */
+export type TeamAttemptStatus = 'running' | 'completed' | 'failed' | 'promoted' | 'superseded';
+
+export const TEAM_ATTEMPT_STATUSES: TeamAttemptStatus[] = [
+  'running',
+  'completed',
+  'failed',
+  'promoted',
+  'superseded',
+];
+
+/** The diff summary captured for an attempt (mirrors the changeset summary shape). */
+export interface TeamAttemptSummary {
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+/**
+ * One recorded attempt at a run's work. When the workspace is a git repo the
+ * attempt is isolated on its own branch/worktree so concurrent or sequential
+ * attempts never collide; the captured `summary` is its diff vs `baseRef`.
+ */
+export interface TeamAttempt {
+  id: string;
+  runId: string;
+  /** 1-based ordinal within the run (attempt #1, #2, …). */
+  attemptNumber: number;
+  status: TeamAttemptStatus;
+  /** The isolated branch this attempt's work lives on (null when not a git repo). */
+  branch: string | null;
+  /** The commit-ish the attempt branched from (null when not a git repo). */
+  baseRef: string | null;
+  /** Absolute path to the attempt's worktree (null when run in-place / non-git). */
+  workspacePath: string | null;
+  /** Captured diff summary (files/insertions/deletions) vs `baseRef`. */
+  summary: TeamAttemptSummary | null;
+  startedAt: string;
+  completedAt?: string;
+  promotedAt?: string;
+  createdAt: string;
+}
+
+/** A compact per-attempt record for the UI snapshot. */
+export interface TeamAttemptSnapshot {
+  id: string;
+  attemptNumber: number;
+  status: TeamAttemptStatus;
+  branch: string | null;
+  baseRef: string | null;
+  summary: TeamAttemptSummary | null;
+  startedAt: string;
+  completedAt?: string;
+  promotedAt?: string;
+  /** True for the run's currently-active attempt (the latest non-terminal one). */
+  current: boolean;
+  /** True once this attempt has been promoted into the base branch. */
+  promoted: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Compact UI snapshot (the conversation is streamed separately).
 // ---------------------------------------------------------------------------
 
@@ -477,6 +552,16 @@ export interface TeamRunState {
   signoffs?: TeamSignoffSnapshot[];
   /** Per-role and per-run duration/provider (and token/cost when available) metrics. */
   metrics?: TeamMetrics;
+  /**
+   * The run's recorded attempts (vibe-kanban Attempt model), newest last. Empty for an
+   * ordinary run that has never been (re)tried as an explicit attempt — such a run is
+   * fully backward-compatible (it behaves as an implicit single attempt).
+   */
+  attempts?: TeamAttemptSnapshot[];
+  /** The currently-active attempt id (the latest non-terminal attempt), if any. */
+  currentAttemptId?: string | null;
+  /** The promoted attempt id, if one has been promoted into the base branch. */
+  promotedAttemptId?: string | null;
   /** Total turns executed so far (UI loop counter). */
   turnCount?: number;
   /** Current coordination round (UI loop counter). */

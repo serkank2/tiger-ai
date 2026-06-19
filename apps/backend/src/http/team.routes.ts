@@ -607,5 +607,65 @@ export function createTeamRouter(ctx: AppCtx): Router {
     }
   });
 
+  // ----------------------------------------------------------------------------
+  // Attempt model (vibe-kanban). A run's work can be tried multiple times; each
+  // attempt has its own branch + diff + outcome, attempts are comparable, and the
+  // best one can be PROMOTED (merged into the workspace base). These act on the
+  // active run (the orchestrator validates `:id` and 404s an unknown attempt).
+  // ----------------------------------------------------------------------------
+
+  // GET /api/team/runs/:id/attempts → { attempts } from the run snapshot.
+  router.get('/runs/:id/attempts', async (req, res) => {
+    const id = req.params.id;
+    const active = orch.tryGetState();
+    try {
+      if (active && active.runId === id) {
+        const dto = toTeamRunStateDto(active);
+        res.json({ attempts: dto.attempts ?? [], currentAttemptId: dto.currentAttemptId ?? null, promotedAttemptId: dto.promotedAttemptId ?? null });
+        return;
+      }
+      const workspace = active?.workspace ?? knownWorkspace(ctx);
+      if (!workspace) {
+        httpError(res, 404, 'no team workspace is known');
+        return;
+      }
+      const state = await orch.readRun(workspace, id);
+      const dto = toTeamRunStateDto(state);
+      res.json({ attempts: dto.attempts ?? [], currentAttemptId: dto.currentAttemptId ?? null, promotedAttemptId: dto.promotedAttemptId ?? null });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // POST /api/team/runs/:id/attempts → start a NEW attempt re-running the same goal.
+  router.post('/runs/:id/attempts', async (req, res) => {
+    try {
+      await orch.createAttempt(req.params.id);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // POST /api/team/runs/:id/attempts/:attemptId/promote → merge the attempt into base.
+  router.post('/runs/:id/attempts/:attemptId/promote', async (req, res) => {
+    try {
+      await orch.promoteAttempt(req.params.id, req.params.attemptId);
+      res.json({ state: toTeamRunStateDto(orch.getState()) });
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
+  // GET /api/team/runs/:id/attempts/:attemptId/diff → the attempt's changeset (reuses the
+  // diff machinery). Same shape as /changes so the colorized diff component can render it.
+  router.get('/runs/:id/attempts/:attemptId/diff', async (req, res) => {
+    try {
+      res.json(await orch.attemptDiff(req.params.id, req.params.attemptId));
+    } catch (err) {
+      sendOrchError(res, err);
+    }
+  });
+
   return router;
 }

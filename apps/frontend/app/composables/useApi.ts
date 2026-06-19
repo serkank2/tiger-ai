@@ -47,6 +47,7 @@ import type {
   TeamCommitResult,
   TeamPrInput,
   TeamPrResult,
+  TeamAttemptsResponse,
   CueEngineStatus,
   CueSubscriptionStatus,
 } from '~/types';
@@ -286,6 +287,19 @@ export function useApi() {
       req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body }),
     removeTeamRole: (id: string, roleId: string) =>
       req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
+
+    // --- Attempt model (vibe-kanban): try N times, compare, promote the best ---
+    listTeamAttempts: (id: string) =>
+      req<TeamAttemptsResponse>(`/api/team/runs/${encodeURIComponent(id)}/attempts`),
+    createTeamAttempt: (id: string) =>
+      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/attempts`, { method: 'POST' }),
+    promoteTeamAttempt: (id: string, attemptId: string) =>
+      req<TeamRunStateResponse>(
+        `/api/team/runs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/promote`,
+        { method: 'POST' },
+      ),
+    getTeamAttemptDiff: (id: string, attemptId: string) =>
+      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/diff`),
 
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),

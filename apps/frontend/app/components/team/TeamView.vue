@@ -12,6 +12,7 @@ import TeamSteerBar from './TeamSteerBar.vue';
 import TeamTerminalPane from './TeamTerminalPane.vue';
 import TeamChangesPanel from './TeamChangesPanel.vue';
 import TeamMetricsPanel from './TeamMetricsPanel.vue';
+import TeamAttemptsPanel from './TeamAttemptsPanel.vue';
 import TeamRunHistory from './TeamRunHistory.vue';
 import TeamRoleControls from './TeamRoleControls.vue';
 import TeamVerifications from './TeamVerifications.vue';
@@ -221,6 +222,7 @@ async function reset() {
         </div>
 
         <TeamMetricsPanel :metrics="team.metrics" />
+        <TeamAttemptsPanel @view-diff="showChanges = true" />
         <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
 
         <details v-if="team.artifacts.length" class="artifacts">

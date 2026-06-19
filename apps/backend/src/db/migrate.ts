@@ -1,7 +1,7 @@
 import type { Pool } from 'mysql2/promise';
 import { getDbPool } from './pool.js';
 import { EXECUTION_CHECKPOINT_MIGRATION, EXECUTION_WORKSPACE_LEASE_MIGRATION } from '../orchestrator/persistence.js';
-import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION } from '../team/persistence.js';
+import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION, TEAM_ATTEMPTS_MIGRATION } from '../team/persistence.js';
 
 interface Migration {
   id: string;
@@ -271,6 +271,9 @@ const MIGRATIONS: Migration[] = [
   // Corrects the team_templates columns to match MySqlTeamTemplateRepository.
   // Must run after TEAM_MIGRATION, which creates the original (mismatched) table.
   TEAM_TEMPLATES_MIGRATION,
+  // Adds the team_attempts table (vibe-kanban-style Attempt model). Must run after
+  // TEAM_MIGRATION, which creates the parent team_runs table it references.
+  TEAM_ATTEMPTS_MIGRATION,
 ];
 
 let migrationRun: Promise<void> | null = null;

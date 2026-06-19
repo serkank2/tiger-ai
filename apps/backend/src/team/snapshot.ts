@@ -21,6 +21,7 @@ import type {
   RoleSnapshot,
   RoleStatus,
   SteeringDirective,
+  TeamAttemptSnapshot,
   TeamMessage,
   TeamRunState,
   TeamSignoffSnapshot,
@@ -128,6 +129,25 @@ function toSignoffSnapshot(s: EngineTeamRunState['signoffs'][number]): TeamSigno
   };
 }
 
+/** Project the engine's attempts onto the compact UI snapshot shape. */
+function toAttemptSnapshots(state: EngineTeamRunState): TeamAttemptSnapshot[] {
+  const attempts = state.attempts ?? [];
+  const currentId = state.currentAttemptId ?? null;
+  return attempts.map((attempt) => ({
+    id: attempt.id,
+    attemptNumber: attempt.attemptNumber,
+    status: attempt.status,
+    branch: attempt.branch,
+    baseRef: attempt.baseRef,
+    summary: attempt.summary,
+    startedAt: attempt.startedAt,
+    completedAt: attempt.completedAt,
+    promotedAt: attempt.promotedAt,
+    current: attempt.id === currentId,
+    promoted: attempt.status === 'promoted',
+  }));
+}
+
 function toPendingSteering(state: EngineTeamRunState): SteeringDirective[] {
   return state.directives
     .filter((directive) => directive.status === 'pending')
@@ -165,6 +185,9 @@ export function toTeamRunStateDto(
     verifications: state.verifications.map(toVerificationSnapshot),
     signoffs: state.signoffs.map(toSignoffSnapshot),
     metrics: computeRunMetrics(state),
+    attempts: toAttemptSnapshots(state),
+    currentAttemptId: state.currentAttemptId ?? null,
+    promotedAttemptId: state.promotedAttemptId ?? null,
     turnCount: state.turnCount,
     round: state.round,
     message: state.message,
