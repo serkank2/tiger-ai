@@ -4,9 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Commit & release process
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org):
+`<type>(<scope>): <subject>` (e.g. `feat(team): add changes drawer`,
+`fix(queue): reclaim stale lease`). Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`,
+`perf`, `test`, `build`, `ci`, `chore`, `revert`. Messages are validated by `commitlint`
+(`commitlint.config.js`, extending `@commitlint/config-conventional`); run
+`npx commitlint --from=HEAD~1` locally, or wire it into a `commit-msg` hook.
+
+Releases: cut from `master`. Move the `Unreleased` entries into a new `## [x.y.z] - YYYY-MM-DD`
+section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump `version` in the
+`package.json` files, tag `vx.y.z`, and start a fresh `Unreleased` section.
+
 ## [Unreleased]
 
 ### Added
+- **Engineering tooling (Epic 0):** ESLint 9 flat config (`eslint.config.js`) covering backend
+  TS (ESM) and frontend Vue + TS, wired to `npm run lint` and a CI `lint` job; Prettier config
+  (`.prettierrc`/`.prettierignore`) matching the codebase style (2-space, single quotes,
+  semicolons, trailing commas, 120 width); `eslint-config-prettier` last so lint and formatting
+  never fight; `commitlint` Conventional-Commits config; and a deep-dive `docs/ARCHITECTURE.md`.
+  Lint is a correctness net (errors for real bugs; stylistic/opinionated rules off or warn) and
+  exits 0 on the current codebase.
 - **AI Team — Changes view:** a new "Changes" drawer surfaces the real product changes a run
   made in its workspace (git working-tree diff vs HEAD): changed-file list with status
   badges, a colorized diff, and +/− summary. Backend `GET /api/team/runs/:id/changes`

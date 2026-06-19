@@ -33,6 +33,7 @@ onMounted(() => {
       <NuxtPage />
     </NuxtLayout>
     <NoticeToast />
+    <ConfirmDialog />
   </div>
 </template>
 

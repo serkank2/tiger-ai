@@ -3,10 +3,24 @@ const notices = useNoticesStore();
 </script>
 
 <template>
-  <div class="toasts">
+  <!--
+    Live region so screen readers announce toasts as they appear. Errors are
+    assertive (interrupt) and use role="alert"; informational toasts are polite
+    and use role="status". aria-atomic keeps each toast read as a whole.
+  -->
+  <div class="toasts" aria-live="polite" aria-relevant="additions">
     <TransitionGroup name="toast">
-      <div v-for="n in notices.items" :key="n.id" class="toast" :class="n.kind" @click="notices.dismiss(n.id)">
-        <span class="ic">{{ n.kind === 'error' ? '⚠' : '✓' }}</span>
+      <div
+        v-for="n in notices.items"
+        :key="n.id"
+        class="toast"
+        :class="n.kind"
+        :role="n.kind === 'error' ? 'alert' : 'status'"
+        :aria-live="n.kind === 'error' ? 'assertive' : 'polite'"
+        aria-atomic="true"
+        @click="notices.dismiss(n.id)"
+      >
+        <span class="ic" aria-hidden="true">{{ n.kind === 'error' ? '⚠' : '✓' }}</span>
         <span class="msg">{{ n.text }}</span>
       </div>
     </TransitionGroup>

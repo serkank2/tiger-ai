@@ -18,9 +18,9 @@ quality" and are prerequisites for everyone else's contributions.
 - ☑ README, LICENSE (MIT), CONTRIBUTING, CODE_OF_CONDUCT, SECURITY
 - ☑ CI (GitHub Actions: typecheck + backend tests + frontend tests + build, Node 20 & 22)
 - ☑ `.editorconfig`, issue/PR templates
-- ☐ **ESLint (flat config) + Prettier** wired into CI and a `lint` script — **M**
-- ☐ `docs/ARCHITECTURE.md` deep-dive + per-domain design notes — **S**
-- ☐ Conventional commits + automated `CHANGELOG` + release tagging — **S**
+- ☑ **ESLint (flat config) + Prettier** wired into CI and a `lint` script — **M**
+- ☑ `docs/ARCHITECTURE.md` deep-dive + per-domain design notes — **S**
+- ☑ Conventional commits (`commitlint`) + `CHANGELOG` (Keep a Changelog) + release process — **S**
 
 ## Epic 1 — Security & multi-user readiness *(every domain flagged this #1)*
 

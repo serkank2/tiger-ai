@@ -1,6 +1,18 @@
 import type { CommandTarget, LimitStatus, ServerMessage, TigerState } from '~/types';
 import { useLimitsStore } from '~/stores/limits';
 
+// Optional shared-token auth, persisted to localStorage by the settings store.
+// Read directly here so the WS handshake carries it without a store dependency.
+const AUTH_TOKEN_KEY = 'kaplan.authToken';
+function getStoredAuthToken(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 // Module-scoped singletons: one WebSocket per browser window, shared across callers.
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -64,7 +76,11 @@ export function useSocket() {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
     conn.setStatus('connecting');
 
-    const ws = new WebSocket(`${wsBase}/ws`);
+    // Carry the optional shared-token auth on the WS handshake via `?token=` query
+    // param (the backend also accepts Sec-WebSocket-Protocol). Omitted when unset.
+    const token = getStoredAuthToken();
+    const url = token ? `${wsBase}/ws?token=${encodeURIComponent(token)}` : `${wsBase}/ws`;
+    const ws = new WebSocket(url);
     socket = ws;
 
     ws.onopen = () => {

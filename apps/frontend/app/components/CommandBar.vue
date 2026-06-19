@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { strictestLimit } from '~/lib/shellLimits';
 import type { BroadcastOutcome } from '~/composables/useSocket';
+import { useT } from '~/composables/useT';
+
+const { t } = useT();
 
 const emit = defineEmits<{
   create: [];
@@ -72,13 +75,40 @@ function broadcastFailureMessage(result: BroadcastOutcome): string | null {
   }
 }
 
+// Short, screen-reader-only confirmation of the last broadcast outcome. Toasts only
+// fire on failure, so a successful send was previously silent to assistive tech.
+const sendStatus = ref('');
+
 async function send() {
   if (!canSend.value) return;
   const result = await socket.broadcast(terminals.buildTarget(), cmd.value);
   const failureMessage = broadcastFailureMessage(result);
   if (failureMessage) notices.push(failureMessage, 'error');
   // keep the input for retry if nothing actually ran (all targets failed, or not sent)
-  if (result.kind === 'ok' && result.written > 0) cmd.value = '';
+  if (result.kind === 'ok' && result.written > 0) {
+    cmd.value = '';
+    sendStatus.value = `Sent to ${result.written} terminal(s).`;
+  } else if (failureMessage) {
+    sendStatus.value = failureMessage;
+  }
+}
+
+// Roving tabindex for the segmented (single-select) controls: the group is one Tab
+// stop; Left/Right (and Home/End) move focus between options without leaving it.
+function onSegKeydown(e: KeyboardEvent) {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(e.key)) return;
+  const group = e.currentTarget as HTMLElement;
+  const buttons = Array.from(group.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+  if (buttons.length === 0) return;
+  const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  let next = idx;
+  if (e.key === 'ArrowLeft') next = idx <= 0 ? buttons.length - 1 : idx - 1;
+  else if (e.key === 'ArrowRight') next = idx >= buttons.length - 1 ? 0 : idx + 1;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = buttons.length - 1;
+  e.preventDefault();
+  buttons[next]?.focus();
 }
 
 // one-click control keys sent to the current target (raw byte, no trailing newline)
@@ -96,29 +126,58 @@ function sendKey(ch: string) {
 <template>
   <header class="bar">
     <div class="target">
-      <div class="seg">
-        <button :class="{ on: terminals.commandMode === 'selected' }" @click="terminals.commandMode = 'selected'">
-          Selected<span class="n">{{ terminals.selectedIds.length }}</span>
+      <div class="seg" role="group" :aria-label="t('terminals.commandInput')" @keydown="onSegKeydown">
+        <button
+          :class="{ on: terminals.commandMode === 'selected' }"
+          :aria-pressed="terminals.commandMode === 'selected'"
+          :tabindex="terminals.commandMode === 'selected' ? 0 : -1"
+          @click="terminals.commandMode = 'selected'"
+        >
+          {{ t('terminals.targetSelected') }}<span class="n">{{ terminals.selectedIds.length }}</span>
         </button>
-        <button :class="{ on: terminals.commandMode === 'group' }" @click="terminals.commandMode = 'group'">Group</button>
-        <button :class="{ on: terminals.commandMode === 'all' }" @click="terminals.commandMode = 'all'">All</button>
+        <button
+          :class="{ on: terminals.commandMode === 'group' }"
+          :aria-pressed="terminals.commandMode === 'group'"
+          :tabindex="terminals.commandMode === 'group' ? 0 : -1"
+          @click="terminals.commandMode = 'group'"
+        >
+          {{ t('terminals.targetGroup') }}
+        </button>
+        <button
+          :class="{ on: terminals.commandMode === 'all' }"
+          :aria-pressed="terminals.commandMode === 'all'"
+          :tabindex="terminals.commandMode === 'all' ? 0 : -1"
+          @click="terminals.commandMode = 'all'"
+        >
+          {{ t('terminals.targetAll') }}
+        </button>
       </div>
-      <select v-if="terminals.commandMode === 'group'" v-model="terminals.commandGroupId" class="gsel">
-        <option :value="null" disabled>Choose group…</option>
+      <select v-if="terminals.commandMode === 'group'" v-model="terminals.commandGroupId" class="gsel" :aria-label="t('terminals.targetGroup')">
+        <option :value="null" disabled>{{ t('terminals.chooseGroup') }}</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <button class="iconbtn" title="Manage groups" aria-label="Manage groups" @click="emit('manageGroups')">🗂</button>
+      <button class="iconbtn" :title="t('terminals.manageGroups')" :aria-label="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</button>
     </div>
 
     <form class="cmd" @submit.prevent="send">
-      <input v-model="cmd" :placeholder="`Send command to ${targetCount} terminal(s)…`" spellcheck="false" />
-      <button type="submit" class="send" :disabled="!canSend">Send ⏎</button>
-      <p v-if="lengthWarning" class="lenwarn">⚠ {{ lengthWarning }}</p>
+      <label class="sr-only" for="broadcast-cmd">{{ t('terminals.commandInput') }}</label>
+      <input
+        id="broadcast-cmd"
+        v-model="cmd"
+        :placeholder="t('terminals.sendPlaceholder', { n: targetCount })"
+        :aria-describedby="lengthWarning ? 'cmd-lenwarn' : undefined"
+        spellcheck="false"
+      />
+      <button type="submit" class="send" :disabled="!canSend">{{ t('terminals.send') }}</button>
+      <p v-if="lengthWarning" id="cmd-lenwarn" class="lenwarn" role="status" aria-live="polite">⚠ {{ lengthWarning }}</p>
     </form>
 
-    <button class="iconbtn" title="Open prompt composer" aria-label="Open prompt composer" @click="emit('openComposer')">⤢</button>
+    <!-- Screen-reader-only broadcast outcome announcer (visual feedback is via toasts/input clear). -->
+    <p class="sr-only" role="status" aria-live="polite">{{ sendStatus }}</p>
 
-    <button class="tiger" title="Open Prompts" @click="emit('openPrompts')">Prompts</button>
+    <button class="iconbtn" :title="t('terminals.openComposer')" :aria-label="t('terminals.openComposer')" @click="emit('openComposer')">⤢</button>
+
+    <button class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{ t('nav.prompts') }}</button>
 
     <div class="keys">
       <button
@@ -134,14 +193,28 @@ function sendKey(ch: string) {
       </button>
     </div>
 
-    <div class="seg layout">
-      <button :class="{ on: terminals.layoutMode === 'focus' }" title="Single focused terminal" aria-label="Focus view" @click="terminals.layoutMode = 'focus'">▭</button>
-      <button :class="{ on: terminals.layoutMode === 'grid' }" title="Tiled grid view" aria-label="Grid view" @click="terminals.layoutMode = 'grid'">▦</button>
+    <div class="seg layout" role="group" :aria-label="t('terminals.focusView')" @keydown="onSegKeydown">
+      <button
+        :class="{ on: terminals.layoutMode === 'focus' }"
+        :aria-pressed="terminals.layoutMode === 'focus'"
+        :tabindex="terminals.layoutMode === 'focus' ? 0 : -1"
+        title="Single focused terminal"
+        :aria-label="t('terminals.focusView')"
+        @click="terminals.layoutMode = 'focus'"
+      >▭</button>
+      <button
+        :class="{ on: terminals.layoutMode === 'grid' }"
+        :aria-pressed="terminals.layoutMode === 'grid'"
+        :tabindex="terminals.layoutMode === 'grid' ? 0 : -1"
+        title="Tiled grid view"
+        :aria-label="t('terminals.gridView')"
+        @click="terminals.layoutMode = 'grid'"
+      >▦</button>
     </div>
 
-    <button class="tiger" title="Open template manager" @click="emit('openTemplates')">Templates</button>
-    <button class="tiger" title="Open the Tiger AI orchestrator" @click="emit('openTiger')">Tiger</button>
-    <button class="new" @click="emit('create')">+ New Terminal</button>
+    <button class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{ t('nav.templates') }}</button>
+    <button class="tiger" :title="t('terminals.openTiger')" @click="emit('openTiger')">Tiger</button>
+    <button class="new" @click="emit('create')">{{ t('terminals.newTerminal') }}</button>
   </header>
 </template>
 

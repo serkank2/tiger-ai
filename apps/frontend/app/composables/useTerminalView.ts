@@ -166,6 +166,8 @@ export function useTerminalView(
       scrollback: opts.compact ? 1500 : 8000,
       theme: theme.xterm,
       allowProposedApi: true,
+      // Expose terminal output to screen readers via xterm's live-region buffer.
+      screenReaderMode: true,
     });
     const f = new FitAddon();
     t.loadAddon(f);

@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useApi } from '~/composables/useApi';
+import { useNoticesStore } from '~/stores/notices';
 import type { TeamChangeStatus } from '~/types';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseModal from '~/components/ui/BaseModal.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const team = useTeamStore();
+const api = useApi();
+const notices = useNoticesStore();
 
 const changes = computed(() => team.changes);
 const loading = computed(() => team.changesLoading);
@@ -143,9 +148,135 @@ function refresh(): void {
 
 onMounted(refresh);
 
-// Stage/commit/PR controls: the backend exposes no git write routes yet, so these are
-// disabled placeholders that explain the gap rather than silently doing nothing.
-const writeRoutesAvailable = false;
+// --- Stage / commit / PR (backend git-write routes) -----------------------
+// Read-only history views and non-git workspaces can't perform writes.
+const writeRoutesAvailable = computed(
+  () => !readOnly.value && !!changes.value?.isGitRepo,
+);
+const hasChanges = computed(() => (changes.value?.files.length ?? 0) > 0);
+
+/** Pull the run id directly off the store; writes target the live active run. */
+function runIdOrNull(): string | null {
+  return team.activeRunId ?? null;
+}
+
+/** Map a backend error to its stable `code` (set by the HttpError envelope). */
+function errCode(e: unknown): string | undefined {
+  return (e as { data?: { error?: { code?: string } } })?.data?.error?.code;
+}
+function errMessage(e: unknown): string {
+  const err = e as { data?: { error?: { message?: string } }; message?: string };
+  return err?.data?.error?.message ?? err?.message ?? 'Request failed';
+}
+
+const staging = ref(false);
+async function stageAll(): Promise<void> {
+  const runId = runIdOrNull();
+  if (!runId || staging.value) return;
+  staging.value = true;
+  try {
+    team.changes = await api.stageTeamChanges(runId);
+    notices.push('Staged all changes', 'info');
+  } catch (e) {
+    notices.push(`Stage failed: ${errMessage(e)}`, 'error');
+  } finally {
+    staging.value = false;
+  }
+}
+
+// Commit modal -------------------------------------------------------------
+const commitOpen = ref(false);
+const commitMessage = ref('');
+const commitError = ref('');
+const committing = ref(false);
+function openCommit(): void {
+  commitMessage.value = '';
+  commitError.value = '';
+  commitOpen.value = true;
+}
+async function doCommit(): Promise<void> {
+  const runId = runIdOrNull();
+  if (!runId || committing.value) return;
+  const message = commitMessage.value.trim();
+  if (!message) {
+    commitError.value = 'A commit message is required.';
+    return;
+  }
+  committing.value = true;
+  commitError.value = '';
+  try {
+    const result = await api.commitTeamChanges(runId, message);
+    team.changes = result.changes;
+    if (result.committed) {
+      notices.push(`Committed ${result.sha?.slice(0, 7) ?? ''} — ${result.summary}`.trim(), 'info');
+      commitOpen.value = false;
+    } else {
+      // "nothing to commit" is a non-error outcome: keep the modal open with the note.
+      commitError.value = result.summary || 'Nothing to commit.';
+    }
+  } catch (e) {
+    if (errCode(e) === 'validation_failed') commitError.value = errMessage(e);
+    else notices.push(`Commit failed: ${errMessage(e)}`, 'error');
+  } finally {
+    committing.value = false;
+  }
+}
+
+// Create-PR modal ----------------------------------------------------------
+const prOpen = ref(false);
+const prTitle = ref('');
+const prBody = ref('');
+const prBase = ref('');
+const prError = ref('');
+const prUrl = ref('');
+const creatingPr = ref(false);
+function openPr(): void {
+  prTitle.value = '';
+  prBody.value = '';
+  prBase.value = '';
+  prError.value = '';
+  prUrl.value = '';
+  prOpen.value = true;
+}
+async function doCreatePr(): Promise<void> {
+  const runId = runIdOrNull();
+  if (!runId || creatingPr.value) return;
+  const title = prTitle.value.trim();
+  if (!title) {
+    prError.value = 'A PR title is required.';
+    return;
+  }
+  creatingPr.value = true;
+  prError.value = '';
+  try {
+    const result = await api.createTeamPr(runId, {
+      title,
+      body: prBody.value.trim() || undefined,
+      base: prBase.value.trim() || undefined,
+    });
+    prUrl.value = result.url;
+    notices.push('Pull request created', 'info');
+  } catch (e) {
+    // `conflict` (missing/unauth gh, detached HEAD) carries an actionable message
+    // from the backend (install gh / gh auth login / checkout a branch) — show it inline.
+    if (errCode(e) === 'conflict' || errCode(e) === 'validation_failed') prError.value = errMessage(e);
+    else notices.push(`Create PR failed: ${errMessage(e)}`, 'error');
+  } finally {
+    creatingPr.value = false;
+  }
+}
+function openPrUrl(): void {
+  if (prUrl.value && typeof window !== 'undefined') window.open(prUrl.value, '_blank', 'noopener');
+}
+async function copyPrUrl(): Promise<void> {
+  if (!prUrl.value) return;
+  try {
+    await navigator.clipboard?.writeText(prUrl.value);
+    notices.push('PR URL copied', 'info');
+  } catch {
+    notices.push('Could not copy — select the URL manually.', 'error');
+  }
+}
 </script>
 
 <template>
@@ -167,27 +298,33 @@ const writeRoutesAvailable = false;
         </div>
       </header>
 
-      <!-- Stage / commit / PR — wired to disabled placeholders until backend git-write routes exist. -->
+      <!-- Stage / commit / PR — wired to the backend git-write routes. -->
       <div class="pr-bar">
         <BaseButton
           size="sm"
           variant="ghost"
-          :disabled="!writeRoutesAvailable"
-          title="Staging requires a backend git-write route (not yet available)"
+          :loading="staging"
+          :disabled="!writeRoutesAvailable || !hasChanges"
+          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'git add -A'"
+          @click="stageAll"
         >Stage all</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
-          :disabled="!writeRoutesAvailable"
-          title="Commit requires a backend git-write route (not yet available)"
+          :disabled="!writeRoutesAvailable || !hasChanges"
+          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'Commit the staged changes'"
+          @click="openCommit"
         >Commit…</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
           :disabled="!writeRoutesAvailable"
-          title="Create PR requires a backend git/PR route (not yet available)"
+          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'Open a pull request via gh'"
+          @click="openPr"
         >Create PR</BaseButton>
-        <span class="pr-note">Stage/commit/PR need a backend git route — not yet available.</span>
+        <span v-if="!writeRoutesAvailable" class="pr-note">
+          {{ readOnly ? 'Past run — git writes only apply to the live run.' : 'The workspace is not a git repository.' }}
+        </span>
       </div>
 
       <section v-if="loading && !changes" class="ch-state">
@@ -276,6 +413,59 @@ const writeRoutesAvailable = false;
         </footer>
       </template>
     </div>
+
+    <!-- Commit message prompt (app modal pattern; no window.prompt). -->
+    <BaseModal v-if="commitOpen" title="Commit changes" size="sm" @close="commitOpen = false">
+      <label class="modal-field">
+        <span>Commit message</span>
+        <textarea
+          v-model="commitMessage"
+          rows="3"
+          placeholder="Describe the change…"
+          aria-label="Commit message"
+          @input="commitError = ''"
+        />
+      </label>
+      <p v-if="commitError" class="modal-err">{{ commitError }}</p>
+      <template #footer>
+        <BaseButton variant="ghost" @click="commitOpen = false">Cancel</BaseButton>
+        <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">Commit</BaseButton>
+      </template>
+    </BaseModal>
+
+    <!-- Create-PR prompt. -->
+    <BaseModal v-if="prOpen" title="Create pull request" size="sm" @close="prOpen = false">
+      <template v-if="!prUrl">
+        <label class="modal-field">
+          <span>Title</span>
+          <input v-model="prTitle" placeholder="PR title" aria-label="PR title" @input="prError = ''" />
+        </label>
+        <label class="modal-field">
+          <span>Body <i>(optional)</i></span>
+          <textarea v-model="prBody" rows="3" placeholder="PR description…" aria-label="PR body" />
+        </label>
+        <label class="modal-field">
+          <span>Base branch <i>(optional)</i></span>
+          <input v-model="prBase" placeholder="e.g. main" aria-label="Base branch" />
+        </label>
+        <p v-if="prError" class="modal-err">{{ prError }}</p>
+      </template>
+      <template v-else>
+        <p class="modal-ok">Pull request created:</p>
+        <a class="pr-url" :href="prUrl" target="_blank" rel="noopener">{{ prUrl }}</a>
+      </template>
+      <template #footer>
+        <template v-if="!prUrl">
+          <BaseButton variant="ghost" @click="prOpen = false">Cancel</BaseButton>
+          <BaseButton variant="primary" :loading="creatingPr" :disabled="!prTitle.trim()" @click="doCreatePr">Create PR</BaseButton>
+        </template>
+        <template v-else>
+          <BaseButton variant="ghost" @click="copyPrUrl">Copy URL</BaseButton>
+          <BaseButton variant="ghost" @click="openPrUrl">Open</BaseButton>
+          <BaseButton variant="primary" @click="prOpen = false">Done</BaseButton>
+        </template>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -432,4 +622,22 @@ const writeRoutesAvailable = false;
 .rc-rm { border: none; background: transparent; color: var(--text-faint); cursor: pointer; }
 .review-send { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .rc-count { font-size: var(--text-xs); color: var(--text-faint); }
+.modal-field { display: block; margin-bottom: var(--space-3); }
+.modal-field > span { display: block; font-size: var(--text-xs); color: var(--text-dim); margin-bottom: var(--space-1); }
+.modal-field i { color: var(--text-faint); font-style: normal; }
+.modal-field input,
+.modal-field textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  resize: vertical;
+}
+.modal-err { color: var(--red); font-size: var(--text-sm); margin: 0; }
+.modal-ok { color: var(--text-dim); font-size: var(--text-sm); margin: 0 0 var(--space-2); }
+.pr-url { font-family: var(--font-mono, monospace); font-size: var(--text-sm); color: var(--accent); word-break: break-all; }
 </style>

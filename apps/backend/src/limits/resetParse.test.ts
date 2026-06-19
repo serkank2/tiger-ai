@@ -42,3 +42,35 @@ test('parseResetText marks unparseable reset text as unknown', () => {
   assert.equal(parsed.parseConfidence, 'unknown');
   assert.equal(parsed.kind, 'unknown');
 });
+
+// --- Non-English fallback ---------------------------------------------------
+test('parseResetText falls back to localized relative durations (German)', () => {
+  const parsed = parseResetText('Zurücksetzung in 3 Stunden 20 Minuten', { now: NOW, defaultTimeZone: 'UTC' });
+  assert.equal(parsed.resetAt, '2026-06-18T09:20:00.000Z');
+  assert.equal(parsed.parseConfidence, 'trusted');
+  assert.equal(parsed.kind, 'relative');
+});
+
+test('parseResetText falls back to localized relative durations (French)', () => {
+  const parsed = parseResetText('réinitialisation dans 2 heures', { now: NOW, defaultTimeZone: 'UTC' });
+  assert.equal(parsed.resetAt, '2026-06-18T08:00:00.000Z');
+  assert.equal(parsed.kind, 'relative');
+});
+
+test('parseResetText falls back to localized month-name dates (French, accented)', () => {
+  const parsed = parseResetText('réinitialise le 22 juin 14:30', { now: NOW, defaultTimeZone: 'UTC' });
+  assert.equal(parsed.resetAt, '2026-06-22T14:30:00.000Z');
+  assert.equal(parsed.kind, 'date');
+});
+
+test('parseResetText falls back to numeric DD.MM.YYYY dates', () => {
+  const parsed = parseResetText('zurückgesetzt am 22.06.2026 14:30', { now: NOW, defaultTimeZone: 'UTC' });
+  assert.equal(parsed.resetAt, '2026-06-22T14:30:00.000Z');
+  assert.equal(parsed.kind, 'date');
+});
+
+test('parseResetText still returns unknown for non-English text with no time signal', () => {
+  const parsed = parseResetText('Limit erreicht, bitte später erneut versuchen', { now: NOW, defaultTimeZone: 'UTC' });
+  assert.equal(parsed.resetAt, null);
+  assert.equal(parsed.kind, 'unknown');
+});

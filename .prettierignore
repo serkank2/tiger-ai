@@ -1,0 +1,16 @@
+# Dependencies
+**/node_modules
+
+# Build output & caches
+**/dist
+**/.output
+**/.nuxt
+**/coverage
+
+# Lockfiles & generated
+package-lock.json
+**/*.min.js
+**/*.min.css
+
+# Documents / data we don't reflow
+**/CHANGELOG.md

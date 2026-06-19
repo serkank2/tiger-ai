@@ -731,6 +731,29 @@ export interface TeamChanges {
   note?: string;
 }
 
+/** Result of POST /api/team/runs/:id/git/commit. `committed:false` ⇒ nothing to commit. */
+export interface TeamCommitResult {
+  committed: boolean;
+  /** Full sha of the new commit (only when `committed`). */
+  sha: string | null;
+  /** One-line commit summary, or a human note when nothing changed. */
+  summary: string;
+  /** The refreshed changeset after the commit. */
+  changes: TeamChanges;
+}
+
+/** Body for POST /api/team/runs/:id/git/pr. */
+export interface TeamPrInput {
+  title: string;
+  body?: string;
+  base?: string;
+}
+
+/** Result of POST /api/team/runs/:id/git/pr. */
+export interface TeamPrResult {
+  url: string;
+}
+
 export interface RoleConfigInput {
   templateId?: string;
   name: string;

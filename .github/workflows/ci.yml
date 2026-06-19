@@ -12,6 +12,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: lint · format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ESLint is the gate: it must exit 0 (warnings allowed, zero errors).
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      # Prettier check is advisory — report drift without failing the build so
+      # formatting nits never block a merge.
+      - name: Format check (Prettier, non-blocking)
+        run: npm run format:check
+        continue-on-error: true
+
   build-and-test:
     name: typecheck · test · build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest

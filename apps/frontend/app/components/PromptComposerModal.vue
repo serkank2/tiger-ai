@@ -18,6 +18,7 @@ const groups = useGroupsStore();
 const conn = useConnectionStore();
 const socket = useSocket();
 const notices = useNoticesStore();
+const dialog = useDialog();
 
 const draft = reactive<PromptDraft>({ title: '', description: '', tagsText: '', target: '', run: false, body: '' });
 const values = reactive<Record<string, string>>({});
@@ -26,8 +27,6 @@ const currentPath = ref<string | null>(null);
 const loadedVersion = ref<string | null>(null);
 const loadedSnapshot = ref<string>(''); // serialized content at load, for dirty check
 const showPreview = ref(false);
-const confirmDiscard = ref(false);
-const pendingAction = ref<null | (() => void | Promise<void>)>(null);
 const sending = ref(false);
 
 const today = () => new Date().toISOString().slice(0, 10); // evaluated at send/preview time, not mount
@@ -87,7 +86,7 @@ function applyTargetHint(target?: string) {
 }
 
 function openPrompt(path: string) {
-  guardDirty(() => doOpenPrompt(path));
+  void guardDirty(() => doOpenPrompt(path));
 }
 async function doOpenPrompt(path: string) {
   const f = await prompts.open(path);
@@ -145,7 +144,7 @@ async function save() {
   }
 }
 function newDraft() {
-  guardDirty(() => resetDraft());
+  void guardDirty(() => resetDraft());
 }
 async function onRemove(path: string) {
   if (!(await prompts.remove(path))) return;
@@ -286,28 +285,24 @@ async function doSend() {
   }
 }
 
-// Inline (non-native) dirty guard — a native confirm() blocks/freezes the page.
-// Stash the intended action; the confirm overlay then runs or cancels it.
-function guardDirty(action: () => void | Promise<void>) {
-  if (dirty.value) {
-    pendingAction.value = action;
-    confirmDiscard.value = true;
-  } else {
-    void action();
+// Dirty guard via the styled, promise-based confirm dialog (no blocking native
+// confirm()). When there are unsaved changes, ask before running the action.
+async function guardDirty(action: () => void | Promise<void>) {
+  if (
+    dirty.value &&
+    !(await dialog.confirm({
+      message: 'Discard unsaved changes?',
+      confirmText: 'Discard',
+      cancelText: 'Keep editing',
+      danger: true,
+    }))
+  ) {
+    return;
   }
-}
-function confirmDiscardYes() {
-  const action = pendingAction.value;
-  confirmDiscard.value = false;
-  pendingAction.value = null;
-  if (action) void action();
-}
-function confirmDiscardNo() {
-  confirmDiscard.value = false;
-  pendingAction.value = null;
+  await action();
 }
 function tryClose() {
-  guardDirty(() => emit('close'));
+  void guardDirty(() => emit('close'));
 }
 
 onMounted(() => {
@@ -377,17 +372,6 @@ onMounted(() => {
           <div class="pfoot">
             <BaseButton variant="ghost" @click="showPreview = false">Back</BaseButton>
             <BaseButton variant="primary" :loading="sending" :disabled="!canSend" @click="doSend">{{ sending ? 'Sending…' : `Send to ${selectedTerminals.length}` }}</BaseButton>
-          </div>
-        </div>
-      </div>
-
-      <!-- Discard-changes confirm -->
-      <div v-if="confirmDiscard" class="preview-overlay">
-        <div class="preview small">
-          <p>Discard unsaved changes?</p>
-          <div class="pfoot">
-            <BaseButton variant="ghost" @click="confirmDiscardNo">Keep editing</BaseButton>
-            <BaseButton variant="danger" @click="confirmDiscardYes">Discard</BaseButton>
           </div>
         </div>
       </div>

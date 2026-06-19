@@ -1,6 +1,36 @@
 import type { AppSettings } from '~/types';
 import { errText } from '~/lib/apiError';
 
+/**
+ * Client-only auth token for the optional backend shared-token auth
+ * (`KAPLAN_AUTH_TOKEN`). It is NOT part of server-backed {@link AppSettings} — it
+ * is the credential used to talk to the server, so it lives in localStorage and is
+ * read directly (synchronously, without a Pinia instance) by useApi/useSocket when
+ * they build each request/connection.
+ */
+const AUTH_TOKEN_KEY = 'kaplan.authToken';
+
+/** Read the persisted auth token (empty string when unset or unavailable). */
+export function getStoredAuthToken(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** Persist (or clear, when empty) the auth token to localStorage. */
+function persistAuthToken(token: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    /* ignore quota / privacy-mode failures — auth just falls back to unset */
+  }
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   const api = useApi();
   const notices = useNoticesStore();
@@ -8,6 +38,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const loaded = ref(false);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
+  // Client-persisted shared-token auth credential (see getStoredAuthToken above).
+  const authToken = ref<string>(getStoredAuthToken());
 
   async function load() {
     loading.value = true;
@@ -32,5 +64,12 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  return { settings, loaded, loading, loadError, load, update };
+  /** Set (or clear) the auth token used for backend shared-token auth and persist it. */
+  function setAuthToken(token: string) {
+    const next = token.trim();
+    authToken.value = next;
+    persistAuthToken(next);
+  }
+
+  return { settings, loaded, loading, loadError, authToken, load, update, setAuthToken };
 });

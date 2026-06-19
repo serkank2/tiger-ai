@@ -2,6 +2,7 @@
   "name": "kaplan",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Kaplan — local terminal management panel (personal use).",
   "workspaces": [
     "apps/*"
@@ -12,10 +13,24 @@
     "dev:frontend": "npm run dev -w @kaplan/frontend",
     "start:backend": "npm run start -w @kaplan/backend",
     "build:frontend": "npm run build -w @kaplan/frontend",
-    "typecheck": "npm run typecheck -w @kaplan/backend && npm run typecheck -w @kaplan/frontend"
+    "typecheck": "npm run typecheck -w @kaplan/backend && npm run typecheck -w @kaplan/frontend",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "concurrently": "^10.0.3"
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@eslint/js": "^9.17.0",
+    "concurrently": "^10.0.3",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-vue": "^9.32.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript-eslint": "^8.19.0",
+    "vue-eslint-parser": "^9.4.3"
   },
   "engines": {
     "node": ">=20"

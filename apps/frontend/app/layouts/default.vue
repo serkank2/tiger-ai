@@ -5,34 +5,51 @@
 import { NAV_ITEMS, activeNavKey } from '~/lib/navigation';
 import NavRail from '~/components/shell/NavRail.vue';
 import LimitStatusBadge from '~/components/shell/LimitStatusBadge.vue';
+import { useT } from '~/composables/useT';
 
 const route = useRoute();
 const conn = useConnectionStore();
+const { t } = useT();
+
+// Localized nav entries: translate `label` via the item's `labelKey`, keeping the
+// English `label` as the fallback for any missing key.
+const navItems = computed(() =>
+  NAV_ITEMS.map((item) => ({ ...item, label: t(item.labelKey) })),
+);
 
 const activeKey = computed(() => activeNavKey(route.path));
-const sectionTitle = computed(() => NAV_ITEMS.find((i) => i.key === activeKey.value)?.label ?? 'Kaplan');
+const sectionTitle = computed(() => {
+  const item = NAV_ITEMS.find((i) => i.key === activeKey.value);
+  return item ? t(item.labelKey) : 'Kaplan';
+});
 
 const connLabel = computed(() => {
   switch (conn.status) {
     case 'connected':
-      return 'Live';
+      return t('connection.live');
     case 'connecting':
-      return 'Connecting…';
+      return t('connection.connecting');
     default:
-      return 'Offline';
+      return t('connection.offline');
   }
 });
 </script>
 
 <template>
   <div class="shell">
-    <NavRail :items="NAV_ITEMS" :active-path="route.path" />
+    <NavRail :items="navItems" :active-path="route.path" />
 
     <div class="main">
       <header class="topbar">
         <h1 class="section">{{ sectionTitle }}</h1>
         <span class="spacer" />
-        <span class="conn" :class="conn.status" :title="`Backend ${conn.status}`">
+        <span
+          class="conn"
+          :class="conn.status"
+          :title="t('connection.backendStatus', { status: conn.status })"
+          role="status"
+          aria-live="polite"
+        >
           <span class="dot" aria-hidden="true" />
           <span class="conn-label">{{ connLabel }}</span>
         </span>

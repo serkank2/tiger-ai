@@ -92,6 +92,11 @@ function isActive(item: NavItem, path: string): boolean {
   color: var(--text);
   background: var(--bg-elev-2);
 }
+.item:focus-visible,
+.brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .item.active {
   color: var(--accent);
   background: var(--accent-soft);

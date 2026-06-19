@@ -44,7 +44,25 @@ import type {
   TigerStageRunConfig,
   TigerState,
   TigerUsage,
+  TeamCommitResult,
+  TeamPrInput,
+  TeamPrResult,
 } from '~/types';
+
+/**
+ * Read the optional shared-token auth credential. It is persisted to localStorage
+ * by the settings store under this key; we read it directly here (not via the
+ * store) so this composable carries no store/auto-import dependency.
+ */
+const AUTH_TOKEN_KEY = 'kaplan.authToken';
+function getStoredAuthToken(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 interface Size {
   cols?: number;
@@ -71,10 +89,39 @@ function queryString(params: Record<string, unknown>): string {
   return out ? `?${out}` : '';
 }
 
+/** Status codes from the optional shared-token auth that we surface to the user. */
+function surfaceAuthError(status: number | undefined): void {
+  if (status !== 401 && status !== 429) return;
+  // Lazily resolve notices so useApi() stays usable without an active Pinia
+  // instance (e.g. in unit tests that only stub $fetch / useRuntimeConfig).
+  try {
+    const notices = useNoticesStore();
+    notices.push(
+      status === 401
+        ? 'Unauthorized — set or check your auth token in Settings.'
+        : 'Rate limited by the server — slow down or check your auth token in Settings.',
+      'error',
+    );
+  } catch {
+    /* no Pinia available — skip the toast */
+  }
+}
+
 /** Typed REST client for the Kaplan backend. */
 export function useApi() {
   const base = useRuntimeConfig().public.apiBase as string;
-  const req = <T>(path: string, opts?: Parameters<typeof $fetch>[1]) => $fetch<T>(`${base}${path}`, opts);
+  const req = <T>(path: string, opts?: Parameters<typeof $fetch>[1]) => {
+    // Attach the shared-token Authorization header only when a token is set, so the
+    // no-token path stays byte-identical (the second arg remains `undefined`).
+    const token = getStoredAuthToken();
+    const withAuth = token
+      ? { ...(opts ?? {}), headers: { ...((opts as { headers?: Record<string, string> })?.headers ?? {}), Authorization: `Bearer ${token}` } }
+      : opts;
+    return ($fetch<T>(`${base}${path}`, withAuth) as Promise<T>).catch((e: unknown) => {
+      surfaceAuthError((e as { status?: number; statusCode?: number })?.status ?? (e as { statusCode?: number })?.statusCode);
+      throw e;
+    });
+  };
 
   return {
     getHealth: () => req<HealthStatus>('/api/health'),
@@ -207,6 +254,13 @@ export function useApi() {
       ),
     getTeamChanges: (runId: string) =>
       req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/changes`),
+    // Git-write routes: stage all, commit, and open a PR for the run's workspace.
+    stageTeamChanges: (runId: string) =>
+      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/git/stage`, { method: 'POST' }),
+    commitTeamChanges: (runId: string, message: string) =>
+      req<TeamCommitResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/commit`, { method: 'POST', body: { message } }),
+    createTeamPr: (runId: string, body: TeamPrInput) =>
+      req<TeamPrResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/pr`, { method: 'POST', body }),
     submitTeamSteering: (id: string, body: TeamSteeringInput) =>
       req<TeamRunStateResponse | SteerResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
 

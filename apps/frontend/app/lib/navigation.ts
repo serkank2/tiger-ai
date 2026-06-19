@@ -7,8 +7,14 @@ export interface NavItem {
   key: string;
   /** Route path the entry links to. */
   to: string;
-  /** Human label shown in the rail. */
+  /**
+   * Human label shown in the rail. This is the English fallback; localized UIs
+   * translate via `labelKey` (see app/locales). Kept populated so non-i18n
+   * consumers (and tests) still render a sensible default.
+   */
   label: string;
+  /** i18n message key (under the `nav.` namespace) used to localize `label`. */
+  labelKey: string;
   /** Emoji glyph used as a lightweight icon. */
   icon: string;
   /** One-line description for tooltips / empty states. */
@@ -16,14 +22,14 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { key: 'terminals', to: '/terminals', label: 'Terminals', icon: '🖥️', hint: 'Live terminal grid and command broadcast' },
-  { key: 'projects', to: '/tiger', label: 'Projects', icon: '🐅', hint: 'Tiger AI software-team orchestrator' },
-  { key: 'team', to: '/team', label: 'Team', icon: '👥', hint: 'AI Team — role agents that converse, build, and sign off' },
-  { key: 'queue', to: '/queue', label: 'Queue', icon: '📥', hint: 'Autonomous job queue with limit-aware dispatch' },
-  { key: 'prompts', to: '/prompts', label: 'Prompts', icon: '💬', hint: 'Prompt history and generation' },
-  { key: 'templates', to: '/templates', label: 'Templates', icon: '🧩', hint: 'Run-all templates and presets' },
-  { key: 'limits', to: '/limits', label: 'Limits', icon: '📊', hint: 'Provider usage and limit management' },
-  { key: 'settings', to: '/settings', label: 'Settings', icon: '⚙️', hint: 'Preferences and system status' },
+  { key: 'terminals', to: '/terminals', label: 'Terminals', labelKey: 'nav.terminals', icon: '🖥️', hint: 'Live terminal grid and command broadcast' },
+  { key: 'projects', to: '/tiger', label: 'Projects', labelKey: 'nav.projects', icon: '🐅', hint: 'Tiger AI software-team orchestrator' },
+  { key: 'team', to: '/team', label: 'Team', labelKey: 'nav.team', icon: '👥', hint: 'AI Team — role agents that converse, build, and sign off' },
+  { key: 'queue', to: '/queue', label: 'Queue', labelKey: 'nav.queue', icon: '📥', hint: 'Autonomous job queue with limit-aware dispatch' },
+  { key: 'prompts', to: '/prompts', label: 'Prompts', labelKey: 'nav.prompts', icon: '💬', hint: 'Prompt history and generation' },
+  { key: 'templates', to: '/templates', label: 'Templates', labelKey: 'nav.templates', icon: '🧩', hint: 'Run-all templates and presets' },
+  { key: 'limits', to: '/limits', label: 'Limits', labelKey: 'nav.limits', icon: '📊', hint: 'Provider usage and limit management' },
+  { key: 'settings', to: '/settings', label: 'Settings', labelKey: 'nav.settings', icon: '⚙️', hint: 'Preferences and system status' },
 ];
 
 /** Resolve the active nav entry for a given route path (longest matching prefix). */
