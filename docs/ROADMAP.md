@@ -115,13 +115,16 @@ Distilled from a deep analysis of the six leading open-source orchestrators. **L
 - ☑ **PR-style review loop**: per-file colorized diff + inline comments → agent follow-up; git stage/commit/PR — *vibe-kanban review UX*
 - ☑ Multi-provider agents already supported (Claude/Codex/Antigravity) with per-stage/per-role model + permission
 
-**Still open (the larger net-new surfaces):**
+**Landed in Wave 5:**
 
-- ☐ **Attempt model** — multiple diffable attempts per task/run, "promote" the best (vibe-kanban) — **L**
-- ☐ **Unified executor/provider registry** — a single `launch/format/parse` adapter per backend (+ OpenCode/Gemini/Copilot), per-step model routing (vibe-kanban `Executor` trait / myclaude wrapper) — **L**
-- ☐ **Worktree-per-task for the Team** (currently Tiger-only) + one-click merge-back UI — **M**
-- ☐ **Event-driven orchestration ("Cue")** — `file.changed`/`cron`/`agent.completed` fan-in triggers wake agents into self-running pipelines (Maestro Cue) — **L**
-- ☐ **Coordination verbs** — explicit `handoff` (sync) / `assign` (async) / `sendMessage` (inbox) on the message-bus (CAO) — **M**
+- ☑ **Attempt model** — multiple diffable attempts per Team run, worktree-isolated, conflict-safe "promote" (vibe-kanban)
+- ☑ **Unified executor/provider registry** — `ProviderAdapter` interface + registry; 3 wired providers reproduce identical argv; experimental opencode/gemini/copilot adapters (vibe-kanban `Executor` / myclaude wrapper)
+- ☑ **Worktree-per-task for the Team** (opt-in `KAPLAN_TEAM_WORKTREE_PER_TASK`) + merge-back/discard endpoint + UI
+- ☑ **Event-driven orchestration ("Cue")** — `file.changed`/`time.scheduled`/`time.once`/`agent.completed` (fan-in)/`cli.trigger` → queue-enqueue or team-steer; `.kaplan/cue.json`; opt-in `KAPLAN_CUE_ENABLED` (Maestro Cue)
+- ☑ **Coordination verbs** — `handoff` (sync, done-gate dependency) / `assign` (async) / `sendMessage` (inbox) on the message-bus, roleId trust-boundary enforced (CAO)
+
+**Still open (further net-new surfaces):**
+
 - ☐ **Context compaction / transfer** — chunked summarization at a token threshold; move a conversation between agents (Maestro) — **M**
 - ☐ **Integrated dev-server preview + port-pool** daemon for live output review (vibe-kanban) — **L**
 - ☐ **Workflow-as-code** — `.workflow.js`/declarative phase pipelines with loop+iteration caps (CodeMachine) — **M**
