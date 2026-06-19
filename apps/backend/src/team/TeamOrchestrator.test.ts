@@ -1175,3 +1175,88 @@ test('steering a run that has idled to a waiting state resumes the loop so the L
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Stop is a resumable halt (TASK-0002): Stop halts the run but keeps the persistent role
+// sessions ALIVE so the user can Resume into the same context; only Close kills them.
+// ---------------------------------------------------------------------------
+
+test('Stop halts a run without disposing sessions, Resume re-enters it, and Close kills the retained sessions', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-stop-resume-'));
+  try {
+    let runCount = 0;
+    const disposeCalls: { kill: boolean }[] = [];
+    const runner: TeamTurnRunner = {
+      async runRoleTurn(input) {
+        runCount += 1;
+        // Block until Stop/Close aborts the turn, so the run sits in a controllable running
+        // state instead of completing on its own.
+        await new Promise<void>((resolve) =>
+          input.signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+        return { status: 'stopped', reason: 'aborted' };
+      },
+      async disposeRun(_runId, opts) {
+        disposeCalls.push({ kill: opts.kill });
+      },
+    };
+
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      runner,
+    });
+    await orch.createTeamRun({ workspace, goal: 'Stop must be a resumable halt.', roles: roles.slice(0, 1) });
+    await orch.start();
+    await waitFor(() => runCount >= 1, 'the first turn to start');
+    assert.equal(orch.getState().status, 'running');
+
+    // Stop: the run halts but its sessions are retained — no dispose call.
+    await orch.stop();
+    assert.equal(orch.getState().status, 'stopped');
+    assert.deepEqual(disposeCalls, [], 'Stop must not dispose the retained role sessions');
+
+    // Resume: a stopped run re-enters running and the loop runs another turn, proving the
+    // retained context is re-used rather than rejected as a terminal run.
+    await orch.resume();
+    assert.equal(orch.getState().status, 'running');
+    await waitFor(() => runCount >= 2, 'the resumed run to execute another turn');
+    assert.deepEqual(disposeCalls, [], 'Resume must not dispose the retained role sessions');
+
+    // Close after a stopped/resumed run kills the retained sessions.
+    await orch.close();
+    assert.deepEqual(disposeCalls, [{ kill: true }], 'Close must dispose the role sessions with kill');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('resume rejects a genuinely ended run but a stopped run is resumable', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-resume-guard-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      // Completes after a single role message so we reach a genuinely ended ('completed') run.
+      completionGate: completionAfterRoleMessages(1),
+      scheduler: roundRobinScheduler(),
+      runner: {
+        async runRoleTurn(input) {
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: 'done' }] };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Drive to completion.', roles: roles.slice(0, 1) });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+    assert.equal(final.status, 'completed');
+
+    const err = await orch.resume().then(
+      () => null,
+      (e: unknown) => e as { status?: number; message?: string },
+    );
+    assert.equal(err?.status, 409);
+    assert.match(err?.message ?? '', /cannot resume a completed team run/);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});

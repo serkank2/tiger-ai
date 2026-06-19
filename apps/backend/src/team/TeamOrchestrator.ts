@@ -1077,7 +1077,11 @@ export class TeamOrchestrator extends EventEmitter {
     await this.ensureLoaded(target);
     const state = this.requireState();
     if (state.status === 'running' && this.loop) return this.getState();
-    if (isTerminalStatus(state.status) && state.status !== 'interrupted' && state.status !== 'blocked') {
+    // Only a genuinely ended run cannot resume. 'completed'/'failed' disposed their role
+    // sessions, so there is no context to re-enter. A 'stopped' run is a resumable halt:
+    // Stop leaves the persistent role sessions ALIVE (Close is what kills them), so Resume
+    // re-enters the same run context. 'paused'/'interrupted'/'blocked' also remain resumable.
+    if (state.status === 'completed' || state.status === 'failed') {
       throw httpError(409, `cannot resume a ${state.status} team run`);
     }
     return this.startLoop('running');

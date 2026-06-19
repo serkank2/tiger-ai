@@ -30,6 +30,15 @@ onBeforeUnmount(() => {
 const state = computed(() => team.state);
 const status = computed(() => state.value?.status ?? null);
 
+// Total role turns the Lead has sequenced so far. Surfaced as forward Lead-managed
+// progress, not as a round/round-robin counter — the Lead decides the order, so the
+// user sees how much work has run, not which "round" the team is on.
+const roleTurns = computed(() => state.value?.turnCount ?? null);
+const turnsLabel = computed(() => {
+  const n = roleTurns.value ?? 0;
+  return `${n} role ${n === 1 ? 'turn' : 'turns'}`;
+});
+
 // The role whose live terminal is open. Tracked by id so the pane follows the role's
 // latest turn terminal as new turns start.
 const selectedRoleId = ref<string | null>(null);
@@ -40,7 +49,15 @@ const isActive = computed(() => status.value === 'running' || status.value === '
 const connected = computed(() => connection.status === 'connected');
 
 const canPause = computed(() => status.value === 'running');
-const canResume = computed(() => status.value === 'paused' || status.value === 'blocked' || status.value === 'interrupted');
+// Stop is a resumable halt (role sessions stay alive), so a stopped run can Resume into the
+// same context; Close (hasLiveSessions) remains available to end those retained sessions.
+const canResume = computed(
+  () =>
+    status.value === 'paused' ||
+    status.value === 'blocked' ||
+    status.value === 'interrupted' ||
+    status.value === 'stopped',
+);
 const canStop = computed(() => isActive.value || status.value === 'interrupted');
 // Persistent CLI terminals stay alive until the run completes/fails or is Closed, so a
 // Close (kill terminals) is offered for any non-terminal-and-done run.
@@ -81,8 +98,12 @@ async function reset() {
       <div v-if="state" class="run-meta">
         <span class="run-name" :title="state.goal">{{ state.name }}</span>
         <span class="status-chip" :class="`st-${status}`">{{ statusLabel(status) }}</span>
-        <span v-if="state.round != null" class="loop-counter" title="Coordination rounds · total turns">
-          ↻ {{ state.round }} round · {{ state.turnCount ?? 0 }} turn
+        <span
+          v-if="roleTurns != null"
+          class="progress-meter"
+          :title="`Lead-managed sequencing · ${turnsLabel} run so far`"
+        >
+          ▸ Lead-managed · {{ turnsLabel }}
         </span>
       </div>
 
@@ -230,7 +251,7 @@ async function reset() {
 .st-failed { color: var(--red); border-color: var(--red); }
 .st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
 .st-paused, .st-stopped { color: var(--slate); border-color: var(--slate); }
-.loop-counter {
+.progress-meter {
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
