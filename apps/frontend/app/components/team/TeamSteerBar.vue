@@ -10,6 +10,25 @@ const runId = computed(() => team.activeRunId);
 const busy = computed(() => (runId.value ? team.isBusy(`steer:${runId.value}`) : false));
 const canSend = computed(() => text.value.trim().length > 0 && !busy.value);
 
+// The Lead owns the flow: every message routes to the Lead, which decomposes the work and
+// assigns the agents. Surface the Lead's pending/waiting state from the fields the run state
+// already carries (pending prompt count, status, and the run's human status message).
+const pendingCount = computed(() => team.directives.length);
+const waiting = computed(() => team.state?.status === 'blocked');
+const hint = computed(() => {
+  if (waiting.value) {
+    return (
+      team.state?.message ||
+      'The Lead is waiting. Your next message is queued for the Lead and resumes the run.'
+    );
+  }
+  if (pendingCount.value > 0) {
+    return `${pendingCount.value} message${pendingCount.value === 1 ? '' : 's'} queued for the Lead.`;
+  }
+  return '';
+});
+const sendLabel = computed(() => (waiting.value ? 'Reply to Lead' : 'Send to Lead'));
+
 async function send() {
   if (!canSend.value) return;
   const body = text.value.trim();
@@ -31,25 +50,42 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="steer">
-    <textarea
-      v-model="text"
-      class="input"
-      rows="1"
-      placeholder="Steer the team — e.g. focus on the payment flow, prioritize tests, ship the MVP first…"
-      @keydown="onKeydown"
-    />
-    <BaseButton variant="primary" size="md" :loading="busy" :disabled="!canSend" @click="send">Steer</BaseButton>
+    <p v-if="hint" class="hint" :class="{ waiting }">{{ hint }}</p>
+    <div class="row">
+      <textarea
+        v-model="text"
+        class="input"
+        rows="1"
+        placeholder="Message the Lead — every prompt goes to the Lead, who splits the work and assigns the agents…"
+        aria-label="Message the Lead"
+        @keydown="onKeydown"
+      />
+      <BaseButton variant="primary" size="md" :loading="busy" :disabled="!canSend" @click="send">{{ sendLabel }}</BaseButton>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .steer {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border);
   background: var(--bg-elev);
+}
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.hint.waiting {
+  color: var(--amber);
+}
+.row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
 }
 .input {
   flex: 1;

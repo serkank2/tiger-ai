@@ -375,6 +375,12 @@ export interface TeamRunState {
   turnCount?: number;
   /** Current coordination round (UI loop counter). */
   round?: number;
+  /**
+   * Human-readable status/intent line for the run (e.g. "Ready to start.", a waiting
+   * reason when the Lead has idled, or a steering acknowledgement). Surfaced so the Team
+   * screen can explain WHY a run is waiting/blocked without a separate question/reply model.
+   */
+  message?: string;
   updatedAt?: string;
 }
 

@@ -118,6 +118,7 @@ export function toTeamRunStateDto(
     findings: state.findings,
     turnCount: state.turnCount,
     round: state.round,
+    message: state.message,
     updatedAt: state.materialChangeAt,
   };
 }

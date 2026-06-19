@@ -486,10 +486,10 @@ export const useTeamStore = defineStore('team', () => {
         };
       }
       if (!state.value) throw new Error('Team steering did not return a run state');
-      notices.push('Team steering submitted', 'info');
+      notices.push('Message sent to the Lead', 'info');
       return state.value;
     } catch (error) {
-      recordFailure('Team steering failed', error);
+      recordFailure('Message to the Lead failed', error);
       throw error;
     } finally {
       setBusy(key, false);

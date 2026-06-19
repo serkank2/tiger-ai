@@ -25,6 +25,7 @@ import {
   type TeamScheduler,
   type TeamTurnRunner,
 } from './TeamOrchestrator.js';
+import { TaskBoard } from './task-board.js';
 
 const TASKS_MD = `# Final Tasks
 
@@ -181,8 +182,11 @@ test('fake-cli team run emits ordered state/message events and completes only wh
 
     assert.equal(final.status, 'completed');
     assert.equal(final.turnCount, 4);
-    assert.ok(states.some((state) => state.status === 'running'));
-    assert.ok(states.some((state) => state.status === 'completed'));
+    // `waitForTerminal` returns as soon as getState().status flips to a terminal value,
+    // which finishRun sets before its async cleanup and the terminal `state` event is
+    // emitted. Wait for the events themselves so this assertion does not race that emit.
+    await waitFor(() => states.some((state) => state.status === 'running'), 'a running state event');
+    await waitFor(() => states.some((state) => state.status === 'completed'), 'a completed state event');
     assert.deepEqual(
       messages.filter((message) => message.from !== 'user' && message.from !== 'system').map((message) => message.from),
       ['coordinator', 'analyst', 'developer', 'reviewer'],
@@ -781,6 +785,392 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
     const todo = await fs.readdir(path.join(agentDir, 'todo')).catch(() => [] as string[]);
     assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'a developer task was filed to done');
     assert.equal(todo.filter((n) => n.endsWith('.json')).length, 0, 'no developer task left queued');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Lead-owned flow (TASK-0001): the Lead is the single decision-maker and executor.
+// Every user prompt routes to the Lead first; the Lead sequences one unit of work at a
+// time; after any worker turn the Lead reviews before the next role task; no
+// round/round-robin progression; idle/wait when there is no Lead-assigned work.
+// These tests use the engine's DEFAULT scheduler (no injected scheduler).
+// ---------------------------------------------------------------------------
+
+/** A team whose first role is the Lead, plus a developer and a tester. */
+function leadTeam(): typeof roles {
+  return [
+    { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
+    { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+    { id: 'tester', name: 'Tester', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+  ];
+}
+
+/** Complete once every listed role holds a fresh (non-stale) sign-off. */
+function completeWhenSignedOff(...roleIds: string[]): TeamCompletionGate {
+  return {
+    evaluate(state) {
+      const ok = roleIds.every((id) => state.signoffs.some((s) => s.roleId === id && !s.stale));
+      return ok ? { complete: true, reasons: [] } : { complete: false, reasons: ['Awaiting required sign-offs.'] };
+    },
+  };
+}
+
+test('a new run schedules the Lead first; no worker role runs until the Lead assigns it work', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-leadfirst-'));
+  try {
+    const order: string[] = [];
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      // Default Lead-owned scheduler (not injected).
+      completionGate: completeWhenSignedOff('developer'),
+      maxTurns: 12,
+      runner: {
+        async runRoleTurn(input) {
+          order.push(input.role.id);
+          if (input.role.id === 'lead') {
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: it works.' }],
+            };
+          }
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: `${input.role.id} done` }],
+            signoffs: [{}],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Build the thing.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // The Lead ran first; the only worker that ran is the one the Lead assigned. The
+    // tester never ran because the Lead never assigned it work — no blind rotation.
+    assert.deepEqual(order, ['lead', 'developer']);
+    assert.equal(final.turns.filter((turn) => turn.roleId === 'tester').length, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('every user prompt is queued for the Lead in FIFO order and addressed to the Lead', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-leadqueue-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+    });
+    // Created but not started: steering is allowed while paused, so we can assert routing
+    // and FIFO without racing the run loop.
+    await orch.createTeamRun({ workspace, goal: 'First goal.', roles: leadTeam() });
+    await orch.steer('Second prompt.');
+    await orch.steer('Third prompt.');
+
+    const state = orch.getState();
+    // The goal and both later prompts are queued for the Lead, in arrival order (FIFO),
+    // not routed to whichever role would run next.
+    assert.deepEqual(state.directives.map((directive) => directive.body), ['First goal.', 'Second prompt.', 'Third prompt.']);
+    assert.equal(state.directives.every((directive) => directive.status === 'pending'), true);
+    assert.equal(state.pendingSteeringCount, 3);
+
+    const steering = (await orch.listMessages()).filter((message) => message.kind === 'steering');
+    assert.deepEqual(steering.map((message) => message.body), ['First goal.', 'Second prompt.', 'Third prompt.']);
+    assert.equal(steering.every((message) => message.to === 'lead'), true);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a worker completion routes back to the Lead before the next worker (no auto-advance dev → tester)', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-leadbetween-'));
+  try {
+    const order: string[] = [];
+    let leadTurns = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: completeWhenSignedOff('lead', 'developer', 'tester'),
+      maxTurns: 16,
+      runner: {
+        async runRoleTurn(input) {
+          order.push(input.role.id);
+          if (input.role.id === 'lead') {
+            leadTurns += 1;
+            if (leadTurns === 1) {
+              // The Lead queues work for BOTH workers up front. Even so, the engine must
+              // not run tester right after developer — the Lead has to review in between.
+              return {
+                status: 'completed',
+                messages: [
+                  { from: 'lead', kind: 'task', to: 'developer', body: 'Build feature\nAcceptance: works.' },
+                  { from: 'lead', kind: 'task', to: 'tester', body: 'Test feature\nAcceptance: passes.' },
+                ],
+              };
+            }
+            return { status: 'completed', messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }], signoffs: [{}] };
+          }
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: `${input.role.id} done` }],
+            signoffs: [{}],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Coordinate dependent work.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // A Lead turn sits between the developer and the tester even though tester already had
+    // a queued task: the worker→worker hand-off always goes through the Lead.
+    assert.deepEqual(order, ['lead', 'developer', 'lead', 'tester']);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('no Lead-assigned work idles/waits instead of round-robin turns or churning to the round cap', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-idle-'));
+  try {
+    const order: string[] = [];
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      // The gate never completes; only the idle guard can end the loop, so reaching a
+      // waiting state (not the round cap) proves the run idles rather than busy-loops.
+      completionGate: neverComplete(),
+      maxIdleLeadTurns: 1,
+      maxRounds: 50,
+      runner: {
+        async runRoleTurn(input) {
+          order.push(input.role.id);
+          // The Lead never assigns work and never signs off — an unproductive coordinator.
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: 'thinking…' }] };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Nothing actionable.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    // The run settles into a waiting (blocked) state without ever rotating to the workers
+    // and without churning to the round cap.
+    assert.equal(final.status, 'blocked');
+    assert.match(final.message ?? '', /waiting/i);
+    assert.equal(order.every((roleId) => roleId === 'lead'), true);
+    assert.equal(final.turns.filter((turn) => turn.roleId === 'developer').length, 0);
+    assert.equal(final.turns.filter((turn) => turn.roleId === 'tester').length, 0);
+    // Idle after the goal turn (productive) plus one unproductive turn — far below maxRounds.
+    assert.equal(final.turnCount, 2);
+    assert.ok(final.round < 50, 'idled well before the round cap');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a non-Lead role cannot delegate laterally; the attempt is blocked and re-routed to the Lead', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-lateral-'));
+  try {
+    const order: string[] = [];
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: completeWhenSignedOff('developer'),
+      maxTurns: 12,
+      runner: {
+        async runRoleTurn(input) {
+          order.push(input.role.id);
+          if (input.role.id === 'lead') {
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: works.' }],
+            };
+          }
+          if (input.role.id === 'developer') {
+            // The developer tries to delegate directly to the tester — this must NOT execute.
+            return {
+              status: 'completed',
+              messages: [
+                { from: 'developer', kind: 'task', to: 'tester', body: 'Please test my work.' },
+                { from: 'developer', kind: 'signoff', body: 'developer done' },
+              ],
+              signoffs: [{}],
+            };
+          }
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'signoff', body: 'tester done' }], signoffs: [{}] };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Guard lateral delegation.', roles: leadTeam() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // The tester never ran from the developer's lateral assignment.
+    assert.deepEqual(order, ['lead', 'developer']);
+    // The attempt produced a clear system notice routing it back to the Lead.
+    const notice = (await orch.listMessages()).some(
+      (message) => message.from === 'system' && /only the Lead assigns work/i.test(message.body),
+    );
+    assert.ok(notice, 'a system notice explained the lateral delegation was not queued');
+    // The tester's queue stayed empty — the lateral task was never materialized as work.
+    const testerTodo = path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'tester', 'todo');
+    const queued = await fs.readdir(testerTodo).catch(() => [] as string[]);
+    assert.equal(queued.filter((name) => name.endsWith('.json')).length, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Lead prompt priority (TASK-0002): a pending user prompt (or Lead review) must take
+// strict priority over claiming the next queued worker task. A queued worker task may
+// NOT be claimed ahead of the Lead processing a pending prompt.
+// ---------------------------------------------------------------------------
+
+test('a pending user prompt is processed by the Lead before an already-queued worker task is claimed', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-promptpri-'));
+  try {
+    const order: string[] = [];
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: completeWhenSignedOff('developer'),
+      maxTurns: 12,
+      runner: {
+        async runRoleTurn(input) {
+          order.push(input.role.id);
+          if (input.role.id === 'lead') {
+            // The Lead processes the pending prompt; the developer already has queued work.
+            return { status: 'completed', messages: [{ from: 'lead', kind: 'decision', body: 'Prompt acknowledged; proceed with the queued developer task.' }] };
+          }
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'signoff', body: `${input.role.id} done` }], signoffs: [{}] };
+        },
+      },
+    });
+    const created = await orch.createTeamRun({ workspace, goal: 'A user prompt is pending.', roles: leadTeam() });
+    // A Lead-approved worker task is ALREADY queued on the board while a user prompt (the
+    // goal) is still pending. The buggy ordering would claim and run the developer first;
+    // the Lead must run first.
+    const board = new TaskBoard(path.join(workspace, '.tiger', 'team', created.runId));
+    await board.enqueue({ roleId: 'developer', title: 'Pre-queued work', body: 'Do the already-queued work.', createdAt: nowForTest() });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // The Lead handled the pending prompt before the queued developer task was claimed.
+    assert.equal(order[0], 'lead');
+    assert.deepEqual(order, ['lead', 'developer']);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('after a worker completes with a user prompt pending, the Lead runs before the next queued worker task', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-boundarypri-'));
+  let releaseDev!: () => void;
+  const devGate = new Promise<void>((resolve) => {
+    releaseDev = resolve;
+  });
+  const order: string[] = [];
+  let leadTurns = 0;
+  let devTurns = 0;
+  const orch = new TeamOrchestrator({
+    executionPersistence: new MemoryExecutionPersistence(),
+    completionGate: completeWhenSignedOff('lead', 'developer'),
+    maxTurns: 16,
+    runner: {
+      async runRoleTurn(input) {
+        order.push(input.role.id);
+        if (input.role.id === 'lead') {
+          leadTurns += 1;
+          if (leadTurns === 1) {
+            // Queue TWO developer tasks up front, so a second worker task is waiting when
+            // the first completes — yet the Lead must still run next once a prompt is pending.
+            return {
+              status: 'completed',
+              messages: [
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Dev task one\nAcceptance: ok.' },
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Dev task two\nAcceptance: ok.' },
+              ],
+            };
+          }
+          return { status: 'completed', messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }], signoffs: [{}] };
+        }
+        // developer: hold the first task in progress until the test injects a user prompt.
+        devTurns += 1;
+        if (devTurns === 1) await devGate;
+        return { status: 'completed', messages: [{ from: 'developer', kind: 'signoff', body: 'dev done' }], signoffs: [{}] };
+      },
+    },
+  });
+  try {
+    await orch.createTeamRun({ workspace, goal: 'Boundary priority.', roles: leadTeam() });
+    await orch.start();
+    // Wait until the Lead has assigned both tasks and the first developer task is in progress.
+    await waitFor(() => order.length >= 2 && order[1] === 'developer', 'first developer task in progress');
+    // A user prompt arrives while the first developer task is still in progress; a second
+    // developer task is already queued behind it.
+    await orch.steer('A new instruction for the Lead.');
+    releaseDev();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    // After the developer completes, the next turn is the Lead (to process the pending
+    // prompt), NOT the second queued developer task.
+    assert.deepEqual(order.slice(0, 3), ['lead', 'developer', 'lead']);
+  } finally {
+    releaseDev();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Steer-while-waiting (TASK-0003): a new Lead prompt submitted while the run has idled to
+// a resumable waiting state must resume the loop so the Lead processes it — no manual resume.
+// ---------------------------------------------------------------------------
+
+test('steering a run that has idled to a waiting state resumes the loop so the Lead processes the prompt', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-steerwake-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxIdleLeadTurns: 1,
+      // Complete only once the Lead signs off, and the Lead only signs off after it has seen
+      // the user prompt — so completion proves the resumed loop actually processed the prompt.
+      completionGate: {
+        evaluate(state) {
+          return state.signoffs.some((s) => s.roleId === 'lead' && !s.stale)
+            ? { complete: true, reasons: [] }
+            : { complete: false, reasons: ['Awaiting lead sign-off.'] };
+        },
+      },
+      runner: {
+        async runRoleTurn(input) {
+          if (input.role.id !== 'lead') return { status: 'completed' };
+          const sawPrompt = input.appliedSteering.some((directive) => directive.body.includes('Please finish'));
+          if (sawPrompt) {
+            return { status: 'completed', messages: [{ from: 'lead', kind: 'signoff', body: 'done' }], signoffs: [{}] };
+          }
+          // Nothing actionable yet → unproductive Lead turn, so the run idles to a waiting state.
+          return { status: 'completed', messages: [{ from: 'lead', kind: 'chat', body: 'nothing to do yet' }] };
+        },
+      },
+    });
+    await orch.createTeamRun({ workspace, goal: 'Initial goal.', roles: leadTeam() });
+    await orch.start();
+    const idled = await waitForTerminal(orch);
+    assert.equal(idled.status, 'blocked');
+    assert.match(idled.message ?? '', /waiting/i);
+
+    // Submitting a new Lead prompt while waiting must resume the run with no manual resume.
+    await orch.steer('Please finish the work.');
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'completed');
+    assert.ok(final.signoffs.some((s) => s.roleId === 'lead' && !s.stale), 'the resumed Lead processed the prompt and signed off');
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }

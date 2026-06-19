@@ -571,6 +571,8 @@ export interface TeamRunState {
   findings?: TigerFindingsSummary | null;
   turnCount?: number;
   round?: number;
+  /** Human-readable status/intent line (e.g. a waiting reason when the Lead has idled). */
+  message?: string;
   updatedAt?: string;
 }
 

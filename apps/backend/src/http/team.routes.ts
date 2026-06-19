@@ -323,12 +323,16 @@ export function createTeamRouter(ctx: AppCtx): Router {
     res.json({ state: toTeamRunStateDto(orch.getState()) });
   });
 
+  // Every Team prompt is routed to the Lead (the orchestrator queues it for the Lead, not
+  // for whichever role would run next). When the run had idled to a resumable waiting state,
+  // `steer` also resumes the loop so the Lead picks up the prompt without a manual resume —
+  // so the returned state may flip from 'blocked' back to 'running'.
   router.post('/runs/:id/steer', async (req, res) => {
     requireActiveRun(ctx, req.params.id);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const text = asString(body.body).trim();
     if (!text) {
-      httpError(res, 400, 'steering body is required');
+      httpError(res, 400, 'message body is required');
       return;
     }
     await orch.steer(text);

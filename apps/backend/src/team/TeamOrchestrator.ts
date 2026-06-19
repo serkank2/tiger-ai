@@ -166,6 +166,19 @@ export interface TeamRunState {
   findings: FindingsSummary | null;
   messageCount: number;
   pendingSteeringCount: number;
+  /**
+   * Lead-owned sequencing: true when a non-Lead role has just finished (completed,
+   * blocked, failed, verified, signed off, or reported findings) and the Lead must
+   * review the result before any further role task is claimed. Guarantees the run
+   * never auto-advances from one worker role to another without a Lead turn between.
+   */
+  leadReviewPending?: boolean;
+  /**
+   * Consecutive Lead turns that drove no progress (no task assigned, no sign-off, no
+   * material decision/verification, and no pending prompt/review to act on). When this
+   * reaches the idle ceiling the run waits instead of looping the Lead to the round cap.
+   */
+  consecutiveIdleLeadTurns?: number;
   materialChangeAt: string;
   createdAt: string;
   startedAt?: string;
@@ -315,6 +328,12 @@ export interface TeamOrchestratorOptions {
    * fails every turn must not loop to the round cap. Default 3.
    */
   maxConsecutiveFailures?: number;
+  /**
+   * How many consecutive *unproductive* Lead turns (no task assigned, no sign-off, no
+   * material decision/verification, and nothing pending to act on) are tolerated before
+   * the run idles/waits rather than spinning the Lead to the round cap. Default 2.
+   */
+  maxIdleLeadTurns?: number;
 }
 
 export class TeamPaths {
@@ -493,50 +512,73 @@ export class FileTeamPersistence implements TeamPersistence {
 const DISABLED_GUARD = -1;
 
 /**
- * Default scheduler: adapts the engine's run state to the pure scheduler's input
- * and drives selection through `selectNextTurns` (TASK-007), mapping its
- * phase-aware decision back onto the engine's turn lifecycle.
- */
-/**
- * Default scheduler: a deterministic round-robin over the configured roles, one
- * role per turn, in their declared order (Lead → Analyst → Developer → Tester →
- * Reviewer → …). Every role therefore gets repeated turns and the conversation
- * reads like an ordered company chat.
+ * Default scheduler: Lead-owned sequencing. The Lead is the single decision-maker and
+ * executor of the run — round/round-robin progression no longer drives work. The engine
+ * claims a Lead-approved worker task from the per-role board only when NO Lead work is
+ * pending; otherwise it consults this scheduler, which always gives the Lead the turn so
+ * the Lead handles it first (process the next user prompt, review the latest role result,
+ * assign the next task, or sign off) — never a blind rotation over the other roles. Pending
+ * Lead work therefore takes strict priority over claiming the next queued worker task.
  *
- * This intentionally does NOT depend on the Tiger task/finding board: an AI team
- * coordinates through its conversation, not by populating the pipeline's task
- * files, so a phase scheduler keyed off that board would dead-end in the "manager"
- * phase and only ever run the lead. Completion is still gated by the code-enforced
- * done-gate (every required role must hold a fresh sign-off), so round-robin can
- * over-serve a role without ever falsely completing.
+ * Idle, not busy-loop: a Lead that stops advancing the run (no task assigned, no
+ * sign-off, no material decision/verification, and nothing pending to act on) idles after
+ * {@link maxIdleLeadTurns} turns. The engine then waits for a user prompt or new
+ * Lead-assigned work instead of spinning the Lead to the round cap. Completion stays
+ * code-gated (every required role must hold a fresh sign-off), so idling never falsely
+ * completes the run.
  */
-class DefaultTeamScheduler implements TeamScheduler {
+class LeadOwnedScheduler implements TeamScheduler {
+  constructor(private readonly maxIdleLeadTurns: number) {}
+
   selectNextTurns(state: TeamRunState): TeamSchedulerDecision {
     if (state.status !== 'running') return { turns: [] };
-    const roles = state.roles;
-    if (roles.length === 0) {
+    if (state.roles.length === 0) {
       return { turns: [], terminal: { status: 'blocked', reason: 'No team roles are configured.' } };
     }
-    // Fair fixed-order rotation: walk the roles in their declared order starting at
-    // `turnCount % n`, and pick the FIRST role that does not already hold a fresh "done"
-    // sign-off. Starting offset advances by one each turn, so every role is reached in
-    // order (Lead → Analyst → Developer → Tester → Reviewer → …) — no role is starved —
-    // while roles that are genuinely done are skipped so the run converges. When every
-    // role holds a fresh sign-off there is nothing to schedule; the completion gate (run
-    // at the top of the loop) decides completion, and an empty decision here surfaces a
-    // "signed off but a gate is still open" state instead of busy-looping.
-    const n = roles.length;
-    const freshlyDone = (roleId: string): boolean =>
-      state.signoffs.some((signoff) => signoff.roleId === roleId && !signoff.stale);
-    const start = state.turnCount % n;
-    for (let i = 0; i < n; i++) {
-      const role = roles[(start + i) % n]!;
-      if (!freshlyDone(role.id)) {
-        return { turns: [{ roleId: role.id, reason: `${role.name}'s turn to contribute.` }] };
-      }
+    const leadId = resolveLeadRoleId(state.roles);
+    if (!leadId) {
+      return { turns: [], terminal: { status: 'blocked', reason: 'No Lead role could be resolved for this team.' } };
     }
-    return { turns: [], reason: 'Every role holds a fresh sign-off; no further turn is needed.' };
+    // Pending Lead work ALWAYS schedules the Lead and overrides the idle guard: a queued
+    // user prompt or a just-finished role result the Lead must review takes priority so it
+    // is never starved — even if the Lead had previously idled (e.g. a prompt arrives after
+    // the run idled and is resumed). The run loop also blocks worker-task claiming whenever
+    // this is true, so the Lead is reached before any further non-Lead work starts.
+    const hasPendingPrompt = state.directives.some((directive) => directive.status === 'pending');
+    if (hasPendingPrompt || state.leadReviewPending === true) {
+      return {
+        turns: [
+          {
+            roleId: leadId,
+            reason: hasPendingPrompt
+              ? 'Processing the latest user prompt and planning the next step.'
+              : 'Reviewing the latest role result and deciding the next unit of work.',
+          },
+        ],
+      };
+    }
+    // No pending Lead work: the Lead keeps driving (assign the next task / sign off) until it
+    // stops advancing the run, then it idles/waits instead of looping to the round cap.
+    if ((state.consecutiveIdleLeadTurns ?? 0) >= this.maxIdleLeadTurns) {
+      return {
+        turns: [],
+        reason:
+          'The Lead has no further action that advances the run; waiting for a user prompt or new Lead-assigned work.',
+      };
+    }
+    return { turns: [{ roleId: leadId, reason: 'Coordinating the team and assigning the next unit of work.' }] };
   }
+}
+
+/**
+ * Resolve which role acts as the Lead/coordinator: prefer a role whose kind is `lead`,
+ * then `coordinator`, else fall back to the first configured role. The Lead owns the
+ * flow — user prompts route to it, it sequences all work, and only it may delegate.
+ */
+function resolveLeadRoleId(roles: TeamRoleInstance[]): string | null {
+  const firstOfKind = (kind: PureRoleKind): string | undefined =>
+    roles.find((role) => deriveRoleKind(role) === kind)?.id;
+  return firstOfKind('lead') ?? firstOfKind('coordinator') ?? roles[0]?.id ?? null;
 }
 
 /**
@@ -888,6 +930,7 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxTurns: number;
   private readonly maxRounds: number;
   private readonly maxConsecutiveFailures: number;
+  private readonly maxIdleLeadTurns: number;
   /** Consecutive failed turns since the last successful turn (recovery guard). */
   private consecutiveTurnFailures = 0;
 
@@ -901,7 +944,8 @@ export class TeamOrchestrator extends EventEmitter {
     this.maxTurns = options.maxTurns ?? 200;
     this.maxRounds = options.maxRounds ?? 200;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
-    this.scheduler = options.scheduler ?? new DefaultTeamScheduler();
+    this.maxIdleLeadTurns = options.maxIdleLeadTurns ?? 2;
+    this.scheduler = options.scheduler ?? new LeadOwnedScheduler(this.maxIdleLeadTurns);
     this.runner = options.runner ?? new MissingTeamTurnRunner();
     this.completionGate =
       options.completionGate ?? new DefaultCompletionGate({ maxTurns: this.maxTurns, maxRounds: this.maxRounds });
@@ -937,6 +981,8 @@ export class TeamOrchestrator extends EventEmitter {
       findings: null,
       messageCount: 0,
       pendingSteeringCount: 0,
+      leadReviewPending: false,
+      consecutiveIdleLeadTurns: 0,
       materialChangeAt: createdAt,
       createdAt,
       message: 'Ready to start.',
@@ -945,8 +991,14 @@ export class TeamOrchestrator extends EventEmitter {
     this.taskBoard = new TaskBoard(paths.runDir);
     await this.taskBoard.init(roles.map((role) => role.id));
     await this.refreshWorkQueues();
+    // The goal is the Lead's first piece of work: seed it as a user prompt addressed to
+    // the Lead so the first executable turn is the Lead, with the goal in its context.
+    // It is queued as a pending steering directive (it stays a completion blocker until
+    // the Lead has processed it, and never routes to a non-Lead role).
+    const leadId = resolveLeadRoleId(roles);
     const seed = await this.appendMessage({
       from: USER_SENDER,
+      to: leadId ?? undefined,
       kind: 'steering',
       channel: 'directives',
       body: goal,
@@ -1039,8 +1091,12 @@ export class TeamOrchestrator extends EventEmitter {
     const text = body.trim();
     if (!text) throw httpError(400, 'steering directive is required');
     const createdAt = nowIso();
+    // Every user prompt goes to the Lead, never to whichever role would run next. It is
+    // queued (FIFO) as a pending directive the Lead picks up on its next turn; the Lead
+    // owns decomposition and sequencing. A user scope change stales existing sign-offs.
     const message = await this.appendMessage({
       from,
+      to: this.leadRoleId() ?? undefined,
       kind: 'steering',
       channel: 'directives',
       body: text,
@@ -1056,9 +1112,20 @@ export class TeamOrchestrator extends EventEmitter {
     state.materialChangeAt = message.createdAt;
     this.staleSignoffs('Steering changed the run scope.');
     state.pendingSteeringCount = this.countPendingSteering();
-    state.message = 'Steering will be applied at the next turn boundary.';
+    const idledWaiting = state.status === 'blocked' && !this.loop;
+    state.message = idledWaiting
+      ? 'Your prompt was queued for the Lead; resuming the run so the Lead picks it up.'
+      : 'Your prompt was queued for the Lead and will be picked up on the Lead\'s next turn.';
     await this.persistState();
     this.emitState();
+    // If the run had idled to a resumable waiting state (status 'blocked' with the loop
+    // stopped), a new Lead prompt should make it continue WITHOUT a separate manual resume:
+    // restart the loop so the Lead picks up the queued prompt. (A user-initiated 'paused'
+    // run is intentionally NOT auto-resumed.) Best-effort: if resume fails, the prompt is
+    // still queued and the user can resume manually.
+    if (idledWaiting) {
+      await this.resume().catch(() => undefined);
+    }
     return message;
   }
 
@@ -1141,15 +1208,23 @@ export class TeamOrchestrator extends EventEmitter {
       if (state.status !== 'running') return;
 
       await this.refreshActiveRunLease();
-      await this.drainSteeringAtBoundary();
       if (await this.completeOrStopFromGate()) return;
       if (await this.pauseIfRequested()) return;
 
-      // Lead-assigned work first: if any role has a queued task on its board, claim and run
-      // it. Only when no task is pending do we fall back to the coordination rotation (which
-      // gives the Lead turns to assign more work, and drives the final sign-off round).
+      // Lead-owned sequencing. The Lead owns the queue: it processes user prompts, reviews
+      // each role result, assigns the next unit of work, and signs off. A worker role runs
+      // ONLY from a Lead-assigned board task. Pending Lead work — a queued user prompt OR a
+      // just-finished role result the Lead must review — takes STRICT priority over claiming
+      // the next worker task: while any is pending we do not claim, so the scheduler gives
+      // the Lead the turn first. This guarantees every user prompt reaches the Lead before
+      // any further non-Lead work starts, and that no two role tasks run back-to-back without
+      // a Lead turn between them. The Lead's own work is always scheduler-driven, never
+      // claimed from its board (Lead-addressed messages are review requests, not work).
+      const leadId = this.leadRoleId();
+      const hasPendingLeadWork =
+        state.leadReviewPending === true || state.directives.some((directive) => directive.status === 'pending');
       let turns: TeamScheduledTurn[];
-      const claimed = await this.claimNextAgentTask();
+      const claimed = hasPendingLeadWork ? null : await this.claimNextAgentTask(leadId ?? undefined);
       if (claimed) {
         turns = [
           {
@@ -1173,10 +1248,21 @@ export class TeamOrchestrator extends EventEmitter {
           return;
         }
         if (decision.turns.length === 0) {
-          await this.finishRun('blocked', decision.reason ?? 'Scheduler did not select a next turn.');
+          // No Lead-approved worker task and nothing for the Lead to act on → wait/idle.
+          // The run stays resumable (sessions alive); a new user prompt or resume restarts it.
+          await this.finishRun('blocked', decision.reason ?? 'No Lead-assigned work or user prompt is pending; the team is waiting.');
           return;
         }
         turns = decision.turns;
+      }
+
+      // User prompts are the Lead's to process: drain pending steering ONLY into a turn
+      // batch that includes the Lead, so a worker turn never absorbs a user directive
+      // meant for the Lead. Worker turns run with no applied steering.
+      if (leadId && turns.some((turn) => turn.roleId === leadId)) {
+        await this.drainSteeringAtBoundary();
+      } else {
+        this.lastBoundarySteering = [];
       }
 
       state.round += 1;
@@ -1289,6 +1375,12 @@ export class TeamOrchestrator extends EventEmitter {
 
   private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
     const state = this.requireState();
+    // Lead-owned sequencing inputs, captured before this turn's effects are applied.
+    const isLeadTurn = role.id === this.leadRoleId();
+    // A Lead turn "had work" if it processed a user prompt (drained directives) or was
+    // reviewing a just-finished role result — such a turn is productive even if quiet.
+    const leadHadPendingWork = isLeadTurn && (turn.appliedDirectiveIds.length > 0 || state.leadReviewPending === true);
+    const materialBefore = state.materialChangeAt;
     const messages = result.messages ?? [];
     const appended: TeamMessage[] = [];
     for (const draft of messages) {
@@ -1336,20 +1428,37 @@ export class TeamOrchestrator extends EventEmitter {
     // Record sign-offs ONLY from explicit "done" directives (mapRunnerResult already
     // filters to status === 'done'), so a role is marked done solely when it genuinely
     // declares completion — never from a chat message alone.
+    const signoffsRecorded = (result.signoffs ?? []).length;
     for (const signoff of result.signoffs ?? []) {
       const signoffRole = state.roles.find((entry) => entry.id === (signoff.roleId ?? role.id)) ?? role;
       this.recordSignoff(signoffRole, undefined, signoff.createdAt, signoff.messageId);
     }
 
-    // Materialize this turn's `task` assignments (addressed to a role) into that role's
-    // todo queue, so the Lead can dynamically delegate work that later turns will claim.
-    await this.enqueueTaskAssignments(appended);
+    // Materialize this turn's Lead-approved `task` assignments into the target role's todo
+    // queue. Only the Lead may delegate executable work; lateral non-Lead delegation and
+    // Lead-addressed review requests are handled (and re-routed to the Lead) here.
+    const tasksEnqueued = await this.enqueueTaskAssignments(appended);
 
     turn.status = result.status;
     turn.endedAt = nowIso();
     turn.reason = result.reason;
     state.turnCount += 1;
     await this.refreshWorkQueues();
+
+    // Lead-owned sequencing bookkeeping. After any non-Lead turn the Lead must review the
+    // result before more work runs. A Lead turn that advances the run (assigned a task,
+    // recorded a sign-off, produced a material decision/verification, or had a prompt/review
+    // to act on) resets the idle counter; an unproductive Lead turn increments it so a
+    // stalled Lead eventually idles instead of looping to the round cap.
+    if (isLeadTurn) {
+      state.leadReviewPending = false;
+      const productive =
+        leadHadPendingWork || state.materialChangeAt !== materialBefore || signoffsRecorded > 0 || tasksEnqueued > 0;
+      state.consecutiveIdleLeadTurns = productive ? 0 : (state.consecutiveIdleLeadTurns ?? 0) + 1;
+    } else {
+      state.leadReviewPending = true;
+      state.consecutiveIdleLeadTurns = 0;
+    }
 
     // Recovery policy. A single role turn failing — or a role reporting itself blocked —
     // must NOT end the whole run: another role (or a retry next round) can recover, and
@@ -1525,12 +1634,21 @@ export class TeamOrchestrator extends EventEmitter {
     }
   }
 
-  /** Claim the next queued board task for any role (role order; FIFO within a role). */
-  private async claimNextAgentTask(): Promise<{ roleId: string; task: AgentTask } | null> {
+  /** The role acting as Lead/coordinator for this run, or null when no role is configured. */
+  private leadRoleId(): string | null {
+    return resolveLeadRoleId(this.requireState().roles);
+  }
+
+  /**
+   * Claim the next queued worker task (role order; FIFO within a role). `excludeRoleId`
+   * skips the Lead's own queue: the Lead is scheduler-driven, never claimed as worker work.
+   */
+  private async claimNextAgentTask(excludeRoleId?: string): Promise<{ roleId: string; task: AgentTask } | null> {
     if (!this.taskBoard) return null;
     const state = this.requireState();
     const now = nowIso();
     for (const role of state.roles) {
+      if (excludeRoleId && role.id === excludeRoleId) continue;
       const task = await this.taskBoard.claimNext(role.id, now);
       if (task) return { roleId: role.id, task };
     }
@@ -1543,13 +1661,47 @@ export class TeamOrchestrator extends EventEmitter {
     return firstLine.slice(0, 120);
   }
 
-  /** Materialize a role's `task` messages (addressed to a role) into that role's todo queue. */
-  private async enqueueTaskAssignments(messages: TeamMessage[]): Promise<void> {
-    if (!this.taskBoard) return;
-    const roleIds = new Set(this.requireState().roles.map((role) => role.id));
+  /**
+   * Materialize Lead-approved `task` messages into the target role's todo queue, enforcing
+   * Lead-owned delegation. Returns the number of tasks actually enqueued.
+   *
+   * Routing rules:
+   *  - Lead → worker role: enqueued as executable board work.
+   *  - any role → Lead: a review/approval request, NOT executable board work — it just
+   *    flags a Lead review (its content is already in the transcript the Lead reads).
+   *  - non-Lead → another worker role: lateral delegation that is not Lead-approved; it is
+   *    dropped (never executed silently) and re-routed to the Lead with a system notice.
+   */
+  private async enqueueTaskAssignments(messages: TeamMessage[]): Promise<number> {
+    if (!this.taskBoard) return 0;
+    const state = this.requireState();
+    const roleIds = new Set(state.roles.map((role) => role.id));
+    const leadId = this.leadRoleId();
+    let enqueued = 0;
     for (const message of messages) {
       const to = message.to;
       if (message.kind !== 'task' || !to || !roleIds.has(to)) continue;
+
+      // A task addressed to the Lead is a review request: don't queue it as worker work,
+      // just ensure the Lead takes a turn to inspect it.
+      if (to === leadId) {
+        state.leadReviewPending = true;
+        continue;
+      }
+
+      // Only the Lead may assign executable work to a role. A non-Lead role delegating
+      // laterally must not silently run as if Lead-approved — drop it, route it to the Lead.
+      if (leadId && message.from !== leadId) {
+        await this.appendMessage({
+          turnId: message.turnId,
+          from: SYSTEM_SENDER,
+          kind: 'system',
+          body: `${message.from} attempted to assign a task to ${to}, but only the Lead assigns work. The request was not queued; it is flagged for Lead review.`,
+        });
+        state.leadReviewPending = true;
+        continue;
+      }
+
       const title = this.taskTitle(message.body);
       const titles = await this.taskBoard.titles(to);
       if (titles.has(title)) continue; // a re-assignment of the same task — skip
@@ -1560,7 +1712,9 @@ export class TeamOrchestrator extends EventEmitter {
         body: message.body,
         createdAt: message.createdAt,
       });
+      enqueued += 1;
     }
+    return enqueued;
   }
 
   /** File a turn's claimed board task: done on success, back to the queue otherwise. */
@@ -1836,6 +1990,9 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     tasks: value.tasks ?? null,
     findings: value.findings ?? null,
     currentTurn: value.currentTurn ?? null,
+    leadReviewPending: value.leadReviewPending === true,
+    consecutiveIdleLeadTurns:
+      typeof value.consecutiveIdleLeadTurns === 'number' ? value.consecutiveIdleLeadTurns : 0,
     pendingSteeringCount: Array.isArray(value.directives)
       ? value.directives.filter((directive) => directive.status === 'pending').length
       : 0,
