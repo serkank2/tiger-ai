@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   getQueueState: vi.fn(),
   enqueueQueue: vi.fn(),
   reorderQueue: vi.fn(),
+  bulkQueue: vi.fn(),
   pauseQueueJob: vi.fn(),
   resumeQueueJob: vi.fn(),
   cancelQueueJob: vi.fn(),
@@ -83,6 +84,8 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
       },
     ],
     events,
+    runningByProvider: { claude: 0, codex: 0, antigravity: 0, mixed: 0 },
+    providerConcurrency: { claude: 1, codex: 1, antigravity: 1, mixed: 1 },
     updatedAt: '2026-06-18T08:00:00.000Z',
   };
 }
@@ -134,6 +137,32 @@ describe('useQueueStore', () => {
     expect(api.cancelQueueJob).toHaveBeenCalledWith('a');
     expect(api.retryQueueJob).toHaveBeenCalledWith('a');
     expect(api.getQueueState).toHaveBeenCalledTimes(4);
+  });
+
+  it('runs bulk actions and reconciles from the returned state', async () => {
+    const store = useQueueStore();
+    api.bulkQueue.mockResolvedValueOnce({
+      action: 'cancel',
+      results: [
+        { id: 'a', ok: true, status: 'canceled' },
+        { id: 'b', ok: false, error: 'cannot cancel job in completed state' },
+      ],
+      state: state([job('a', { status: 'canceled' }), job('b', { status: 'completed' })]),
+    });
+
+    const results = await store.bulk('cancel', ['a', 'b']);
+
+    expect(api.bulkQueue).toHaveBeenCalledWith('cancel', ['a', 'b']);
+    expect(results).toHaveLength(2);
+    expect(results[1]?.ok).toBe(false);
+    expect(store.jobs.find((item) => item.id === 'a')?.status).toBe('canceled');
+  });
+
+  it('skips the bulk request when no ids are selected', async () => {
+    const store = useQueueStore();
+    const results = await store.bulk('pause', []);
+    expect(results).toEqual([]);
+    expect(api.bulkQueue).not.toHaveBeenCalled();
   });
 
   it('applies queue.state snapshots and restores persisted events', () => {

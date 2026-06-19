@@ -56,10 +56,19 @@ export class TerminalManager extends EventEmitter {
 
   // --- lifecycle ---
 
+  /**
+   * Construct the session backing a definition. Isolated so tests can subclass the manager
+   * and substitute a fake session (avoiding a real pty spawn); production always uses the
+   * real {@link TerminalSession}. Behavior is otherwise identical.
+   */
+  protected createSession(def: TerminalDefinition): TerminalSession {
+    return new TerminalSession(def);
+  }
+
   private ensureSession(def: TerminalDefinition): TerminalSession {
     let s = this.sessions.get(def.id);
     if (!s) {
-      s = new TerminalSession(def);
+      s = this.createSession(def);
       s.on('output', (data: string) =>
         this.emit('output', { termId: def.id, data } satisfies ManagerOutputEvent),
       );

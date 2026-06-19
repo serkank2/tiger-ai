@@ -172,6 +172,18 @@ export class MemoryQueueRepository implements QueueRepository {
     this.jobs.set(id, { ...job, ...structuredClone(patch) });
   }
 
+  async deleteJob(id: string): Promise<boolean> {
+    if (!this.jobs.delete(id)) return false;
+    // Mirror the MySQL FK cascade: steps go with the job, events keep their row but lose the job link.
+    for (const step of [...this.steps.values()]) {
+      if (step.jobId === id) this.steps.delete(step.id);
+    }
+    for (const evt of [...this.events.values()]) {
+      if (evt.jobId === id) this.events.set(evt.id, { ...evt, jobId: null });
+    }
+    return true;
+  }
+
   async updateStep(jobId: string, stepKey: StageId, patch: QueueStepPatch): Promise<void> {
     const step = [...this.steps.values()].find((s) => s.jobId === jobId && s.stepKey === stepKey);
     if (!step) return;

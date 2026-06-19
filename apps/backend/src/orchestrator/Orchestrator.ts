@@ -1,7 +1,16 @@
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
+import { config } from '../config.js';
+import {
+  createWorktree,
+  isGitRepo,
+  removeWorktree,
+  worktreeDiff,
+  type Worktree,
+} from '../git/worktree.js';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { RunTemplateService } from '../services/run-templates.js';
 import { STAGE_META, TigerPaths, agentLabel } from './paths.js';
@@ -101,6 +110,53 @@ function stageStatusToRunStatus(status: StageStatus): ExecutionRunStatus {
   return 'interrupted';
 }
 
+// ---------------------------------------------------------------------------
+// Git-worktree-per-task isolation (opt-in; see config.tiger.worktreePerTask).
+//
+// When enabled and the workspace is a git repo, each parallel task in the
+// execute stage runs in its own throwaway worktree on branch `kaplan/<taskId>`.
+// The pure helpers below decide a run's cwd and plan the merge-back; the
+// side-effecting flow lives in the Orchestrator (createWorktree -> launch with
+// the worktree cwd -> diff -> merge back -> remove). Conflict-on-merge leaves the
+// worktree + branch intact and marks the task needing attention.
+// ---------------------------------------------------------------------------
+
+/** Outcome classes for the per-task branch merge-back. */
+export type MergeOutcome = 'fast-forward' | 'merged' | 'conflict' | 'failed';
+
+/**
+ * Decide the working directory a run should launch in. Pure + unit-tested.
+ * Worktree isolation only applies when (a) it is enabled, (b) the workspace is a
+ * git repo, and (c) we successfully created a worktree (worktreePath set). In every
+ * other case the run uses the shared tiger root — i.e. default-off behavior is
+ * byte-for-byte identical to before.
+ */
+export function decideRunCwd(opts: {
+  tigerRoot: string;
+  enabled: boolean;
+  isRepo: boolean;
+  worktreePath?: string | null;
+}): string {
+  if (opts.enabled && opts.isRepo && opts.worktreePath) return opts.worktreePath;
+  return opts.tigerRoot;
+}
+
+/**
+ * Classify a `git merge` result into a {@link MergeOutcome}. Pure + unit-tested.
+ * Detects the "CONFLICT"/"Automatic merge failed" signature git prints so callers
+ * can leave the worktree intact for inspection instead of auto-resolving.
+ */
+export function classifyMergeResult(res: { ok: boolean; stdout: string; stderr: string }): MergeOutcome {
+  if (res.ok) {
+    return /already up to date|fast-forward/i.test(res.stdout) ? 'fast-forward' : 'merged';
+  }
+  const blob = `${res.stdout}\n${res.stderr}`.toLowerCase();
+  if (blob.includes('conflict') || blob.includes('automatic merge failed') || blob.includes('overwritten by merge')) {
+    return 'conflict';
+  }
+  return 'failed';
+}
+
 /**
  * The Tiger workflow engine. Owns the selected workspace, per-workspace config, and
  * in-memory stage/agent run state. Reuses the shared TerminalManager to run interactive
@@ -137,6 +193,16 @@ export class Orchestrator extends EventEmitter {
   private activeOwner: ExecutionOwner | null = null;
   private runTemplates?: RunTemplateService;
   private readonly autoResumeInterruptedStages: boolean;
+  /**
+   * Worktrees this run created for the active execute stage, keyed by task id. Tracked so an
+   * abort/cleanup path can prune any that a clean merge-back did not already remove. Only ever
+   * populated when config.tiger.worktreePerTask is enabled and the workspace is a git repo.
+   */
+  private taskWorktrees = new Map<string, Worktree>();
+  /** Task ids whose worktree was deliberately KEPT (merge conflict) — never auto-pruned. */
+  private keptWorktrees = new Set<string>();
+  /** Cached per-stage decision: is worktree-per-task active right now? Resolved once per stage. */
+  private worktreeStageActive = false;
 
   constructor(private readonly manager: TerminalManager, options: OrchestratorOptions = {}) {
     super();
@@ -780,6 +846,20 @@ export class Orchestrator extends EventEmitter {
       return;
     }
 
+    // Resolve worktree-per-task isolation for this stage exactly once (an `isGitRepo` probe per
+    // task would be wasteful and could race). Active only when opted in AND the workspace is a git
+    // repo; otherwise every run uses the shared tiger root, byte-for-byte as before.
+    this.taskWorktrees.clear();
+    this.keptWorktrees.clear();
+    this.worktreeStageActive =
+      config.tiger.worktreePerTask && !!this.workspace && (await isGitRepo(this.workspace));
+    if (this.worktreeStageActive) {
+      await logNote(
+        paths.runLogFile,
+        'Worktree-per-task isolation is ON: each task runs in its own git worktree, merged back on clean completion.',
+      ).catch(() => {});
+    }
+
     let counter = 0;
     // Claim + implement exactly one task with the given agent type. The claim is an atomic file
     // rename (not_started -> in_progress); the filename is the lock. Returns false when none remain.
@@ -808,6 +888,16 @@ export class Orchestrator extends EventEmitter {
       });
       const run = this.makeRun('executing-plan', type, index, cfg, claimed.record.id);
       run.runId = this.activeRunId ?? undefined;
+      // Isolate this task in its own git worktree (if enabled) BEFORE registering the terminal,
+      // so the PTY launches with the worktree as its cwd. On any worktree-creation failure we log
+      // and fall back to the shared cwd — isolation is best-effort and never blocks execution.
+      const worktree = await this.maybeCreateTaskWorktree(claimed.record.id);
+      run.cwd = decideRunCwd({
+        tigerRoot: paths.root,
+        enabled: this.worktreeStageActive,
+        isRepo: this.worktreeStageActive,
+        worktreePath: worktree?.path ?? null,
+      });
       stage.runs.push(run);
       this.registerRun(run);
       await this.recordAgentSnapshot(run);
@@ -820,10 +910,17 @@ export class Orchestrator extends EventEmitter {
       // (or reported blocked) is treated as blocked, never silently done.
       const output = await fs.readFile(run.outputPath, 'utf8').catch(() => '');
       const gate = evaluateCompletionGate(requiredSelfReport('executing-plan'), run.state === 'completed', output);
-      const finalStatus: 'done' | 'blocked' = gate.ok ? 'done' : 'blocked';
+      let finalStatus: 'done' | 'blocked' = gate.ok ? 'done' : 'blocked';
       if (!gate.ok && gate.reason) {
         run.error = run.error ?? gate.reason;
         void logNote(paths.runLogFile, `${run.label} blocked on ${claimed.record.id}: ${gate.reason}`);
+      }
+      // Surface the worktree's change set and merge its branch back into the workspace. A merge
+      // conflict (or other merge failure) downgrades the task to blocked and KEEPS the worktree +
+      // branch intact for manual inspection; a clean merge prunes the worktree.
+      if (worktree) {
+        const mergeResult = await this.mergeBackTaskWorktree(run, claimed.record.id, worktree, finalStatus === 'done');
+        if (mergeResult === 'conflict' || mergeResult === 'failed') finalStatus = 'blocked';
       }
       await finishTaskFile(paths.tasksDir, claimed.record.id, finalStatus, nowIso());
       const finalRecord = (await listTaskRecords(paths.tasksDir)).find((t) => t.id === claimed.record.id);
@@ -848,7 +945,172 @@ export class Orchestrator extends EventEmitter {
         /* processTask already implemented the claimed task; nothing further to do */
       },
     });
+    // Prune any worktrees that survived (e.g. left intact on conflict, or stranded by an abort).
+    // Conflict worktrees are deliberately KEPT for inspection; everything else is force-removed.
+    await this.pruneStageWorktrees();
     await this.refreshTasks();
+  }
+
+  // --- git-worktree-per-task isolation helpers (no-ops unless the stage is active) ---
+
+  /**
+   * Create an isolated worktree for `taskId` when worktree-per-task is active for this stage.
+   * Returns the worktree (also tracked for cleanup), or null when isolation is off or creation
+   * fails — callers then fall back to the shared cwd. Never throws: isolation is best-effort.
+   */
+  private async maybeCreateTaskWorktree(taskId: string): Promise<Worktree | null> {
+    if (!this.worktreeStageActive || !this.workspace) return null;
+    try {
+      const wt = await createWorktree({ repoDir: this.workspace, taskId });
+      this.taskWorktrees.set(taskId, wt);
+      void logNote(this.paths!.runLogFile, `Created worktree for ${taskId} at ${wt.path} on ${wt.branch}.`).catch(
+        () => {},
+      );
+      return wt;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void logNote(
+        this.paths!.runLogFile,
+        `Worktree creation for ${taskId} failed (${message}); running in the shared workspace instead.`,
+      ).catch(() => {});
+      return null;
+    }
+  }
+
+  /**
+   * Capture the worktree's change set (logged as the per-task diff) and merge its branch back into
+   * the workspace's current branch. On a clean merge the worktree is removed; on conflict/failure
+   * the worktree + branch are KEPT intact for manual inspection and the outcome is returned so the
+   * caller can mark the task blocked. Never throws.
+   */
+  private async mergeBackTaskWorktree(
+    run: AgentRun,
+    taskId: string,
+    worktree: Worktree,
+    runSucceeded: boolean,
+  ): Promise<MergeOutcome> {
+    const paths = this.paths!;
+    const repoDir = this.workspace!;
+
+    // 1. Record the per-task diff (best-effort; failure here must not block the merge).
+    try {
+      const diff = await worktreeDiff({ worktreePath: worktree.path, baseRef: worktree.baseRef });
+      const summary = diff.files.length ? `${diff.files.length} file(s): ${diff.files.join(', ')}` : 'no changes';
+      void logNote(paths.runLogFile, `${run.label} worktree diff for ${taskId} — ${summary}.`).catch(() => {});
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void logNote(paths.runLogFile, `Could not diff worktree for ${taskId} (${message}).`).catch(() => {});
+    }
+
+    // 2. Merge the task branch back. Skip on a failed run — never merge a half-finished branch.
+    if (!runSucceeded) {
+      this.keptWorktrees.add(taskId);
+      void logNote(
+        paths.runLogFile,
+        `${run.label} did not complete cleanly; KEEPING worktree ${worktree.path} (branch ${worktree.branch}) un-merged for inspection.`,
+      ).catch(() => {});
+      return 'failed';
+    }
+
+    // Commit any uncommitted changes the agent left in the worktree so the merge sees them.
+    await this.commitWorktree(worktree, taskId);
+
+    const res = await this.runGitCapture(repoDir, ['merge', '--no-edit', worktree.branch]);
+    const outcome = classifyMergeResult(res);
+
+    if (outcome === 'conflict' || outcome === 'failed') {
+      // Do NOT auto-resolve. Abort the in-progress merge so the workspace returns to a clean state,
+      // then keep the worktree + branch for the user to resolve manually.
+      await this.runGitCapture(repoDir, ['merge', '--abort']);
+      this.keptWorktrees.add(taskId);
+      const detail = (res.stderr || res.stdout).trim().split('\n')[0] ?? '';
+      run.error = run.error ?? `merge ${outcome} for ${taskId}: ${detail}`;
+      void logNote(
+        paths.runLogFile,
+        `MERGE ${outcome.toUpperCase()} merging ${worktree.branch} back for ${taskId}: ${detail}. ` +
+          `KEEPING worktree ${worktree.path} and branch ${worktree.branch} for manual resolution.`,
+      ).catch(() => {});
+      this.emitState();
+      return outcome;
+    }
+
+    // Clean merge — surface it, then remove the now-redundant worktree.
+    void logNote(paths.runLogFile, `Merged ${worktree.branch} back for ${taskId} (${outcome}).`).catch(() => {});
+    await removeWorktree({ repoDir, path: worktree.path, force: true }).catch(() => {});
+    this.taskWorktrees.delete(taskId);
+    return outcome;
+  }
+
+  /** Commit everything the agent left in the worktree onto its branch (best-effort, never throws). */
+  private async commitWorktree(worktree: Worktree, taskId: string): Promise<void> {
+    await this.runGitCapture(worktree.path, ['add', '-A']);
+    // `git commit` exits non-zero when there is nothing to commit — that is fine (a no-op task).
+    await this.runGitCapture(worktree.path, ['commit', '--no-edit', '-m', `kaplan: task ${taskId}`]);
+  }
+
+  /**
+   * Force-remove any tracked worktrees that were NOT deliberately kept (clean ones are already
+   * gone; this sweeps strays left by an abort). Conflict-kept worktrees are preserved. Clears the
+   * tracking maps. Never throws.
+   */
+  private async pruneStageWorktrees(): Promise<void> {
+    if (!this.workspace) {
+      this.taskWorktrees.clear();
+      this.keptWorktrees.clear();
+      return;
+    }
+    const repoDir = this.workspace;
+    for (const [taskId, wt] of this.taskWorktrees) {
+      if (this.keptWorktrees.has(taskId)) continue;
+      await removeWorktree({ repoDir, path: wt.path, force: true }).catch(() => {});
+    }
+    this.taskWorktrees.clear();
+    this.keptWorktrees.clear();
+  }
+
+  /** Run a git command in `cwd`, capturing stdout/stderr. Never rejects (mirrors git/worktree.ts). */
+  private runGitCapture(cwd: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (ok: boolean): void => {
+        if (!settled) {
+          settled = true;
+          resolve({ ok, stdout, stderr });
+        }
+      };
+      try {
+        const child = spawn('git', args, { cwd, windowsHide: true, shell: false });
+        const timer = setTimeout(() => {
+          try {
+            child.kill();
+          } catch {
+            /* ignore */
+          }
+          finish(false);
+        }, 30_000);
+        timer.unref?.();
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', (c: string) => {
+          if (stdout.length < 1_000_000) stdout += c;
+        });
+        child.stderr.on('data', (c: string) => {
+          if (stderr.length < 64_000) stderr += c;
+        });
+        child.on('error', () => {
+          clearTimeout(timer);
+          finish(false);
+        });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          finish(code === 0);
+        });
+      } catch {
+        finish(false);
+      }
+    });
   }
 
   /**
@@ -1105,7 +1367,8 @@ export class Orchestrator extends EventEmitter {
       termId: run.terminalId,
       label: run.label,
       command: run.command,
-      cwd: paths.root,
+      // Per-task git worktree when isolation is active; otherwise the shared tiger root (default).
+      cwd: run.cwd ?? paths.root,
       promptPath: run.promptPath,
       outputPath: run.outputPath,
       markerPath: run.markerPath,
@@ -1244,7 +1507,8 @@ export class Orchestrator extends EventEmitter {
       id: run.terminalId,
       name: run.label,
       groupId: null,
-      cwd: this.paths!.root,
+      // Honor a per-task worktree cwd when set; otherwise the shared tiger root (default behavior).
+      cwd: run.cwd ?? this.paths!.root,
       initialCommand: run.command,
       shell: { kind: 'system-default' },
       // Protected: a fan-out/broadcast from the Terminals view must never type into an agent.

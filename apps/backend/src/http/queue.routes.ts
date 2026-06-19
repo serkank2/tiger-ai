@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
-import type { QueueProvider, QueueRule, QueueRuleAction, QueueRuleOperator, QueueRuleProvider } from '../queue/types.js';
+import type {
+  QueueBulkAction,
+  QueueProvider,
+  QueueRule,
+  QueueRuleAction,
+  QueueRuleOperator,
+  QueueRuleProvider,
+} from '../queue/types.js';
 import { badRequest, notFound } from './errors.js';
 
 function str(v: unknown): string | undefined {
@@ -29,6 +36,13 @@ function operator(v: unknown): QueueRuleOperator {
 function action(v: unknown): QueueRuleAction {
   if (v === undefined || v === 'block_dispatch') return 'block_dispatch';
   throw badRequest('action must be block_dispatch');
+}
+
+const BULK_ACTIONS: ReadonlySet<QueueBulkAction> = new Set<QueueBulkAction>(['pause', 'resume', 'cancel', 'retry', 'delete']);
+
+function bulkAction(v: unknown): QueueBulkAction {
+  if (typeof v === 'string' && BULK_ACTIONS.has(v as QueueBulkAction)) return v as QueueBulkAction;
+  throw badRequest('action must be pause, resume, cancel, retry, or delete');
 }
 
 function ruleFromBody(body: Record<string, unknown>, existing?: QueueRule): QueueRule {
@@ -84,6 +98,15 @@ export function createQueueRouter(ctx: AppCtx): Router {
     if (!Array.isArray(ids)) throw badRequest('ids must be an array');
     await service.reorder(ids.filter((id): id is string => typeof id === 'string'));
     res.json(await service.getState());
+  });
+
+  router.post('/bulk', async (req, res) => {
+    const body = (req.body ?? {}) as { action?: unknown; ids?: unknown };
+    const act = bulkAction(body.action);
+    if (!Array.isArray(body.ids)) throw badRequest('ids must be an array');
+    const ids = body.ids.filter((id): id is string => typeof id === 'string');
+    const results = await service.bulk(act, ids);
+    res.json({ action: act, results, state: await service.getState() });
   });
 
   router.post('/:id/pause', async (req, res) => {

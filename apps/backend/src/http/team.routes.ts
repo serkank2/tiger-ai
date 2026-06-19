@@ -29,7 +29,9 @@ import { resolveExistingDir } from '../util/paths.js';
 import { TeamTemplateServiceError } from '../services/team-templates.js';
 import { artifactsFile } from '../team/message-bus.js';
 import { computeTeamChanges } from '../team/changes.js';
+import { commit as gitCommit, createPullRequest, stageAll } from '../git/write.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
+import { notFound } from './errors.js';
 import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
@@ -412,6 +414,50 @@ export function createTeamRouter(ctx: AppCtx): Router {
       return;
     }
     res.json(await computeTeamChanges(workspace, new Date().toISOString()));
+  });
+
+  // ----------------------------------------------------------------------------
+  // Git WRITE actions (Stage / Commit / Create-PR). These are sensitive, outward
+  // operations on the run's workspace, so each resolves the workspace exactly like
+  // `/changes` and 404s when no workspace is known. Helpers throw `HttpError`, which
+  // Express 5 forwards to the central error middleware for a stable `{ code }`.
+  // ----------------------------------------------------------------------------
+
+  /** Resolve the workspace dir for a git-write action, or 404 when none is known. */
+  function requireGitWorkspace(): string {
+    const state = orch.tryGetState();
+    const workspace = state?.workspace ?? knownWorkspace(ctx);
+    if (!workspace) throw notFound('no team workspace is known yet');
+    return workspace;
+  }
+
+  // POST /api/team/runs/:id/git/stage → `git add -A`; return the updated changeset.
+  router.post('/runs/:id/git/stage', async (_req, res) => {
+    const workspace = requireGitWorkspace();
+    await stageAll(workspace);
+    res.json(await computeTeamChanges(workspace, new Date().toISOString()));
+  });
+
+  // POST /api/team/runs/:id/git/commit { message } → commit; 422 on empty message;
+  // returns { committed, sha, summary } (committed:false for "nothing to commit").
+  router.post('/runs/:id/git/commit', async (req, res) => {
+    const workspace = requireGitWorkspace();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const result = await gitCommit(workspace, asString(body.message));
+    res.json({ ...result, changes: await computeTeamChanges(workspace, new Date().toISOString()) });
+  });
+
+  // POST /api/team/runs/:id/git/pr { title, body?, base? } → open a PR via `gh`;
+  // returns { url } or an actionable HttpError (missing/unauth gh, no branch, …).
+  router.post('/runs/:id/git/pr', async (req, res) => {
+    const workspace = requireGitWorkspace();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const result = await createPullRequest(workspace, {
+      title: asString(body.title),
+      body: asString(body.body) || undefined,
+      base: asString(body.base) || undefined,
+    });
+    res.json(result);
   });
 
   // ----------------------------------------------------------------------------

@@ -193,6 +193,12 @@ export interface AgentRun {
   error?: string;
   /** executing-plan only: the task this run was assigned. */
   taskId?: string;
+  /**
+   * Working directory the agent's PTY is launched in. Defaults to the tiger root (the shared
+   * workspace) when unset. Set to a per-task git worktree path when worktree-per-task isolation
+   * is enabled, so the agent's file edits are isolated from sibling agents.
+   */
+  cwd?: string;
   startedAt?: string;
   endedAt?: string;
   attempts: number;

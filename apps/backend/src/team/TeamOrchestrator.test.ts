@@ -196,7 +196,7 @@ test('fake-cli team run emits ordered state/message events and completes only wh
       [1, 2, 3, 4, 5],
     );
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -237,7 +237,7 @@ test('a turn that signs off via both a message and a result entry records a sing
     assert.equal(final.signoffs.length, 1);
     assert.equal(final.signoffs[0]?.roleId, 'reviewer');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -262,7 +262,7 @@ test('failed fake turn stops the run in an explicit failed state with a reason',
     assert.equal(final.status, 'failed');
     assert.match(final.message ?? '', /fake CLI exited 2/);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -297,7 +297,7 @@ test('a completion gate satisfied by a failing turn does not overwrite the faile
     assert.equal(final.status, 'failed');
     assert.match(final.message ?? '', /fake CLI exited 2/);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -340,7 +340,7 @@ test('a turn failure below the cap is tolerated; the run recovers and completes'
     );
     assert.ok(announced, 'announced the recovery in the conversation');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -412,7 +412,7 @@ test('steering is appended immediately, stales signoffs, and is applied at the n
     assert.ok((await orch.listMessages()).some((message) => message.id === steering.id));
   } finally {
     releaseDeveloper();
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -472,7 +472,7 @@ test('team and stage runs reject each other through the shared workspace lease',
     assert.match(stageErr?.message ?? '', /leased by manual:/);
     await blockingTeam.stop();
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -580,7 +580,7 @@ test('restart reconciliation interrupts in-flight turns, reclaims stale claims, 
     const allMessages = await restarted.listMessages();
     assert.equal(allMessages.filter((message) => message.body === 'persisted coordinator message').length, 1);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -633,7 +633,7 @@ test('out of the box the engine composes the real scheduler and completion gate 
     assert.equal(final.verifications[0]?.status, 'passed');
     assert.ok(final.signoffs.some((signoff) => signoff.roleId === 'coordinator' && !signoff.stale));
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -691,7 +691,7 @@ test('the default completion gate keeps a run open while a review finding is unr
     assert.notEqual(final.status, 'completed');
     assert.equal(final.findings?.open, 1);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -786,7 +786,7 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
     assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'a developer task was filed to done');
     assert.equal(todo.filter((n) => n.endsWith('.json')).length, 0, 'no developer task left queued');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -853,7 +853,7 @@ test('a new run schedules the Lead first; no worker role runs until the Lead ass
     assert.deepEqual(order, ['lead', 'developer']);
     assert.equal(final.turns.filter((turn) => turn.roleId === 'tester').length, 0);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -882,7 +882,7 @@ test('every user prompt is queued for the Lead in FIFO order and addressed to th
     assert.deepEqual(steering.map((message) => message.body), ['First goal.', 'Second prompt.', 'Third prompt.']);
     assert.equal(steering.every((message) => message.to === 'lead'), true);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -930,7 +930,7 @@ test('a worker completion routes back to the Lead before the next worker (no aut
     // a queued task: the worker→worker hand-off always goes through the Lead.
     assert.deepEqual(order, ['lead', 'developer', 'lead', 'tester']);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -968,7 +968,7 @@ test('no Lead-assigned work idles/waits instead of round-robin turns or churning
     assert.equal(final.turnCount, 2);
     assert.ok(final.round < 50, 'idled well before the round cap');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1021,7 +1021,7 @@ test('a non-Lead role cannot delegate laterally; the attempt is blocked and re-r
     const queued = await fs.readdir(testerTodo).catch(() => [] as string[]);
     assert.equal(queued.filter((name) => name.endsWith('.json')).length, 0);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1064,7 +1064,7 @@ test('a pending user prompt is processed by the Lead before an already-queued wo
     assert.equal(order[0], 'lead');
     assert.deepEqual(order, ['lead', 'developer']);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1123,7 +1123,7 @@ test('after a worker completes with a user prompt pending, the Lead runs before 
     assert.deepEqual(order.slice(0, 3), ['lead', 'developer', 'lead']);
   } finally {
     releaseDev();
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1172,7 +1172,7 @@ test('steering a run that has idled to a waiting state resumes the loop so the L
     assert.equal(final.status, 'completed');
     assert.ok(final.signoffs.some((s) => s.roleId === 'lead' && !s.stale), 'the resumed Lead processed the prompt and signed off');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1227,7 +1227,7 @@ test('Stop halts a run without disposing sessions, Resume re-enters it, and Clos
     await orch.close();
     assert.deepEqual(disposeCalls, [{ kill: true }], 'Close must dispose the role sessions with kill');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1278,7 +1278,7 @@ test('a complete TaskDirective files the in-flight board task done and a needs_w
     const done = await fs.readdir(doneDir).catch(() => [] as string[]);
     assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'the task was filed done by the directive');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1299,7 +1299,7 @@ test('the snapshot done-gate exposes the open blockers keeping a run from comple
     assert.ok(gate.openBlockers.some((b) => b.code === 'steering_pending'), 'the pending goal prompt is a blocker');
     assert.ok(gate.openBlockers.some((b) => b.code === 'verification_missing'), 'no verification yet is a blocker');
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1345,7 +1345,7 @@ test('a structured VerificationDirective is recorded with its command/exitCode a
     assert.equal(final.verifications[0]?.command, 'npm test');
     assert.equal(final.verifications[0]?.exitCode, 0);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1381,7 +1381,7 @@ test('addRole/removeRole/reconfigureRole mutate the live run and a paused role i
     const err = await orch.removeRole('lead').then(() => null, (e: unknown) => e as { status?: number });
     assert.equal(err?.status, 409);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1410,7 +1410,7 @@ test('listRuns and exportRun surface a persisted run read-only', async () => {
     assert.equal(md.format, 'markdown');
     assert.match(md.content, /# AI Team Run/);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });
 
@@ -1440,6 +1440,6 @@ test('resume rejects a genuinely ended run but a stopped run is resumable', asyn
     assert.equal(err?.status, 409);
     assert.match(err?.message ?? '', /cannot resume a completed team run/);
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
 });

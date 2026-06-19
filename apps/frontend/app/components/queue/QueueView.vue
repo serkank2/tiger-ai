@@ -4,6 +4,7 @@ import { useSocket } from '~/composables/useSocket';
 import { useConnectionStore } from '~/stores/connection';
 import { useQueueStore } from '~/stores/queue';
 import type {
+  QueueBulkAction,
   QueueJobStatus,
   QueueJobView,
   QueueProvider,
@@ -23,6 +24,10 @@ const socket = useSocket();
 
 const selectedJobId = ref<string | null>(null);
 const nowMs = ref(Date.now());
+const selectedIds = ref<Set<string>>(new Set());
+const dragId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
+const providerOrder: QueueProvider[] = ['claude', 'codex', 'antigravity', 'mixed'];
 const draft = reactive({
   projectName: '',
   workspacePath: '',
@@ -66,6 +71,107 @@ const selectedEvents = computed(() => {
 });
 
 const hasRecovery = computed(() => jobs.value.some(isRecoveryJob));
+
+const lanes = computed(() => {
+  const running = queue.state?.runningByProvider;
+  const limits = queue.state?.providerConcurrency;
+  if (!running || !limits) return [];
+  return providerOrder.map((provider) => ({
+    provider,
+    running: running[provider] ?? 0,
+    limit: limits[provider] ?? 0,
+  }));
+});
+
+const selectedCount = computed(() => selectedIds.value.size);
+const allSelectableIds = computed(() => jobs.value.map((job) => job.id));
+const allSelected = computed(
+  () => allSelectableIds.value.length > 0 && allSelectableIds.value.every((id) => selectedIds.value.has(id)),
+);
+
+function isReorderable(job: QueueJobView): boolean {
+  return job.status === 'queued' || job.status === 'retrying';
+}
+
+function isSelected(id: string): boolean {
+  return selectedIds.value.has(id);
+}
+
+function toggleSelected(id: string): void {
+  const next = new Set(selectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedIds.value = next;
+}
+
+function toggleSelectAll(): void {
+  selectedIds.value = allSelected.value ? new Set() : new Set(allSelectableIds.value);
+}
+
+function clearSelection(): void {
+  selectedIds.value = new Set();
+}
+
+async function runBulk(action: QueueBulkAction): Promise<void> {
+  const ids = [...selectedIds.value];
+  if (ids.length === 0 || queue.isBusy('bulk')) return;
+  try {
+    await queue.bulk(action, ids);
+    clearSelection();
+  } catch {
+    /* surfaced through queue.actionError */
+  }
+}
+
+function onDragStart(job: QueueJobView, ev: DragEvent): void {
+  if (!isReorderable(job)) {
+    ev.preventDefault();
+    return;
+  }
+  dragId.value = job.id;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', job.id);
+  }
+}
+
+function onDragOver(job: QueueJobView, ev: DragEvent): void {
+  if (!dragId.value || !isReorderable(job) || job.id === dragId.value) return;
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  dragOverId.value = job.id;
+}
+
+function onDragLeave(job: QueueJobView): void {
+  if (dragOverId.value === job.id) dragOverId.value = null;
+}
+
+async function onDrop(target: QueueJobView, ev: DragEvent): Promise<void> {
+  ev.preventDefault();
+  const sourceId = dragId.value;
+  dragId.value = null;
+  dragOverId.value = null;
+  if (!sourceId || sourceId === target.id || !isReorderable(target)) return;
+  if (queue.isBusy('reorder')) return;
+
+  const ids = jobs.value.map((job) => job.id);
+  const from = ids.indexOf(sourceId);
+  const to = ids.indexOf(target.id);
+  if (from < 0 || to < 0) return;
+  ids.splice(from, 1);
+  ids.splice(to, 0, sourceId);
+  try {
+    // Optimistic order is reconciled from the next queue.state the reorder returns.
+    await queue.reorder(ids);
+  } catch {
+    /* surfaced through queue.actionError */
+  }
+}
+
+function onDragEnd(): void {
+  dragId.value = null;
+  dragOverId.value = null;
+}
 
 watch(
   jobs,
@@ -341,6 +447,22 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </template>
         </div>
 
+        <div class="metric lanes-panel" data-testid="lanes-panel">
+          <span class="label">Provider lanes</span>
+          <div v-if="lanes.length" class="lanes">
+            <span
+              v-for="lane in lanes"
+              :key="lane.provider"
+              class="lane"
+              :class="{ full: lane.running >= lane.limit }"
+              :data-provider="lane.provider"
+            >
+              {{ providerLabel(lane.provider) }} {{ lane.running }}/{{ lane.limit }}
+            </span>
+          </div>
+          <span v-else class="meta">Waiting for queue state</span>
+        </div>
+
         <div class="metric rules-panel" data-testid="rules-panel">
           <span class="label">Rules</span>
           <b>{{ enabledRules.length }} enabled</b>
@@ -458,8 +580,29 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </form>
 
           <div class="list-head">
-            <b>Ordered jobs</b>
+            <label class="select-all" title="Select all jobs">
+              <input
+                type="checkbox"
+                data-testid="select-all"
+                :checked="allSelected"
+                :disabled="jobs.length === 0"
+                @change="toggleSelectAll"
+              />
+              <b>Ordered jobs</b>
+            </label>
             <span>{{ jobs.length }} total</span>
+          </div>
+
+          <div v-if="selectedCount > 0" class="bulk-bar" data-testid="bulk-bar">
+            <span class="bulk-count">{{ selectedCount }} selected</span>
+            <div class="bulk-actions">
+              <button type="button" data-testid="bulk-pause" :disabled="queue.isBusy('bulk')" @click="runBulk('pause')">Pause</button>
+              <button type="button" data-testid="bulk-resume" :disabled="queue.isBusy('bulk')" @click="runBulk('resume')">Resume</button>
+              <button type="button" data-testid="bulk-retry" :disabled="queue.isBusy('bulk')" @click="runBulk('retry')">Retry</button>
+              <button type="button" class="danger" data-testid="bulk-cancel" :disabled="queue.isBusy('bulk')" @click="runBulk('cancel')">Cancel</button>
+              <button type="button" class="danger" data-testid="bulk-delete" :disabled="queue.isBusy('bulk')" @click="runBulk('delete')">Delete</button>
+              <button type="button" data-testid="bulk-clear" :disabled="queue.isBusy('bulk')" @click="clearSelection">Clear</button>
+            </div>
           </div>
 
           <div v-if="queue.loading && !queue.loaded" class="loading" data-testid="loading-state">
@@ -470,15 +613,29 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <span>Submit a prompt to start sequential autonomous execution.</span>
           </div>
           <div v-else class="job-list" data-testid="job-list">
-            <button
+            <div
               v-for="job in jobs"
               :key="job.id"
-              type="button"
               class="job-row"
-              :class="{ selected: selectedJob?.id === job.id }"
+              :class="{ selected: selectedJob?.id === job.id, 'drag-over': dragOverId === job.id, dragging: dragId === job.id, fixed: !isReorderable(job) }"
               :data-status="job.status"
+              :data-testid="`job-row-${job.id}`"
+              :draggable="isReorderable(job)"
               @click="selectedJobId = job.id"
+              @dragstart="onDragStart(job, $event)"
+              @dragover="onDragOver(job, $event)"
+              @dragleave="onDragLeave(job)"
+              @drop="onDrop(job, $event)"
+              @dragend="onDragEnd"
             >
+              <input
+                type="checkbox"
+                class="job-check"
+                :data-testid="`select-job-${job.id}`"
+                :checked="isSelected(job.id)"
+                @click.stop
+                @change="toggleSelected(job.id)"
+              />
               <span class="pos">{{ job.position }}</span>
               <span class="job-main">
                 <span class="job-title">{{ jobTitle(job) }}</span>
@@ -486,7 +643,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               </span>
               <span class="provider">{{ providerLabel(job.provider) }}</span>
               <span class="pill" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span>
-            </button>
+            </div>
           </div>
         </aside>
 
@@ -686,8 +843,70 @@ button:disabled {
 }
 .summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+.lanes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lane {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+.lane.full {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.select-all input {
+  width: 15px;
+  height: 15px;
+}
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.bulk-count {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+}
+.bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.bulk-actions button {
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bulk-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bulk-actions .danger {
+  border-color: var(--red);
+  color: var(--red);
 }
 .rule-editor {
   display: grid;
@@ -916,7 +1135,7 @@ textarea {
 .job-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 58px 112px;
+  grid-template-columns: 22px 28px minmax(0, 1fr) 58px 112px;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
@@ -924,6 +1143,10 @@ textarea {
   border-radius: 0;
   border-bottom: 1px solid var(--border);
   text-align: left;
+  cursor: pointer;
+}
+.job-row:not(.fixed) {
+  cursor: grab;
 }
 .job-row:hover,
 .job-row.selected {
@@ -931,6 +1154,16 @@ textarea {
 }
 .job-row.selected {
   box-shadow: inset 3px 0 0 var(--accent);
+}
+.job-row.dragging {
+  opacity: 0.5;
+}
+.job-row.drag-over {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.job-check {
+  width: 15px;
+  height: 15px;
 }
 .pos {
   font-family: var(--font-mono);
@@ -1154,7 +1387,7 @@ textarea {
     display: none;
   }
   .job-row {
-    grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-columns: 22px 26px minmax(0, 1fr);
   }
   .provider,
   .job-row .pill {

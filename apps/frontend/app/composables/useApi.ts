@@ -12,6 +12,8 @@ import type {
   PromptHistoryFilters,
   PromptHistoryListResponse,
   PromptSummary,
+  QueueBulkAction,
+  QueueBulkResponse,
   QueueEnqueueInput,
   QueueJob,
   QueueRule,
@@ -235,6 +237,8 @@ export function useApi() {
       req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
     enqueueQueue: (body: QueueEnqueueInput) => req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
     reorderQueue: (ids: string[]) => req<QueueState>('/api/queue/reorder', { method: 'POST', body: { ids } }),
+    bulkQueue: (action: QueueBulkAction, ids: string[]) =>
+      req<QueueBulkResponse>('/api/queue/bulk', { method: 'POST', body: { action, ids } }),
     pauseQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/pause`, { method: 'POST' }),
     resumeQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/resume`, { method: 'POST' }),
     cancelQueueJob: (id: string) => req<QueueJob>(`/api/queue/${id}/cancel`, { method: 'POST' }),

@@ -101,11 +101,26 @@ export interface QueueJobView extends QueueJob {
   steps: QueueStep[];
 }
 
+export type QueueProviderCounts = Record<QueueProvider, number>;
+
 export interface QueueState {
   jobs: QueueJobView[];
   rules: QueueRule[];
   events: QueueEvent[];
+  /** Current count of running jobs per provider lane. */
+  runningByProvider: QueueProviderCounts;
+  /** Configured max concurrent running jobs per provider lane. */
+  providerConcurrency: QueueProviderCounts;
   updatedAt: string;
+}
+
+export type QueueBulkAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete';
+
+export interface QueueBulkResult {
+  id: string;
+  ok: boolean;
+  status?: QueueJobStatus;
+  error?: string;
 }
 
 export interface QueueRuleDecision {
@@ -172,6 +187,8 @@ export interface QueueRepositoryTx {
   listRules(): Promise<QueueRule[]>;
   getLatestLimitSnapshot(provider: Exclude<QueueProvider, 'mixed'>): Promise<QueueLimitSnapshot | null>;
   updateJob(id: string, patch: QueueJobPatch): Promise<void>;
+  /** Delete a job (and, via FK cascade in MySQL, its steps). Returns true if a row was removed. */
+  deleteJob(id: string): Promise<boolean>;
   updateStep(jobId: string, stepKey: StageId, patch: QueueStepPatch): Promise<void>;
   replacePositions(ids: string[], now: string): Promise<void>;
   upsertRule(rule: QueueRule): Promise<void>;

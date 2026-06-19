@@ -961,11 +961,30 @@ export interface QueueEvent {
   createdAt: string;
 }
 
+export type QueueProviderCounts = Record<QueueProvider, number>;
+
 export interface QueueState {
   jobs: QueueJobView[];
   rules: QueueRule[];
   events: QueueEvent[];
+  runningByProvider: QueueProviderCounts;
+  providerConcurrency: QueueProviderCounts;
   updatedAt: string;
+}
+
+export type QueueBulkAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete';
+
+export interface QueueBulkResult {
+  id: string;
+  ok: boolean;
+  status?: QueueJobStatus;
+  error?: string;
+}
+
+export interface QueueBulkResponse {
+  action: QueueBulkAction;
+  results: QueueBulkResult[];
+  state: QueueState;
 }
 
 export interface QueueEnqueueInput {

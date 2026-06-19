@@ -417,6 +417,12 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
     await this.execute(`UPDATE queue_jobs SET ${pairs.join(', ')} WHERE id = ?`, values);
   }
 
+  async deleteJob(id: string): Promise<boolean> {
+    // queue_steps cascades (FK ON DELETE CASCADE); queue_events keep their rows (ON DELETE SET NULL).
+    const result = await this.execute('DELETE FROM queue_jobs WHERE id = ?', [id]);
+    return result.affectedRows > 0;
+  }
+
   async updateStep(jobId: string, stepKey: StageId, patch: QueueStepPatch): Promise<void> {
     const pairs: string[] = [];
     const values: unknown[] = [];

@@ -3,6 +3,8 @@ import { defineStore } from 'pinia';
 import { useApi } from '~/composables/useApi';
 import { errText } from '~/lib/apiError';
 import type {
+  QueueBulkAction,
+  QueueBulkResult,
   QueueClientEvent,
   QueueEnqueueInput,
   QueueJobStatus,
@@ -203,6 +205,22 @@ export const useQueueStore = defineStore('queue', () => {
   const cancel = (id: string) => control(id, 'cancel');
   const retry = (id: string) => control(id, 'retry');
 
+  async function bulk(action: QueueBulkAction, ids: string[]): Promise<QueueBulkResult[]> {
+    if (ids.length === 0) return [];
+    setBusy('bulk', true);
+    actionError.value = null;
+    try {
+      const res = await api.bulkQueue(action, ids);
+      applyState(res.state);
+      return res.results;
+    } catch (e) {
+      actionError.value = errText(e);
+      throw e;
+    } finally {
+      setBusy('bulk', false);
+    }
+  }
+
   async function saveRule(input: Partial<QueueRule> & { id?: string }): Promise<void> {
     const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : null;
     const key = id ? `rule:update:${id}` : 'rule:create';
@@ -260,6 +278,7 @@ export const useQueueStore = defineStore('queue', () => {
     resume,
     cancel,
     retry,
+    bulk,
     saveRule,
     deleteRule,
   };

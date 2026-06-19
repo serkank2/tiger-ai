@@ -156,6 +156,17 @@ export const config = {
     allowDangerousAgentPermissions: envBool('KAPLAN_ALLOW_DANGEROUS_AGENT_PERMISSIONS', false),
   },
 
+  // Tiger pipeline execution toggles.
+  tiger: {
+    // Git-worktree-per-task isolation for the parallel execute stage. OFF by default: when
+    // enabled (KAPLAN_WORKTREE_PER_TASK=1) AND the workspace is a git repo, each parallel task
+    // agent runs in its OWN throwaway git worktree so concurrent agents can't collide on the
+    // working tree; on clean completion its branch is merged back and the worktree pruned. When
+    // disabled, agents share the workspace cwd exactly as before (behavior is byte-for-byte
+    // unchanged).
+    worktreePerTask: envBool('KAPLAN_WORKTREE_PER_TASK', false),
+  },
+
   // Basic abuse guard on the HTTP API (per-IP fixed window). Generous for a local tool.
   rateLimit: {
     enabled: envBool('KAPLAN_RATE_LIMIT', true),

@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   getQueueState: vi.fn(),
   enqueueQueue: vi.fn(),
   reorderQueue: vi.fn(),
+  bulkQueue: vi.fn(),
   pauseQueueJob: vi.fn(),
   resumeQueueJob: vi.fn(),
   cancelQueueJob: vi.fn(),
@@ -95,6 +96,8 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
       },
     ],
     events,
+    runningByProvider: { claude: 0, codex: 0, antigravity: 0, mixed: 0 },
+    providerConcurrency: { claude: 2, codex: 2, antigravity: 1, mixed: 1 },
     updatedAt: '2026-06-18T08:00:00.000Z',
   };
 }
@@ -227,6 +230,57 @@ describe('QueueView', () => {
     await flushPromises();
 
     expect(api.deleteQueueRule).toHaveBeenCalledWith('rule-1');
+  });
+
+  it('reorders queued jobs via native drag-and-drop', async () => {
+    const first = job('first');
+    const second = job('second');
+    const wrapper = await mountQueue(state([first, second]));
+    api.reorderQueue.mockResolvedValue(state([{ ...second, position: 1 }, { ...first, position: 2 }]));
+
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() };
+    await wrapper.find('[data-testid="job-row-first"]').trigger('dragstart', { dataTransfer });
+    await wrapper.find('[data-testid="job-row-second"]').trigger('dragover', { dataTransfer });
+    await wrapper.find('[data-testid="job-row-second"]').trigger('drop', { dataTransfer });
+    await flushPromises();
+
+    // Dragging "first" onto "second" moves it after second.
+    expect(api.reorderQueue).toHaveBeenCalledWith(['second', 'first']);
+  });
+
+  it('multi-selects jobs and applies a bulk action to the selection', async () => {
+    const first = job('first');
+    const second = job('second');
+    const wrapper = await mountQueue(state([first, second]));
+    api.bulkQueue.mockResolvedValue({
+      action: 'cancel',
+      results: [
+        { id: 'first', ok: true, status: 'canceled' },
+        { id: 'second', ok: true, status: 'canceled' },
+      ],
+      state: state([job('first', { status: 'canceled' }), job('second', { status: 'canceled' })]),
+    });
+
+    await wrapper.find('[data-testid="select-job-first"]').setValue(true);
+    await wrapper.find('[data-testid="select-job-second"]').setValue(true);
+    expect(wrapper.find('[data-testid="bulk-bar"]').text()).toContain('2 selected');
+
+    await wrapper.find('[data-testid="bulk-cancel"]').trigger('click');
+    await flushPromises();
+
+    expect(api.bulkQueue).toHaveBeenCalledWith('cancel', ['first', 'second']);
+    // Selection clears after a successful bulk action.
+    expect(wrapper.find('[data-testid="bulk-bar"]').exists()).toBe(false);
+  });
+
+  it('shows per-provider concurrency lanes from queue state', async () => {
+    const running = state([job('first', { status: 'running', provider: 'claude' })]);
+    running.runningByProvider = { claude: 1, codex: 0, antigravity: 0, mixed: 0 };
+    const wrapper = await mountQueue(running);
+
+    const lanes = wrapper.find('[data-testid="lanes-panel"]').text();
+    expect(lanes).toContain('Claude 1/2');
+    expect(lanes).toContain('Codex 0/2');
   });
 
   it('applies queue.state websocket updates to active progress and event log', async () => {

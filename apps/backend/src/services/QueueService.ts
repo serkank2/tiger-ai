@@ -5,7 +5,14 @@ import { config } from '../config.js';
 import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
 import { RuleEngine } from '../queue/RuleEngine.js';
 import { planRetry } from '../queue/retry.js';
+import {
+  countRunningByProvider,
+  resolveProviderConcurrency,
+  type QueueProviderConcurrency,
+} from '../queue/concurrency.js';
 import type {
+  QueueBulkAction,
+  QueueBulkResult,
   QueueEvent,
   QueueJob,
   QueueJobConfigSnapshot,
@@ -107,9 +114,11 @@ function statusAllowsRetry(status: QueueJobStatus): boolean {
 
 export class QueueService extends EventEmitter {
   private readonly ruleEngine = new RuleEngine();
+  private readonly providerConcurrency: QueueProviderConcurrency;
 
-  constructor(private readonly repo: QueueRepository) {
+  constructor(private readonly repo: QueueRepository, providerConcurrency?: QueueProviderConcurrency) {
     super();
+    this.providerConcurrency = providerConcurrency ?? resolveProviderConcurrency();
   }
 
   async getState(): Promise<QueueState> {
@@ -129,7 +138,14 @@ export class QueueService extends EventEmitter {
       ...job,
       steps: (stepsByJob.get(job.id) ?? []).sort((a, b) => a.position - b.position),
     }));
-    return { jobs: views, rules, events, updatedAt: nowIso() };
+    return {
+      jobs: views,
+      rules,
+      events,
+      runningByProvider: countRunningByProvider(jobs),
+      providerConcurrency: { ...this.providerConcurrency },
+      updatedAt: nowIso(),
+    };
   }
 
   async enqueue(input: EnqueueQueueJobInput): Promise<QueueJob> {
@@ -291,6 +307,62 @@ export class QueueService extends EventEmitter {
     return job;
   }
 
+  async deleteJob(id: string): Promise<void> {
+    const deleted = await this.repo.transaction(async (tx) => {
+      const removed = await tx.deleteJob(id);
+      // jobId is null: the job row is gone (MySQL FK would set it null anyway), so the
+      // audit event must not re-reference a non-existent job id.
+      if (removed) await tx.insertEvent(event(null, 'queue.deleted', 'Queue job deleted.', { jobId: id }));
+      return removed;
+    });
+    if (!deleted) throw httpError(404, 'queue job not found');
+    await this.emitState();
+    this.emitHistoryChanged();
+  }
+
+  /**
+   * Apply a control action to many jobs in one request, reusing the single-job logic.
+   * Each job is handled independently: a job in an incompatible state (or missing) is
+   * skipped and reported with `ok: false` rather than aborting the whole batch. A single
+   * `state` event is emitted at the end so the UI reconciles once.
+   */
+  async bulk(action: QueueBulkAction, ids: string[]): Promise<QueueBulkResult[]> {
+    const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim()))];
+    const run = this.bulkRunner(action);
+    const results: QueueBulkResult[] = [];
+    for (const id of unique) {
+      try {
+        const status = await run(id);
+        results.push({ id, ok: true, ...(status ? { status } : {}) });
+      } catch (err) {
+        results.push({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return results;
+  }
+
+  private bulkRunner(action: QueueBulkAction): (id: string) => Promise<QueueJobStatus | undefined> {
+    switch (action) {
+      case 'pause':
+        return async (id) => (await this.pause(id)).status;
+      case 'resume':
+        return async (id) => (await this.resume(id)).status;
+      case 'cancel':
+        return async (id) => (await this.cancel(id)).status;
+      case 'retry':
+        return async (id) => (await this.retry(id)).status;
+      case 'delete':
+        return async (id) => {
+          await this.deleteJob(id);
+          return undefined;
+        };
+      default: {
+        const never: never = action;
+        throw httpError(400, `unknown bulk action: ${String(never)}`);
+      }
+    }
+  }
+
   async listRules(): Promise<QueueRule[]> {
     return this.repo.listRules();
   }
@@ -325,7 +397,16 @@ export class QueueService extends EventEmitter {
       // Row-locks dispatchable jobs (FOR UPDATE SKIP LOCKED) ordered for dispatch,
       // so two concurrent schedulers can never lease the same job.
       const jobs = await tx.lockDispatchableJobs(now);
-      const candidate = jobs[0];
+      if (jobs.length === 0) return { kind: 'empty' };
+
+      // Per-provider concurrency lanes: count jobs currently running per provider and
+      // pick the first dispatchable candidate whose provider lane still has capacity.
+      // Candidates whose lane is full stay queued (not blocked) and are picked up on a
+      // later lease once a running job in that lane frees up. listJobs() reflects rows
+      // locked/updated earlier in this same transaction, keeping the count correct under
+      // the SKIP-LOCKED scheme.
+      const running = countRunningByProvider(await tx.listJobs());
+      const candidate = jobs.find((job) => running[job.provider] < this.providerConcurrency[job.provider]);
       if (!candidate) return { kind: 'empty' };
 
       const decision = await this.evaluateRules(tx, candidate, now);
