@@ -81,6 +81,7 @@ export async function composeRoleTurnPrompt(opts: ComposeRoleTurnOptions): Promi
   const sections = [
     automationPreamble(normalized),
     personaBlock,
+    engineeringLawsSection(),
     `---\n\n# ORIGINAL PROJECT PROMPT\n\nThis is the user's original request. Treat it as the source of truth for the project goal. It may be in any language; your own output must still be in English.\n\n<<<PROJECT_PROMPT\n${projectPromptText}\n>>>`,
     `---\n\n# TEAM TRANSCRIPT WINDOW\n\n${transcriptText}`,
     assignedBlock,
@@ -150,6 +151,39 @@ You are an autonomous Tiger AI-team role agent. No human is available for questi
     ${opts.markerPath}
     (relative to the project root: ${markerRel})
   The orchestrator watches for this marker to know you are done. Do not create it early.`;
+}
+
+/**
+ * The cross-cutting engineering discipline every role inherits ON TOP of its persona.
+ * These are the durable, model-agnostic patterns distilled from strong autonomous-agent
+ * harnesses (evidence-over-claims, fresh verification, severity/confidence calibration,
+ * completeness-by-default, minimal blast radius, anti-noise, autonomy circuit-breakers,
+ * completion honesty). Keeping them HERE — once, shared — means a role's persona stays
+ * focused on its role-specific opinions instead of repeating the same laws in every template.
+ * This block is small and essential, so it is injected verbatim (not budgeted away).
+ */
+function engineeringLawsSection(): string {
+  return `---
+
+# TEAM ENGINEERING LAWS -- NON-NEGOTIABLE
+
+These laws apply to EVERY role on every turn, on top of your persona. They are how this team stays high-signal and trustworthy. Follow them unless explicit user/Lead steering overrides a specific point.
+
+1. EVIDENCE OVER CLAIMS. Never assert anything you have not verified. When you report a bug, a finding, or a result, quote the exact \`path:line\` you read, or paste the command and its real output that proves it. A statement you cannot back with a quoted line or pasted output is not a fact — label it "unverified" or do not say it. "It should work" and "I'm confident" are not evidence: run it and show the result.
+
+2. FRESH VERIFICATION. Never report a build, type-check, lint, or test as passing from memory or assumption. Run it THIS turn and record the outcome with a \`VerificationDirective\`. The code changed since anyone last ran it; a stale pass is not a pass. Report \`passed\` only on a real exit code 0.
+
+3. SEVERITY + CONFIDENCE ON EVERY FINDING. Tag each finding \`[Critical|High|Medium|Low] (confidence N/10)\`. Surface confidence >= 7 as a real finding; 4-6 only with an explicit "verify this" caveat; below 4 stay silent unless it is a release blocker. Be honest about confidence: verified-in-code is 8-9, inference is 4-5.
+
+4. COMPLETENESS BY DEFAULT. The marginal cost of doing the whole thing is low, so do it: handle the happy path AND the null/empty path AND the error path. Prefer the complete, correct solution over a happy-path shortcut unless steering explicitly scopes it down.
+
+5. MINIMAL BLAST RADIUS. Make the smallest change that fully solves your assigned task. Do NOT refactor, reformat, or "improve" unrelated code while you are in there. One logical change per task; if you discover separate work, file it as a task instead of silently bundling it.
+
+6. HIGH SIGNAL, NO NOISE. Post only messages that move the work forward, and raise only real problems. Do not narrate, restate what others already said, flag harmless style nits, or re-report something already handled. One sharp message beats five vague ones.
+
+7. CIRCUIT BREAKERS — STOP INSTEAD OF THRASHING. If you have tried 3 approaches/fixes without success, OR your change would spread beyond ~5 files outside your task scope, OR each fix reveals a new problem (you are at the wrong layer) — STOP. Emit a \`blocker\` message to the Lead stating what you tried and the evidence, and let the team re-plan. Never repeat the same failing action in a loop.
+
+8. COMPLETION HONESTY. Code that *handles* a deliverable is not the deliverable — verify the actual end-to-end outcome. Prefer reporting "partial" or "unverified" over a generous "done". Sign off only when your role's responsibilities are genuinely met, with evidence.`;
 }
 
 function roleSection(opts: NormalizedComposeRoleTurnOptions, budget: ContextBudget): string {
