@@ -220,7 +220,13 @@ export function evaluateLimitRules(
     const candidates = latest.filter((snapshot) => ruleMatches(rule, snapshot));
     if (candidates.length === 0) continue;
 
-    const selected = candidates.reduce((highest, snapshot) =>
+    // Prefer fresh windows. A stale, leftover window — e.g. a past misparse that no longer
+    // appears in the live probe — must never outrank a fresh reading just because its
+    // percentUsed happens to be higher. Only when EVERY matching window is stale do we fall
+    // back to the stale pool and block conservatively on staleness.
+    const fresh = candidates.filter((snapshot) => !isStale(snapshot, now, staleAfterMs));
+    const pool = fresh.length > 0 ? fresh : candidates;
+    const selected = pool.reduce((highest, snapshot) =>
       (snapshot.percentUsed ?? -1) > (highest.percentUsed ?? -1) ? snapshot : highest,
     );
     const stale = isStale(selected, now, staleAfterMs);

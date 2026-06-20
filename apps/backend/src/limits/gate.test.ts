@@ -100,6 +100,39 @@ test('StateLimitGate blocks conservatively on stale snapshots', async () => {
   assert.match(decision.reason, /stale/i);
 });
 
+test('StateLimitGate ignores a stale leftover window when a fresh window exists', async () => {
+  // Regression: a past misparse left a stale "custom" window at 10% that no longer appears in
+  // the live probe. The fresh weekly window reads 4%. The gate must select the fresh window and
+  // allow — not lock onto the higher-percent stale phantom and block conservatively forever.
+  const gate = new StateLimitGate(
+    () =>
+      limits([
+        snapshot({
+          id: 'phantom',
+          windowKey: 'custom:2-59pm-europe-istanbul',
+          label: '2:59pm (Europe/Istanbul)',
+          percentUsed: 10,
+          parseConfidence: 'unknown',
+          resetAt: null,
+          checkedAt: '2026-06-17T06:00:00.000Z', // >24h stale
+        }),
+        snapshot({
+          id: 'fresh-weekly',
+          windowKey: 'weekly',
+          label: 'Current week (all models)',
+          percentUsed: 4,
+          checkedAt: NOW.toISOString(),
+        }),
+      ]),
+    { now: NOW, staleAfterMs: 15 * 60 * 1000 },
+  );
+
+  const decision = await gate.check('claude');
+
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.action, 'allow');
+});
+
 test('StateLimitGate FAILS OPEN when the snapshot source is unavailable (missing table)', async () => {
   const gate = new StateLimitGate(
     () => ({ ...limits([]), snapshotsUnavailable: true }),
