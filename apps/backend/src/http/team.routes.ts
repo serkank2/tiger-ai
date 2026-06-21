@@ -32,7 +32,7 @@ import { computeTeamChanges } from '../team/changes.js';
 import { commit as gitCommit, createPullRequest, stageAll } from '../git/write.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { badRequest, httpError, HttpError, notFound } from './errors.js';
-import type { TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
+import type { TeamOrchestrationMode, TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
 import { toAgentTypeOr } from '../orchestrator/types.js';
@@ -126,6 +126,12 @@ function asString(value: unknown): string {
 
 function slug(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+}
+
+function parseTeamOrchestrationMode(value: unknown): TeamOrchestrationMode | undefined {
+  if (value === 'company' || value === 'legacy') return value;
+  if (value == null || value === '') return undefined;
+  return 'legacy';
 }
 
 /** Map a stored role template into the engine's role-seed shape. */
@@ -335,7 +341,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
     await ensureScaffold(workspace, goal);
     rememberTeamProject(ctx, workspace);
     await ctx.save();
-    await orch.createTeamRun({ workspace, goal, roles });
+    await orch.createTeamRun({ workspace, goal, roles, orchestrationMode: parseTeamOrchestrationMode(body.orchestrationMode) });
     await orch.start();
     res.json({ state: toTeamRunStateDto(orch.getState()) });
   });

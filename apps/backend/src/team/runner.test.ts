@@ -100,6 +100,20 @@ function fakeClaudeConfig(): TigerConfig {
   };
 }
 
+test('defaultTigerConfig raises and env-overrides the per-turn agent timeout', () => {
+  const previous = process.env.KAPLAN_AGENT_TIMEOUT_MS;
+  try {
+    delete process.env.KAPLAN_AGENT_TIMEOUT_MS;
+    assert.equal(defaultTigerConfig().timing.agentTimeoutMs, 60 * 60 * 1000);
+
+    process.env.KAPLAN_AGENT_TIMEOUT_MS = '4200000';
+    assert.equal(defaultTigerConfig().timing.agentTimeoutMs, 4_200_000);
+  } finally {
+    if (previous === undefined) delete process.env.KAPLAN_AGENT_TIMEOUT_MS;
+    else process.env.KAPLAN_AGENT_TIMEOUT_MS = previous;
+  }
+});
+
 test('runRoleTurn completes one fake role turn and appends a TeamMessage to the transcript', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-turn-'));
   const manager = new TerminalManager();
@@ -140,6 +154,65 @@ test('runRoleTurn completes one fake role turn and appends a TeamMessage to the 
     assert.match(artifactLog, /"kind":"prompt"/);
     assert.match(artifactLog, /"kind":"output"/);
     assert.match(artifactLog, /"kind":"marker"/);
+  } finally {
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runRoleTurn completes recoverable malformed output and appends a parse-warning system message', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-turn-warning-'));
+  const manager = new TerminalManager();
+  try {
+    const paths = await ensureScaffold(workspace, 'Build the AI team feature.');
+    const result = await runRoleTurn({
+      manager,
+      paths,
+      config: fakeConfig('team-warning'),
+      runId: 'team-run-warning',
+      role,
+      assignedTask: { id: 'TASK-WARN', title: 'Warn task', content: 'Emit recoverable malformed output.' },
+    });
+
+    assert.equal(result.outcome.state, 'completed');
+    assert.equal(result.parsed.parseWarnings?.length, 1);
+    assert.equal(result.messages.length, 3);
+    assert.equal(result.messages[0]?.kind, 'chat');
+    assert.equal(result.messages[0]?.body, 'Recovered analysis block.');
+    assert.equal(result.messages[1]?.body, 'Valid block still applied.');
+    assert.equal(result.messages[2]?.from, 'system');
+    assert.equal(result.messages[2]?.kind, 'system');
+    assert.match(result.messages[2]?.body ?? '', /AnalysisSummary/);
+
+    const transcript = await readTranscriptMessages(paths, 'team-run-warning');
+    assert.equal(transcript.length, 3);
+    assert.equal(transcript[2]?.kind, 'system');
+    assert.match(transcript[2]?.body ?? '', /Some structured output blocks were skipped or normalized/);
+  } finally {
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runRoleTurn still fails when completed output has zero valid TeamMessage blocks', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-turn-invalid-'));
+  const manager = new TerminalManager();
+  try {
+    const paths = await ensureScaffold(workspace, 'Build the AI team feature.');
+    const result = await runRoleTurn({
+      manager,
+      paths,
+      config: fakeConfig('team-invalid-output'),
+      runId: 'team-run-invalid-output',
+      role,
+      assignedTask: { id: 'TASK-INVALID', title: 'Invalid task', content: 'Emit invalid structured output.' },
+    });
+
+    assert.equal(result.outcome.state, 'failed');
+    assert.equal(result.messages.length, 1);
+    assert.equal(result.messages[0]?.from, 'system');
+    assert.equal(result.messages[0]?.kind, 'blocker');
+    assert.match(result.messages[0]?.body ?? '', /output did not contain any TeamMessage blocks/);
   } finally {
     await manager.killAll();
     await fs.rm(workspace, { recursive: true, force: true });
@@ -231,6 +304,70 @@ test('runRoleTurn returns a failed outcome and system blocker when the CLI times
     assert.equal(result.messages[0]?.from, 'system');
     assert.equal(result.messages[0]?.kind, 'blocker');
     assert.match(result.messages[0]?.body ?? '', /timed out/i);
+  } finally {
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runRoleTurn parses a valid partial output file when the role times out', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-timeout-partial-'));
+  const manager = new TerminalManager();
+  try {
+    const paths = await ensureScaffold(workspace, 'Build the AI team feature.');
+    const session = {
+      isAlive: false,
+      noteFed() {
+        /* no-op */
+      },
+      async runPrompt(input: { outputPath: string }) {
+        await fs.writeFile(
+          input.outputPath,
+          [
+            '```TeamMessage',
+            JSON.stringify(
+              { kind: 'chat', to: 'lead', body: 'Partial QA result before timeout.', taskId: 'TASK-TIMEOUT' },
+              null,
+              2,
+            ),
+            '```',
+            '```VerificationDirective',
+            JSON.stringify(
+              { command: 'npm test', exitCode: 1, outcome: 'failed', summary: 'Partial verification failed.' },
+              null,
+              2,
+            ),
+            '```',
+            '',
+          ].join('\n'),
+          'utf8',
+        );
+        return { state: 'failed' as const, error: 'agent timed out before signaling completion', alive: false };
+      },
+    } as unknown as RoleCliSession;
+
+    const result = await runRoleTurn({
+      manager,
+      paths,
+      config: fakeConfig('hang', { agentTimeoutMs: 900, markerPollMs: 100 }),
+      runId: 'team-run-timeout-partial',
+      role,
+      assignedTask: { id: 'TASK-TIMEOUT', content: 'This turn writes partial output then times out.' },
+      session,
+    });
+
+    assert.equal(result.outcome.state, 'failed');
+    assert.match(result.outcome.error ?? '', /timed out/i);
+    assert.equal(result.messages.length, 1);
+    assert.equal(result.messages[0]?.from, 'developer');
+    assert.equal(result.messages[0]?.kind, 'chat');
+    assert.equal(result.messages[0]?.body, 'Partial QA result before timeout.');
+    assert.equal(result.parsed.verificationDirectives.length, 1);
+    assert.equal(result.parsed.verificationDirectives[0]?.outcome, 'failed');
+
+    const transcript = await readTranscriptMessages(paths, 'team-run-timeout-partial');
+    assert.equal(transcript.length, 1);
+    assert.equal(transcript[0]?.body, 'Partial QA result before timeout.');
   } finally {
     await manager.killAll();
     await fs.rm(workspace, { recursive: true, force: true });

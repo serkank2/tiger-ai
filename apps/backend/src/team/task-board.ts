@@ -7,6 +7,7 @@ import path from 'node:path';
 //   .tiger/team/<runId>/agents/<roleId>/todo/        TASK-0001.json …  (assigned, queued)
 //   .tiger/team/<runId>/agents/<roleId>/in-progress/ TASK-0001.json    (currently worked)
 //   .tiger/team/<runId>/agents/<roleId>/done/        TASK-0001.json …  (completed)
+//   .tiger/team/<runId>/agents/<roleId>/blocked/     TASK-0001.json …  (parked for Lead re-plan)
 //
 // The Lead assigns work by enqueueing tasks into a role's `todo/`; the orchestrator
 // claims the oldest one (FIFO), moves it to `in-progress/`, runs that role's turn,
@@ -14,7 +15,7 @@ import path from 'node:path';
 // a time. The folders make the whole flow inspectable on disk and in the UI.
 // ---------------------------------------------------------------------------
 
-export type AgentTaskStatus = 'todo' | 'in-progress' | 'done';
+export type AgentTaskStatus = 'todo' | 'in-progress' | 'done' | 'blocked';
 
 /**
  * How a task arrived on the board. Default is the implicit Lead `task` flow. The two
@@ -40,6 +41,16 @@ export interface AgentTask {
   relationship?: TaskRelationship;
   /** For a `handoff` task: the dependency id the delegator is blocked on until this completes. */
   handoffId?: string;
+  /** Consecutive timeout/parse-rejection failures for this task. */
+  failureCount?: number;
+  /** Most recent timeout/parse-rejection failure time. */
+  lastFailureAt?: string;
+  /** Most recent timeout/parse-rejection failure reason. */
+  lastFailureReason?: string;
+  /** Time this task was parked after repeated timeout/parse-rejection failures. */
+  blockedAt?: string;
+  /** Reason this task was parked. */
+  blockedReason?: string;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
@@ -55,7 +66,10 @@ const STATUS_DIR: Record<AgentTaskStatus, string> = {
   'todo': 'todo',
   'in-progress': 'in-progress',
   'done': 'done',
+  'blocked': 'blocked',
 };
+
+const AGENT_TASK_STATUSES = ['todo', 'in-progress', 'done', 'blocked'] as const satisfies readonly AgentTaskStatus[];
 
 function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '-') || 'role';
@@ -94,9 +108,9 @@ export class TaskBoard {
     return path.join(this.agentDir(roleId), STATUS_DIR[status]);
   }
 
-  /** Create the {todo,in-progress,done} folders for a role. Idempotent. */
+  /** Create the {todo,in-progress,done,blocked} folders for a role. Idempotent. */
   async ensureRole(roleId: string): Promise<void> {
-    for (const status of ['todo', 'in-progress', 'done'] as AgentTaskStatus[]) {
+    for (const status of AGENT_TASK_STATUSES) {
       await fs.mkdir(this.statusDir(roleId, status), { recursive: true });
     }
   }
@@ -109,7 +123,7 @@ export class TaskBoard {
   /** The next zero-padded task id for a role (max existing + 1, across all states). */
   private async nextId(roleId: string): Promise<string> {
     let max = 0;
-    for (const status of ['todo', 'in-progress', 'done'] as AgentTaskStatus[]) {
+    for (const status of AGENT_TASK_STATUSES) {
       const names = await fs.readdir(this.statusDir(roleId, status)).catch(() => [] as string[]);
       for (const name of names) {
         const m = /TASK-(\d+)\.json$/.exec(name);
@@ -206,18 +220,72 @@ export class TaskBoard {
   private async completeUnlocked(task: AgentTask, now: string): Promise<void> {
     const moved: AgentTask = { ...task, status: 'done', completedAt: now };
     await this.write('done', moved);
-    await fs.rm(this.file('in-progress', task), { force: true });
+    await Promise.all([
+      fs.rm(this.file('todo', task), { force: true }),
+      fs.rm(this.file('in-progress', task), { force: true }),
+      fs.rm(this.file('blocked', task), { force: true }),
+    ]);
   }
 
   /** Return an in-progress task back to the queue (e.g. its turn failed): in-progress → todo. */
-  requeue(task: AgentTask): Promise<void> {
-    return this.mutate(() => this.requeueUnlocked(task));
+  requeue(task: AgentTask, options: { resetFailureCount?: boolean } = {}): Promise<void> {
+    return this.mutate(() => this.requeueUnlocked(task, options));
   }
 
-  private async requeueUnlocked(task: AgentTask): Promise<void> {
-    const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined };
+  private async requeueUnlocked(task: AgentTask, options: { resetFailureCount?: boolean } = {}): Promise<void> {
+    const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, blockedAt: undefined, blockedReason: undefined };
+    if (options.resetFailureCount) {
+      moved.failureCount = undefined;
+      moved.lastFailureAt = undefined;
+      moved.lastFailureReason = undefined;
+    }
     await this.write('todo', moved);
-    await fs.rm(this.file('in-progress', task), { force: true });
+    await Promise.all([
+      fs.rm(this.file('in-progress', task), { force: true }),
+      fs.rm(this.file('blocked', task), { force: true }),
+    ]);
+  }
+
+  /**
+   * Record a timeout/parse-rejection failure. Before the threshold the task is returned to
+   * todo; at the threshold it is parked under blocked/ so it leaves the claimable FIFO.
+   */
+  failOrPark(
+    task: AgentTask,
+    now: string,
+    reason: string,
+    threshold: number,
+  ): Promise<{ task: AgentTask; parked: boolean; failureCount: number }> {
+    return this.mutate(async () => {
+      const failureCount = (task.failureCount ?? 0) + 1;
+      const failed: AgentTask = {
+        ...task,
+        failureCount,
+        lastFailureAt: now,
+        lastFailureReason: reason,
+        completedAt: undefined,
+      };
+      if (failureCount >= Math.max(1, threshold)) {
+        const parked: AgentTask = {
+          ...failed,
+          status: 'blocked',
+          startedAt: undefined,
+          blockedAt: now,
+          blockedReason: reason,
+        };
+        await this.write('blocked', parked);
+        await Promise.all([
+          fs.rm(this.file('todo', task), { force: true }),
+          fs.rm(this.file('in-progress', task), { force: true }),
+          fs.rm(this.file('done', task), { force: true }),
+        ]);
+        return { task: parked, parked: true, failureCount };
+      }
+      const retry: AgentTask = { ...failed, status: 'todo', startedAt: undefined };
+      await this.write('todo', retry);
+      await fs.rm(this.file('in-progress', task), { force: true });
+      return { task: retry, parked: false, failureCount };
+    });
   }
 
   /**
@@ -227,11 +295,19 @@ export class TaskBoard {
    */
   reopen(task: AgentTask): Promise<void> {
     return this.mutate(async () => {
-      const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, completedAt: undefined };
+      const moved: AgentTask = {
+        ...task,
+        status: 'todo',
+        startedAt: undefined,
+        completedAt: undefined,
+        blockedAt: undefined,
+        blockedReason: undefined,
+      };
       await this.write('todo', moved);
       await Promise.all([
         fs.rm(this.file('in-progress', task), { force: true }),
         fs.rm(this.file('done', task), { force: true }),
+        fs.rm(this.file('blocked', task), { force: true }),
       ]);
     });
   }
@@ -259,11 +335,7 @@ export class TaskBoard {
 
   /** All task titles for a role across every state (used to dedupe re-assignments). */
   async titles(roleId: string): Promise<Set<string>> {
-    const all = await Promise.all([
-      this.list(roleId, 'todo'),
-      this.list(roleId, 'in-progress'),
-      this.list(roleId, 'done'),
-    ]);
+    const all = await Promise.all(AGENT_TASK_STATUSES.map((status) => this.list(roleId, status)));
     return new Set(all.flat().map((task) => task.title));
   }
 
@@ -280,7 +352,7 @@ export class TaskBoard {
 
   /** Find a task by id within a role's board, across all states. Null when not present. */
   async findTask(roleId: string, taskId: string): Promise<{ task: AgentTask; status: AgentTaskStatus } | null> {
-    for (const status of ['todo', 'in-progress', 'done'] as AgentTaskStatus[]) {
+    for (const status of AGENT_TASK_STATUSES) {
       const match = (await this.list(roleId, status)).find((task) => task.id === taskId);
       if (match) return { task: match, status };
     }

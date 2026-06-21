@@ -218,6 +218,29 @@ const MIGRATIONS: Migration[] = [
     ],
   },
   {
+    id: '0010_queue_pipeline_v2',
+    statements: [
+      `ALTER TABLE queue_jobs
+        ADD COLUMN target_type VARCHAR(32) NULL,
+        ADD COLUMN target_payload JSON NULL,
+        ADD COLUMN target_ref JSON NULL,
+        ADD COLUMN title VARCHAR(255) NULL,
+        ADD COLUMN body MEDIUMTEXT NULL,
+        ADD COLUMN failure_kind VARCHAR(64) NULL,
+        ADD COLUMN history_archived_at DATETIME(3) NULL`,
+    ],
+    down: [
+      `ALTER TABLE queue_jobs
+        DROP COLUMN history_archived_at,
+        DROP COLUMN failure_kind,
+        DROP COLUMN body,
+        DROP COLUMN title,
+        DROP COLUMN target_ref,
+        DROP COLUMN target_payload,
+        DROP COLUMN target_type`,
+    ],
+  },
+  {
     id: '008_prompt_generations',
     statements: [
       `CREATE TABLE IF NOT EXISTS prompt_generations (

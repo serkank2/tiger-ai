@@ -544,6 +544,7 @@ export interface TeamTurn {
 }
 
 export type TeamRunStatus = 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+export type TeamOrchestrationMode = 'legacy' | 'company';
 
 export interface TeamRun {
   id: string;
@@ -566,6 +567,9 @@ export interface RoleSnapshot {
   id: string;
   name: string;
   tool: TeamAgentType;
+  model: string;
+  effort: string;
+  permission: string;
   status: RoleStatus;
   canWriteCode: boolean;
   requiredForSignoff: boolean;
@@ -743,6 +747,7 @@ export interface TeamRunState {
   name: string;
   goal: string;
   status: TeamRunStatus;
+  orchestrationMode?: TeamOrchestrationMode;
   roles: RoleSnapshot[];
   doneGate: DoneGateState;
   messageCount: number;
@@ -844,6 +849,7 @@ export interface CreateTeamRunRequest {
   goal: string;
   templateId?: string;
   roles?: RoleConfigInput[];
+  orchestrationMode?: TeamOrchestrationMode;
   /** Project folder the team works on (the .tiger root is created inside it). */
   path?: string;
 }
@@ -972,6 +978,7 @@ export type QueueProvider = 'claude' | 'codex' | 'antigravity' | 'mixed';
 export type QueueRuleProvider = QueueProvider | 'any';
 export type QueueRuleOperator = 'gte' | 'gt' | 'lte' | 'lt' | 'eq';
 export type QueueRuleAction = 'block_dispatch';
+export type QueueTargetType = 'terminal' | 'project' | 'team';
 export type QueueJobStatus =
   | 'queued'
   | 'running'
@@ -988,6 +995,42 @@ export interface QueueJobConfigSnapshot {
   configs?: Partial<Record<TigerStageId, TigerStageRunConfig>>;
   templateName?: string;
   values?: Record<string, unknown>;
+}
+
+export interface QueueProjectTargetPayload {
+  workspacePath?: string;
+  projectName?: string;
+  provider?: QueueProvider;
+  configSnapshot?: QueueJobConfigSnapshot;
+}
+
+export interface QueueTerminalTargetPayload {
+  name: string;
+  cwd?: string;
+  initialCommand?: string;
+  groupId?: string | null;
+  shell?: Partial<ShellSpec>;
+  env?: Record<string, string>;
+  autostart?: boolean;
+  protected?: boolean;
+  cols?: number;
+  rows?: number;
+}
+
+export interface QueueTeamTargetPayload {
+  mode: 'create' | 'append';
+  runId?: string;
+  workspacePath?: string;
+  workspace?: string;
+  templateId?: string;
+  roles?: unknown[];
+  orchestrationMode?: TeamOrchestrationMode;
+}
+
+export type QueueTargetPayload = QueueProjectTargetPayload | QueueTerminalTargetPayload | QueueTeamTargetPayload;
+
+export interface QueueTarget {
+  type: QueueTargetType;
 }
 
 export interface QueueStep {
@@ -1015,6 +1058,13 @@ export interface QueueJob {
   projectName: string | null;
   prompt: string;
   configSnapshot: QueueJobConfigSnapshot;
+  targetType?: QueueTargetType | null;
+  targetPayload?: QueueTargetPayload | null;
+  targetRef?: Record<string, unknown> | null;
+  title?: string | null;
+  body?: string | null;
+  failureKind?: string | null;
+  historyArchivedAt?: string | null;
   attempts: number;
   maxAttempts: number;
   blockedReason: string | null;
@@ -1059,12 +1109,33 @@ export interface QueueEvent {
 export type QueueProviderCounts = Record<QueueProvider, number>;
 
 export interface QueueState {
+  queuePipelineV2?: boolean;
   jobs: QueueJobView[];
+  liveItems?: QueueJobView[];
+  historyCounts?: {
+    total: number;
+    byStatus: Partial<Record<QueueJobStatus, number>>;
+    byTarget: Partial<Record<QueueTargetType, number>>;
+  };
   rules: QueueRule[];
   events: QueueEvent[];
   runningByProvider: QueueProviderCounts;
   providerConcurrency: QueueProviderCounts;
   updatedAt: string;
+}
+
+export interface QueueHistoryQuery {
+  status?: Extract<QueueJobStatus, 'completed' | 'failed' | 'canceled'>;
+  target?: QueueTargetType;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export interface QueueHistoryResponse {
+  items: QueueJobView[];
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export type QueueBulkAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete';
@@ -1083,13 +1154,17 @@ export interface QueueBulkResponse {
 }
 
 export interface QueueEnqueueInput {
-  prompt: string;
+  prompt?: string;
+  body?: string;
+  title?: string;
   workspacePath?: string;
   projectName?: string;
   provider?: QueueProvider;
   priority?: number;
   maxAttempts?: number;
   configSnapshot?: QueueJobConfigSnapshot;
+  target?: QueueTarget | QueueTargetType;
+  payload?: Record<string, unknown>;
 }
 
 export interface QueueClientEvent {

@@ -75,6 +75,52 @@ test('selectNextTurns honors coordinator decisions while preserving scheduler sa
   assert.equal(decision.turns[0]?.writeCapable, true);
 });
 
+test('selectNextTurns prefers an idle write-capable instance of the requested kind', () => {
+  const decision = selectNextTurns(
+    state({
+      roles: [
+        { id: 'lead', kind: 'lead', status: 'idle' },
+        { id: 'developer-a', kind: 'developer', status: 'running' },
+        { id: 'developer-b', kind: 'developer', status: 'idle' },
+        { id: 'developer-c', kind: 'developer', status: 'idle' },
+      ],
+      coordinatorDecision: {
+        phase: 'implementation',
+        roleIds: ['developer'],
+        reason: 'lead selected the developer pool',
+      },
+      tasks: { needsImplementation: 1 },
+    }),
+  );
+
+  assert.deepEqual(
+    decision.turns.map((turn) => turn.roleId),
+    ['developer-b'],
+  );
+  assert.equal(decision.turns[0]?.writeCapable, true);
+});
+
+test('selectNextTurns waits when every write-capable instance in the requested kind is busy', () => {
+  const decision = selectNextTurns(
+    state({
+      roles: [
+        { id: 'lead', kind: 'lead', status: 'idle' },
+        { id: 'developer-a', kind: 'developer', status: 'running' },
+        { id: 'developer-b', kind: 'developer', status: 'working' },
+      ],
+      coordinatorDecision: {
+        phase: 'implementation',
+        roleIds: ['developer'],
+        reason: 'lead selected the developer pool',
+      },
+      tasks: { needsImplementation: 1 },
+    }),
+  );
+
+  assert.deepEqual(decision.turns, []);
+  assert.equal(decision.reason, 'no available role for implementation');
+});
+
 test('selectNextTurns terminates at the round cap and never schedules terminal states', () => {
   const capped = selectNextTurns(state({ currentRound: 3, maxRounds: 3, tasks: { needsAnalysis: 1 } }));
   assert.deepEqual(capped.turns, []);

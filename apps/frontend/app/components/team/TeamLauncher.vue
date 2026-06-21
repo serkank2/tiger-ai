@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watchEffect } from 'vue';
+import { useDialog } from '~/composables/useDialog';
 import { useTeamStore } from '~/stores/team';
-import type { TeamTemplate } from '~/types';
+import type { TeamOrchestrationMode, TeamRunStartInput, TeamTemplate } from '~/types';
 import BaseButton from '../ui/BaseButton.vue';
 import FolderPicker from '../FolderPicker.vue';
 import TeamAgentBadge from './TeamAgentBadge.vue';
@@ -12,6 +13,7 @@ const team = useTeamStore();
 const goal = ref('');
 const selectedId = ref<string | null>(null);
 const workspace = ref('');
+const orchestrationMode = ref<TeamOrchestrationMode | ''>('');
 const showPicker = ref(false);
 const editorOpen = ref(false);
 const editorTemplate = ref<TeamTemplate | null>(null);
@@ -45,8 +47,10 @@ function pickProject(path: string) {
 
 async function start() {
   if (!canStart.value || !selected.value) return;
+  const input: TeamRunStartInput = { goal: goal.value.trim(), templateId: selected.value.id, path: workspace.value.trim() };
+  if (orchestrationMode.value) input.orchestrationMode = orchestrationMode.value;
   try {
-    await team.start({ goal: goal.value.trim(), templateId: selected.value.id, path: workspace.value.trim() });
+    await team.start(input);
   } catch {
     /* store surfaces the error via notices */
   }
@@ -145,9 +149,17 @@ function onSaved(tpl: TeamTemplate) {
         <textarea
           v-model="goal"
           class="goal"
+          data-testid="team-goal"
           rows="6"
           placeholder="Describe what the team should accomplish. Be specific about the outcome and any constraints…"
         />
+
+        <h3 class="mt">Orchestration mode</h3>
+        <select v-model="orchestrationMode" class="mode-select" data-testid="team-orchestration-mode" aria-label="Orchestration mode">
+          <option value="">Server default</option>
+          <option value="legacy">Legacy</option>
+          <option value="company">Company</option>
+        </select>
 
         <div v-if="selected" class="selected-roles">
           <span class="label">{{ selected.name }} · {{ selected.roles.length }} roles</span>
@@ -162,7 +174,15 @@ function onSaved(tpl: TeamTemplate) {
             </li>
           </ul>
         </div>
-        <BaseButton variant="primary" size="lg" block :loading="team.isBusy('start')" :disabled="!canStart" @click="start">
+        <BaseButton
+          variant="primary"
+          size="lg"
+          block
+          data-testid="team-start"
+          :loading="team.isBusy('start')"
+          :disabled="!canStart"
+          @click="start"
+        >
           Start team run
         </BaseButton>
       </div>
@@ -321,6 +341,9 @@ h3.mt {
   border-radius: var(--radius-sm);
   padding: var(--space-3);
   line-height: var(--leading-normal);
+}
+.mode-select {
+  width: 100%;
 }
 .selected-roles {
   background: var(--bg-elev);

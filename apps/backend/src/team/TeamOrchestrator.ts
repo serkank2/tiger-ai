@@ -86,6 +86,7 @@ export type TeamRoleStatus = 'idle' | 'running' | 'paused' | 'blocked' | 'done' 
 export type TeamTurnStatus = 'pending' | 'running' | 'completed' | 'blocked' | 'failed' | 'stopped' | 'interrupted';
 export type TeamDirectiveStatus = 'pending' | 'acknowledged' | 'applied';
 export type TeamVerificationStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+export type TeamOrchestrationMode = 'legacy' | 'company';
 
 /**
  * Input shape for appending a conversation message. The message bus stamps the
@@ -202,11 +203,24 @@ export interface TeamAttemptRecord {
   createdAt: string;
 }
 
+export interface TeamKindQueuedTask {
+  id: string;
+  kind: PureRoleKind;
+  fromRoleId?: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface TeamRunState {
   runId: string;
   workspace: string;
   tigerRoot: string;
   status: TeamRunStatus;
+  /** Legacy preserves Lead-after-worker sequencing. Company mode enables the E2 scheduler path. */
+  orchestrationMode?: TeamOrchestrationMode;
+  /** Company mode only: true after the Lead explicitly declares the project complete. */
+  projectComplete?: boolean;
   goal: string;
   roles: TeamRoleInstance[];
   /**
@@ -243,6 +257,11 @@ export interface TeamRunState {
    * as an outstanding queue item that keeps the run open (finding #6).
    */
   activeClaimedTaskIds?: string[];
+  /**
+   * Company mode only: tasks addressed to a role kind while every instance is busy. They stay
+   * unbound until an instance of that kind becomes idle, so the first available instance gets it.
+   */
+  kindQueuedTasks?: TeamKindQueuedTask[];
   round: number;
   turnCount: number;
   currentTurn: TeamTurnRecord | null;
@@ -297,6 +316,7 @@ export interface CreateTeamRunInput {
   goal: string;
   roles: Omit<Partial<TeamRoleInstance>, 'status'>[];
   runId?: string;
+  orchestrationMode?: TeamOrchestrationMode;
 }
 
 /** A lightweight summary of a persisted run, for the run-history list. */
@@ -511,6 +531,12 @@ export interface TeamOrchestratorOptions {
    */
   maxConsecutiveFailures?: number;
   /**
+   * How many consecutive timeout / parse-rejection failures of the SAME board task are
+   * tolerated before that task is parked in blocked/ and routed to the Lead for re-plan.
+   * Default 2.
+   */
+  maxConsecutiveTaskFailures?: number;
+  /**
    * How many consecutive *unproductive* Lead turns (no task assigned, no sign-off, no
    * material decision/verification, and nothing pending to act on) are tolerated before
    * the run idles/waits rather than spinning the Lead to the round cap. Default 2.
@@ -535,6 +561,12 @@ export interface TeamOrchestratorOptions {
    * otherwise (and when false) role turns use the shared workspace cwd, exactly as today.
    */
   worktreePerTask?: boolean;
+  /** Default orchestration mode for newly-created runs. Defaults to `config.team.orchestrationMode`. */
+  orchestrationMode?: TeamOrchestrationMode;
+  /** Maximum read-only worker turns company mode may claim alongside one writer. Default 2. */
+  maxConcurrentReadOnly?: number;
+  /** Maximum write-capable worker turns company mode may claim when worktree isolation is enabled. Default 1. */
+  maxConcurrentWrite?: number;
 }
 
 export class TeamPaths {
@@ -848,6 +880,7 @@ function teamBoardPending(state: TeamRunState): number {
     const counts = role.taskCounts;
     if (counts) raw += (counts.todo ?? 0) + (counts.inProgress ?? 0);
   }
+  raw += state.kindQueuedTasks?.length ?? 0;
   const handoffDup = openHandoffs(state.handoffs).length;
   const activeClaimed = state.activeClaimedTaskIds?.length ?? 0;
   return Math.max(0, raw - handoffDup - activeClaimed);
@@ -989,21 +1022,25 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
 /** Assemble the pure scheduler's input from the engine's richer run state. */
 function buildSchedulerState(state: TeamRunState, context: TeamSchedulerContext): PureSchedulerState {
   const readyForSignoff = workQueuesClear(state);
-  const requiredRoleIds = state.roles.filter((role) => role.requiredForSignoff).map((role) => role.id);
+  const pendingSignoffRoleIds = readyForSignoff ? evaluateCompletion(buildCompletionInput(state)).pendingRoleIds : [];
   return {
     roles: state.roles.map(toSchedulerRole),
     status: 'running',
     activeTurns: [],
     pendingDirectives: context.pendingDirectives.map((directive) => ({ id: directive.id, status: 'pending' as const })),
     // When every tracked work item is done, steer the scheduler into the sign-off
-    // phase and target exactly the roles whose sign-off the completion gate still
-    // needs, so those accountable roles actually get turns to sign off.
+    // phase and target exactly the role ids whose kind still needs sign-off,
+    // so idle spare instances of an already-satisfied kind do not keep running.
     coordinatorDecision:
-      readyForSignoff && requiredRoleIds.length > 0
-        ? { phase: 'signoff', roleIds: requiredRoleIds, reason: 'All tracked work is done; collecting required sign-offs.' }
+      readyForSignoff && pendingSignoffRoleIds.length > 0
+        ? {
+            phase: 'signoff',
+            roleIds: pendingSignoffRoleIds,
+            reason: 'All tracked work is done; collecting required sign-offs.',
+          }
         : undefined,
-    tasks: toSchedulerTasks(state.tasks),
-    findings: toSchedulerFindings(state.findings),
+    tasks: toSchedulerTasks(state.tasks, normalizeTeamOrchestrationMode(state.orchestrationMode)),
+    findings: toSchedulerFindings(state.findings, normalizeTeamOrchestrationMode(state.orchestrationMode)),
     doneGate: { ready: readyForSignoff },
     currentRound: state.round,
     maxRounds: context.maxRounds,
@@ -1011,7 +1048,14 @@ function buildSchedulerState(state: TeamRunState, context: TeamSchedulerContext)
 }
 
 function toSchedulerRole(role: TeamRoleInstance, index: number): PureSchedulerRole {
-  return { id: role.id, kind: deriveRoleKind(role), label: role.name, writeCapable: role.canWriteCode, order: index };
+  return {
+    id: role.id,
+    kind: deriveRoleKind(role),
+    label: role.name,
+    status: role.status,
+    writeCapable: role.canWriteCode,
+    order: index,
+  };
 }
 
 /** Map a role's id/name (and capabilities) onto the scheduler's role-kind taxonomy. */
@@ -1028,10 +1072,75 @@ function deriveRoleKind(role: TeamRoleInstance): PureRoleKind {
   return 'coordinator';
 }
 
-function toSchedulerTasks(tasks: TaskSummary | null): PureTaskState | undefined {
+function isRoleKindToken(value: string): value is PureRoleKind {
+  return ['lead', 'coordinator', 'analyst', 'developer', 'tester', 'reviewer', 'signoff'].includes(value);
+}
+
+function ensureNoDuplicateLeadRole(roles: TeamRoleInstance[]): void {
+  const leadRoles = roles.filter((role) => deriveRoleKind(role) === 'lead');
+  if (leadRoles.length > 1) {
+    throw httpError(409, `exactly one Lead role is allowed; found ${leadRoles.length}`);
+  }
+}
+
+function ensureCanAddRole(existing: TeamRoleInstance[], role: TeamRoleInstance): void {
+  if (deriveRoleKind(role) !== 'lead') return;
+  if (existing.some((entry) => deriveRoleKind(entry) === 'lead')) {
+    throw httpError(409, 'exactly one Lead role is allowed; remove or reconfigure the existing Lead first');
+  }
+}
+
+function ensureCanReconfigureRole(
+  roles: TeamRoleInstance[],
+  current: TeamRoleInstance,
+  candidate: TeamRoleInstance,
+): void {
+  const currentIsLead = deriveRoleKind(current) === 'lead';
+  const candidateIsLead = deriveRoleKind(candidate) === 'lead';
+  const otherLeadExists = roles.some((role) => role.id !== current.id && deriveRoleKind(role) === 'lead');
+  if (candidateIsLead && otherLeadExists) {
+    throw httpError(409, 'exactly one Lead role is allowed; remove or reconfigure the existing Lead first');
+  }
+  if (currentIsLead && !candidateIsLead && !otherLeadExists) {
+    throw httpError(409, 'a team run must keep its existing Lead role');
+  }
+}
+
+function toSchedulerTasks(tasks: TaskSummary | null, mode: TeamOrchestrationMode): PureTaskState | undefined {
   if (!tasks || tasks.total === 0) return undefined;
   const exec = tasks.byExecution;
   const review = tasks.byReview;
+  if (mode === 'company') {
+    let needsAnalysis = 0;
+    let needsImplementation = 0;
+    let needsTesting = 0;
+    let needsReview = 0;
+    for (const item of tasks.items) {
+      const assignee = item.assignedAgent.toLowerCase();
+      if (item.executionStatus === 'not_started') {
+        if (/analy|business|requirement|\bba\b/.test(assignee)) needsAnalysis += 1;
+        else if (/test|\bqa\b|quality|verif/.test(assignee)) needsTesting += 1;
+        else needsImplementation += 1;
+        continue;
+      }
+      if (item.executionStatus === 'in_progress') {
+        if (/test|\bqa\b|quality|verif/.test(assignee)) needsTesting += 1;
+        else needsImplementation += 1;
+        continue;
+      }
+      if (item.executionStatus === 'done') {
+        if (item.reviewStatus === 'pending') needsTesting += 1;
+        else if (item.reviewStatus === 'reviewing' || item.reviewStatus === 'needs_fix') needsReview += 1;
+      }
+    }
+    return {
+      needsAnalysis,
+      needsImplementation,
+      needsTesting,
+      needsReview,
+      readyForSignoff: exec.done === tasks.total ? review.approved + review.fixed : 0,
+    };
+  }
   return {
     needsImplementation: exec.not_started + exec.in_progress,
     needsReview: review.pending + review.reviewing,
@@ -1039,8 +1148,9 @@ function toSchedulerTasks(tasks: TaskSummary | null): PureTaskState | undefined 
   };
 }
 
-function toSchedulerFindings(findings: FindingsSummary | null): PureFindingState | undefined {
+function toSchedulerFindings(findings: FindingsSummary | null, mode: TeamOrchestrationMode): PureFindingState | undefined {
   if (!findings || findings.total === 0) return undefined;
+  if (mode === 'company') return { open: findings.open, needsFix: findings.fixing, needsVerification: findings.fixed };
   return { open: findings.open, needsFix: findings.fixing };
 }
 
@@ -1115,10 +1225,18 @@ function toModelRole(role: TeamRoleInstance): TeamModelRole {
     agent: { tool: role.tool, model: role.model ?? '', effort: role.effort ?? '', permission: role.permission ?? '' },
     canWriteCode: role.canWriteCode,
     requiredForSignoff: role.requiredForSignoff,
-    status: 'idle',
+    status: toModelRoleStatus(role.status),
     signedOff: false,
     createdAt: role.lastTurnAt ?? '',
   };
+}
+
+function toModelRoleStatus(status: TeamRoleStatus): TeamModelRole['status'] {
+  if (status === 'blocked') return 'blocked';
+  if (status === 'done') return 'done';
+  if (status === 'running') return 'working';
+  if (status === 'paused' || status === 'interrupted') return 'waiting';
+  return 'idle';
 }
 
 function toModelSignOff(signoff: TeamSignoff, runId: string): TeamModelSignOff {
@@ -1323,11 +1441,15 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxTurns: number;
   private readonly maxRounds: number;
   private readonly maxConsecutiveFailures: number;
+  private readonly maxConsecutiveTaskFailures: number;
   private readonly maxIdleLeadTurns: number;
   private readonly maxDurationMs?: number;
   private readonly maxBudget?: number;
   /** Part B: run each claimed task in its own git worktree (config-gated; off by default). */
   private readonly worktreePerTask: boolean;
+  private readonly defaultOrchestrationMode: TeamOrchestrationMode;
+  private readonly maxConcurrentReadOnly: number;
+  private readonly maxConcurrentWrite: number;
   /** Consecutive failed turns since the last successful turn (recovery guard). */
   private consecutiveTurnFailures = 0;
   /** Last emitted done-gate snapshot (JSON), so the `done` event fires only on change. */
@@ -1345,10 +1467,16 @@ export class TeamOrchestrator extends EventEmitter {
     this.maxTurns = options.maxTurns ?? 200;
     this.maxRounds = options.maxRounds ?? 200;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
+    this.maxConsecutiveTaskFailures = Math.max(1, Math.trunc(options.maxConsecutiveTaskFailures ?? 2));
     this.maxIdleLeadTurns = options.maxIdleLeadTurns ?? 2;
     this.maxDurationMs = options.maxDurationMs;
     this.maxBudget = options.maxBudget;
     this.worktreePerTask = options.worktreePerTask ?? appConfig.team.worktreePerTask;
+    this.defaultOrchestrationMode = normalizeTeamOrchestrationMode(
+      options.orchestrationMode ?? appConfig.team.orchestrationMode,
+    );
+    this.maxConcurrentReadOnly = Math.max(1, options.maxConcurrentReadOnly ?? appConfig.team.maxConcurrentReadOnly ?? 2);
+    this.maxConcurrentWrite = Math.max(1, options.maxConcurrentWrite ?? appConfig.team.maxConcurrentWrite ?? 1);
     this.scheduler = options.scheduler ?? new LeadOwnedScheduler(this.maxIdleLeadTurns);
     this.runner = options.runner ?? new MissingTeamTurnRunner();
     this.completionGate =
@@ -1383,13 +1511,17 @@ export class TeamOrchestrator extends EventEmitter {
 
     const createdAt = nowIso();
     const roles = normalizeRoles(input.roles);
+    ensureNoDuplicateLeadRole(roles);
     this.state = {
       runId,
       workspace,
       tigerRoot: paths.tigerRoot,
       status: 'paused',
+      orchestrationMode: normalizeTeamOrchestrationMode(input.orchestrationMode ?? this.defaultOrchestrationMode),
+      projectComplete: false,
       goal,
       roles,
+      kindQueuedTasks: [],
       round: 0,
       turnCount: 0,
       currentTurn: null,
@@ -2133,6 +2265,7 @@ export class TeamOrchestrator extends EventEmitter {
     if (state.roles.some((entry) => entry.id === role.id)) {
       throw httpError(409, `role ${role.id} already exists in this run`);
     }
+    ensureCanAddRole(state.roles, role);
     state.roles.push(role);
     if (this.taskBoard) await this.taskBoard.ensureRole(role.id).catch(() => undefined);
     await this.refreshWorkQueues();
@@ -2174,6 +2307,14 @@ export class TeamOrchestrator extends EventEmitter {
     const state = this.requireState();
     const role = state.roles.find((entry) => entry.id === roleId);
     if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
+    const candidate: TeamRoleInstance = {
+      ...role,
+      name: typeof patch.name === 'string' && patch.name.trim() ? patch.name.trim() : role.name,
+      canWriteCode: typeof patch.canWriteCode === 'boolean' ? patch.canWriteCode : role.canWriteCode,
+      requiredForSignoff:
+        typeof patch.requiredForSignoff === 'boolean' ? patch.requiredForSignoff : role.requiredForSignoff,
+    };
+    ensureCanReconfigureRole(state.roles, role, candidate);
     if (typeof patch.name === 'string' && patch.name.trim()) role.name = patch.name.trim();
     if (typeof patch.persona === 'string') role.persona = patch.persona;
     if (patch.tool) role.tool = toAgentTypeOr(patch.tool, role.tool);
@@ -2305,16 +2446,18 @@ export class TeamOrchestrator extends EventEmitter {
       const hasPendingLeadWork =
         state.leadReviewPending === true || state.directives.some((directive) => directive.status === 'pending');
       let turns: TeamScheduledTurn[];
-      const claimed = hasPendingLeadWork ? null : await this.claimNextAgentTask(leadId ?? undefined);
-      if (claimed) {
-        turns = [
-          {
-            roleId: claimed.roleId,
-            taskId: claimed.task.id,
-            task: claimed.task,
-            reason: `Working assigned ${claimed.task.id}: ${claimed.task.title}`,
-          },
-        ];
+      const claimed = hasPendingLeadWork
+        ? []
+        : isCompanyMode(state)
+          ? await this.claimNextAgentTasks(leadId ?? undefined, { readOnlyLimit: this.maxConcurrentReadOnly })
+          : await this.claimNextAgentTask(leadId ?? undefined).then((task) => (task ? [task] : []));
+      if (claimed.length > 0) {
+        turns = claimed.map((entry) => ({
+          roleId: entry.roleId,
+          taskId: entry.task.id,
+          task: entry.task,
+          reason: `Working assigned ${entry.task.id}: ${entry.task.title}`,
+        }));
       } else {
         const messages = await this.listMessages();
         const decision = await this.scheduler.selectNextTurns(state, {
@@ -2731,6 +2874,7 @@ export class TeamOrchestrator extends EventEmitter {
     // reviewing a just-finished role result — such a turn is productive even if quiet.
     const leadHadPendingWork = isLeadTurn && (turn.appliedDirectiveIds.length > 0 || state.leadReviewPending === true);
     const materialBefore = state.materialChangeAt;
+    const authorityAllowed = result.status === 'completed';
     const messages = result.messages ?? [];
     const appended: TeamMessage[] = [];
     // Ids of the prose-inferred verification records created by THIS turn, so a structured
@@ -2740,7 +2884,11 @@ export class TeamOrchestrator extends EventEmitter {
       const message = await this.appendMessage({ ...draft, turnId: draft.turnId ?? turn.id });
       appended.push(message);
       turn.messageSeqs.push(message.seq);
-      if (isMaterialMessage(message.kind)) {
+      const projectCompleteDecision = authorityAllowed && isLeadTurn && isProjectCompleteDecision(message);
+      if (projectCompleteDecision) {
+        state.projectComplete = true;
+      }
+      if (authorityAllowed && isMaterialMessage(message.kind) && !projectCompleteDecision) {
         state.materialChangeAt = message.createdAt;
         this.staleSignoffs(`${message.kind} message changed the run state.`);
       }
@@ -2753,7 +2901,7 @@ export class TeamOrchestrator extends EventEmitter {
       // to record one). This is the FALLBACK path: the outcome is inferred from the prose
       // when the role did not emit a structured `VerificationDirective` (item 9). A
       // structured directive for the same turn takes precedence and supersedes this below.
-      if (message.kind === 'verification') {
+      if (authorityAllowed && message.kind === 'verification') {
         const id = nanoid();
         inferredVerificationIds.push(id);
         state.verifications.push({
@@ -2770,7 +2918,7 @@ export class TeamOrchestrator extends EventEmitter {
     // authoritative path — they replace the regex inference for this turn. When a turn emits
     // a structured directive we drop the prose-inferred record(s) it created above so the
     // explicit evidence is what the done-gate evaluates, not a guessed duplicate.
-    const structuredVerifications = result.verifications ?? [];
+    const structuredVerifications = authorityAllowed ? (result.verifications ?? []) : [];
     if (structuredVerifications.length > 0) {
       if (inferredVerificationIds.length > 0) {
         const drop = new Set(inferredVerificationIds);
@@ -2792,7 +2940,7 @@ export class TeamOrchestrator extends EventEmitter {
       }
       this.staleSignoffs('A verification self-report changed the run state.');
     }
-    if (result.verification) {
+    if (authorityAllowed && result.verification) {
       const verification: TeamVerificationRecord = {
         id: result.verification.id ?? nanoid(),
         roleId: result.verification.roleId ?? role.id,
@@ -2807,15 +2955,16 @@ export class TeamOrchestrator extends EventEmitter {
       state.materialChangeAt = verification.completedAt ?? verification.createdAt;
       this.staleSignoffs('Verification changed the run state.');
     }
-    if (result.materialChange) {
+    if (authorityAllowed && result.materialChange) {
       state.materialChangeAt = nowIso();
       this.staleSignoffs('Turn reported a material change.');
     }
     // Record sign-offs ONLY from explicit "done" directives (mapRunnerResult already
     // filters to status === 'done'), so a role is marked done solely when it genuinely
     // declares completion — never from a chat message alone.
-    const signoffsRecorded = (result.signoffs ?? []).length;
-    for (const signoff of result.signoffs ?? []) {
+    const signoffs = authorityAllowed ? (result.signoffs ?? []) : [];
+    const signoffsRecorded = signoffs.length;
+    for (const signoff of signoffs) {
       const signoffRole = state.roles.find((entry) => entry.id === (signoff.roleId ?? role.id)) ?? role;
       this.recordSignoff(signoffRole, undefined, signoff.createdAt, signoff.messageId);
     }
@@ -2824,16 +2973,16 @@ export class TeamOrchestrator extends EventEmitter {
     // needs_work/request_review). The message-bus parses these; previously the orchestrator
     // dropped them. They mutate the board + run state so a role can drive a task's lifecycle
     // explicitly rather than only via the implicit claim-on-schedule / file-on-complete flow.
-    const directiveEffects = await this.applyTaskDirectives(turn, role, result.taskDirectives ?? []);
+    const directiveEffects = authorityAllowed ? await this.applyTaskDirectives(turn, role, result.taskDirectives ?? []) : 0;
 
     // Materialize this turn's Lead-approved `task` assignments into the target role's todo
     // queue. Only the Lead may delegate executable work; lateral non-Lead delegation and
     // Lead-addressed review requests are handled (and re-routed to the Lead) here.
-    const tasksEnqueued = await this.enqueueTaskAssignments(appended);
+    const tasksEnqueued = authorityAllowed ? await this.enqueueTaskAssignments(appended) : 0;
 
     // Apply the explicit coordination verbs (handoff/assign/sendMessage) this turn emitted,
     // on top of the existing board + scheduler. Counts toward Lead productivity.
-    const coordinationEffects = await this.applyCoordinationDirectives(turn, role, result.coordinationDirectives ?? []);
+    const coordinationEffects = authorityAllowed ? await this.applyCoordinationDirectives(turn, role, result.coordinationDirectives ?? []) : 0;
 
     turn.status = result.status;
     turn.endedAt = nowIso();
@@ -2872,7 +3021,9 @@ export class TeamOrchestrator extends EventEmitter {
         coordinationEffects > 0;
       state.consecutiveIdleLeadTurns = productive ? 0 : (state.consecutiveIdleLeadTurns ?? 0) + 1;
     } else {
-      state.leadReviewPending = true;
+      state.leadReviewPending = isCompanyMode(state)
+        ? state.leadReviewPending === true || this.companyWorkerRequiresLeadReview(result, appended)
+        : true;
       state.consecutiveIdleLeadTurns = 0;
     }
 
@@ -2916,6 +3067,15 @@ export class TeamOrchestrator extends EventEmitter {
       latestVerification: latestVerification(state),
     });
     if (decision.complete) {
+      if (isCompanyMode(state) && state.projectComplete !== true) {
+        const message = 'All completion gates passed; waiting for the Lead to emit an explicit project-complete decision.';
+        if (state.message !== message) {
+          state.message = message;
+          await this.persistState();
+          this.emitState();
+        }
+        return false;
+      }
       await this.finishRun('completed', 'All completion gates passed.');
       return true;
     }
@@ -2924,6 +3084,16 @@ export class TeamOrchestrator extends EventEmitter {
       return true;
     }
     return false;
+  }
+
+  private companyWorkerRequiresLeadReview(result: TeamRoleTurnResult, messages: TeamMessage[]): boolean {
+    if (result.status !== 'completed') return true;
+    if ((result.verifications ?? []).some((verification) => verification.outcome !== 'passed')) return true;
+    if (result.verification && result.verification.status !== 'passed') return true;
+    if ((result.taskDirectives ?? []).some((directive) => directive.action === 'block' || directive.action === 'needs_work' || directive.action === 'request_review')) {
+      return true;
+    }
+    return messages.some((message) => message.kind === 'blocker' || (message.kind === 'verification' && inferVerificationOutcome(message.body) !== 'passed'));
   }
 
   private async pauseIfRequested(): Promise<boolean> {
@@ -2960,14 +3130,22 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   private limitWritableConcurrency(turns: TeamScheduledTurn[]): TeamScheduledTurn[] {
-    const writeTurns = turns.filter((turn) => this.roleCanWrite(turn.roleId));
-    if (writeTurns.length <= 1) return turns;
-    const firstWrite = writeTurns[0]!;
-    return turns.filter((turn) => !this.roleCanWrite(turn.roleId) || turn.roleId === firstWrite.roleId);
+    const maxWrite = this.effectiveMaxWrite();
+    let writeCount = 0;
+    return turns.filter((turn) => {
+      if (!this.roleCanWrite(turn.roleId)) return true;
+      if (writeCount >= maxWrite) return false;
+      writeCount += 1;
+      return true;
+    });
   }
 
   private roleCanWrite(roleId: string): boolean {
     return this.requireState().roles.find((role) => role.id === roleId)?.canWriteCode ?? false;
+  }
+
+  private effectiveMaxWrite(): number {
+    return this.worktreePerTask ? this.maxConcurrentWrite : 1;
   }
 
   private interruptTurn(turn: TeamTurnRecord, reason: string): void {
@@ -2992,6 +3170,7 @@ export class TeamOrchestrator extends EventEmitter {
 
   private staleSignoffs(reason: string): void {
     const state = this.requireState();
+    state.projectComplete = false;
     for (const signoff of state.signoffs) {
       if (signoff.stale) continue;
       signoff.stale = true;
@@ -3041,6 +3220,7 @@ export class TeamOrchestrator extends EventEmitter {
    * skips the Lead's own queue: the Lead is scheduler-driven, never claimed as worker work.
    */
   private async claimNextAgentTask(excludeRoleId?: string): Promise<{ roleId: string; task: AgentTask } | null> {
+    if (isCompanyMode(this.requireState())) await this.materializeKindQueuedTasks(excludeRoleId);
     if (!this.taskBoard) return null;
     const state = this.requireState();
     // Claim the globally OLDEST queued task across all worker roles (true FIFO across the
@@ -3051,22 +3231,63 @@ export class TeamOrchestrator extends EventEmitter {
     let best: { roleId: string; head: AgentTask } | null = null;
     for (const role of state.roles) {
       if (excludeRoleId && role.id === excludeRoleId) continue;
-      // A single-role pause (item 8) takes the role out of scheduling without halting the run:
-      // skip its queued work until it is resumed.
-      if (role.status === 'paused') continue;
+      // Non-idle roles are unavailable; leave their queued work untouched until they return idle.
+      if (role.status !== 'idle') continue;
       const head = (await this.taskBoard.listTodo(role.id))[0];
       if (!head) continue;
-      if (
-        !best ||
-        head.createdAt < best.head.createdAt ||
-        (head.createdAt === best.head.createdAt && head.id < best.head.id)
-      ) {
+      if (!best || compareTaskCandidates({ roleId: role.id, head }, best) < 0) {
         best = { roleId: role.id, head };
       }
     }
     if (!best) return null;
     const task = await this.taskBoard.claimNext(best.roleId, nowIso());
     return task ? { roleId: best.roleId, task } : null;
+  }
+
+  private async claimNextAgentTasks(
+    excludeRoleId?: string,
+    policy: { readOnlyLimit?: number } = {},
+  ): Promise<{ roleId: string; task: AgentTask }[]> {
+    await this.materializeKindQueuedTasks(excludeRoleId);
+    return this.claimAgentTaskCandidates(excludeRoleId, {
+      maxWrite: this.effectiveMaxWrite(),
+      maxReadOnly: Math.max(0, policy.readOnlyLimit ?? this.maxConcurrentReadOnly),
+    });
+  }
+
+  private async claimAgentTaskCandidates(
+    excludeRoleId: string | undefined,
+    limits: { maxWrite: number; maxReadOnly: number },
+  ): Promise<{ roleId: string; task: AgentTask }[]> {
+    if (!this.taskBoard) return [];
+    const state = this.requireState();
+    const candidates: { roleId: string; head: AgentTask }[] = [];
+    for (const role of state.roles) {
+      if (excludeRoleId && role.id === excludeRoleId) continue;
+      // Non-idle roles are unavailable; leave their queued work untouched until they return idle.
+      if (role.status !== 'idle') continue;
+      const head = (await this.taskBoard.listTodo(role.id))[0];
+      if (!head) continue;
+      candidates.push({ roleId: role.id, head });
+    }
+    candidates.sort(compareTaskCandidates);
+    const claimed: { roleId: string; task: AgentTask }[] = [];
+    let writeCount = 0;
+    let readOnlyCount = 0;
+    for (const candidate of candidates) {
+      const write = this.roleCanWrite(candidate.roleId);
+      if (write) {
+        if (writeCount >= limits.maxWrite) continue;
+      } else if (readOnlyCount >= limits.maxReadOnly) {
+        continue;
+      }
+      const task = await this.taskBoard.claimNext(candidate.roleId, nowIso());
+      if (!task) continue;
+      claimed.push({ roleId: candidate.roleId, task });
+      if (write) writeCount += 1;
+      else readOnlyCount += 1;
+    }
+    return claimed;
   }
 
   /** Derive a concise task title from an assignment message body. */
@@ -3089,16 +3310,19 @@ export class TeamOrchestrator extends EventEmitter {
   private async enqueueTaskAssignments(messages: TeamMessage[]): Promise<number> {
     if (!this.taskBoard) return 0;
     const state = this.requireState();
-    const roleIds = new Set(state.roles.map((role) => role.id));
     const leadId = this.leadRoleId();
     let enqueued = 0;
+    const reservedKindTargets = new Set<string>();
     for (const message of messages) {
       const to = message.to;
-      if (message.kind !== 'task' || !to || !roleIds.has(to)) continue;
+      if (message.kind !== 'task' || !to) continue;
+      const target = this.resolveTaskTarget(to, reservedKindTargets);
+      if (!target) continue;
+      const targetRoleId = target.role.id;
 
       // A task addressed to the Lead is a review request: don't queue it as worker work,
       // just ensure the Lead takes a turn to inspect it.
-      if (to === leadId) {
+      if (targetRoleId === leadId) {
         state.leadReviewPending = true;
         continue;
       }
@@ -3120,18 +3344,98 @@ export class TeamOrchestrator extends EventEmitter {
       // Dedup ONLY against OPEN titles (todo + in-progress). A title that has already been
       // completed (`done`) must still be re-assignable so the Lead can queue REWORK on a
       // finished task — deduping against `done` titles silently swallowed every such rework.
-      const titles = await this.taskBoard.openTitles(to);
+      const titleOwners = target.kind ? target.pool : [target.role];
+      const titleSets = await Promise.all(titleOwners.map((role) => this.taskBoard!.openTitles(role.id)));
+      const titles = new Set(titleSets.flatMap((set) => [...set]));
+      for (const queued of state.kindQueuedTasks ?? []) {
+        if (!target.kind || queued.kind === target.kind) titles.add(queued.title);
+      }
       if (titles.has(title)) continue; // a duplicate of still-OUTSTANDING work — skip
+      if (isCompanyMode(state) && target.kind && !this.hasAvailableKindTarget(target, reservedKindTargets)) {
+        state.kindQueuedTasks ??= [];
+        state.kindQueuedTasks.push({
+          id: nanoid(),
+          kind: target.kind,
+          fromRoleId: message.from,
+          title,
+          body: message.body,
+          createdAt: message.createdAt,
+        });
+        enqueued += 1;
+        continue;
+      }
       await this.taskBoard.enqueue({
-        roleId: to,
+        roleId: targetRoleId,
         fromRoleId: message.from,
         title,
         body: message.body,
         createdAt: message.createdAt,
       });
+      if (target.kind) reservedKindTargets.add(targetRoleId);
       enqueued += 1;
     }
     return enqueued;
+  }
+
+  private hasAvailableKindTarget(
+    target: { role: TeamRoleInstance; kind: PureRoleKind | null; pool: TeamRoleInstance[] },
+    reservedKindTargets: Set<string>,
+  ): boolean {
+    return target.pool.some((role) => role.status === 'idle' && !reservedKindTargets.has(role.id));
+  }
+
+  private async materializeKindQueuedTasks(excludeRoleId?: string): Promise<void> {
+    const state = this.requireState();
+    if (!isCompanyMode(state) || !this.taskBoard || !(state.kindQueuedTasks?.length)) return;
+    const remaining: TeamKindQueuedTask[] = [];
+    const reserved = new Set<string>();
+    for (const queued of state.kindQueuedTasks) {
+      const target = state.roles.find(
+        (role) =>
+          role.id !== excludeRoleId &&
+          role.status === 'idle' &&
+          deriveRoleKind(role) === queued.kind &&
+          !reserved.has(role.id),
+      );
+      if (!target) {
+        remaining.push(queued);
+        continue;
+      }
+      const openTitles = await this.taskBoard.openTitles(target.id);
+      if (!openTitles.has(queued.title)) {
+        await this.taskBoard.enqueue({
+          roleId: target.id,
+          fromRoleId: queued.fromRoleId,
+          title: queued.title,
+          body: queued.body,
+          createdAt: queued.createdAt,
+        });
+      }
+      reserved.add(target.id);
+    }
+    state.kindQueuedTasks = remaining;
+    await this.refreshWorkQueues();
+  }
+
+  private resolveTaskTarget(
+    to: string,
+    reservedKindTargets: Set<string>,
+  ): { role: TeamRoleInstance; kind: PureRoleKind | null; pool: TeamRoleInstance[] } | null {
+    const state = this.requireState();
+    if (isRoleKindToken(to)) {
+      const pool = state.roles.filter((role) => deriveRoleKind(role) === to);
+      if (pool.length === 0) return null;
+      return {
+        role:
+          pool.find((role) => role.status === 'idle' && !reservedKindTargets.has(role.id)) ??
+          pool.find((role) => role.status === 'idle') ??
+          pool[0]!,
+        kind: to,
+        pool,
+      };
+    }
+    const role = state.roles.find((entry) => entry.id === to);
+    return role ? { role, kind: null, pool: [role] } : null;
   }
 
   /**
@@ -3414,7 +3718,28 @@ export class TeamOrchestrator extends EventEmitter {
         await this.taskBoard.complete(task, nowIso());
         // A completed handoff task clears its delegator's blocking dependency.
         this.resolveHandoffsForTask(task);
-      } else await this.taskBoard.requeue(task);
+      } else if (isTaskParkingFailure(turn)) {
+        const reason = turn.reason ?? `${turn.roleName} turn failed with status ${turn.status}.`;
+        const filed = await this.taskBoard.failOrPark(task, nowIso(), reason, this.maxConsecutiveTaskFailures);
+        if (filed.parked) {
+          const state = this.requireState();
+          const leadId = this.leadRoleId();
+          await this.appendMessage({
+            turnId: turn.id,
+            from: SYSTEM_SENDER,
+            to: leadId ?? undefined,
+            kind: 'blocker',
+            body: `${task.id} was parked after ${filed.failureCount} consecutive timeout/parse failure(s): ${reason}. It has left the claimable queue; Lead must re-plan or assign replacement work.`,
+            refs: [{ kind: 'task', value: task.id }],
+          });
+          state.leadReviewPending = true;
+          state.materialChangeAt = nowIso();
+          this.staleSignoffs(`${task.id} was parked after repeated turn failures.`);
+        }
+      } else {
+        await this.taskBoard.requeue(task, { resetFailureCount: true });
+      }
+      await this.refreshWorkQueues();
     } catch {
       // a task-board IO hiccup must not crash the run loop
     }
@@ -3786,6 +4111,9 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     handoffs: Array.isArray(value.handoffs) ? value.handoffs : [],
     inboxes: value.inboxes && typeof value.inboxes === 'object' ? value.inboxes : {},
     taskWorktrees: Array.isArray(value.taskWorktrees) ? value.taskWorktrees : [],
+    orchestrationMode: normalizeTeamOrchestrationMode(value.orchestrationMode),
+    projectComplete: value.projectComplete === true,
+    kindQueuedTasks: Array.isArray(value.kindQueuedTasks) ? value.kindQueuedTasks : [],
     tasks: value.tasks ?? null,
     findings: value.findings ?? null,
     currentTurn: value.currentTurn ?? null,
@@ -3811,6 +4139,24 @@ function cleanId(value: unknown): string {
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
+}
+
+function normalizeTeamOrchestrationMode(value: unknown): TeamOrchestrationMode {
+  return value === 'company' ? 'company' : 'legacy';
+}
+
+function isCompanyMode(state: TeamRunState): boolean {
+  return state.orchestrationMode === 'company';
+}
+
+function compareTaskCandidates(a: { roleId: string; head: AgentTask }, b: { roleId: string; head: AgentTask }): number {
+  if (a.head.createdAt !== b.head.createdAt) return a.head.createdAt.localeCompare(b.head.createdAt);
+  if (a.head.id !== b.head.id) return a.head.id.localeCompare(b.head.id);
+  return a.roleId.localeCompare(b.roleId);
+}
+
+function isProjectCompleteDecision(message: TeamMessage): boolean {
+  return message.kind === 'decision' && /\b(project[-\s]+complete|complete[-\s]+project|project\s+is\s+complete)\b/i.test(message.body);
 }
 
 function latestVerification(state: TeamRunState): TeamVerificationRecord | null {
@@ -3934,6 +4280,12 @@ function turnStatusToRunStatus(status: TeamTurnStatus): TeamRunStatus {
   if (status === 'stopped') return 'stopped';
   if (status === 'interrupted') return 'interrupted';
   return 'failed';
+}
+
+function isTaskParkingFailure(turn: TeamTurnRecord): boolean {
+  if (turn.status !== 'failed') return false;
+  const reason = turn.reason ?? '';
+  return /timed out/i.test(reason) || /output was invalid|parse/i.test(reason);
 }
 
 function teamStatusToExecutionStatus(status: TeamRunStatus): ExecutionRunStatus {

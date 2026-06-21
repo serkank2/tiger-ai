@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryQueueRepository } from './MemoryQueueRepository.js';
 import { QueueService } from '../services/QueueService.js';
+import type { QueueJob } from './types.js';
 
 test('QueueService enqueues, reorders, pauses, resumes, cancels, and retries jobs transactionally', async () => {
   const repo = new MemoryQueueRepository();
@@ -99,4 +100,94 @@ test('bulk emits exactly one coalesced state event for the whole batch', async (
   assert.equal(stateEmits, 1, 'one coalesced state broadcast for the batch, not one per job');
   assert.equal((await service.getJob(a.id))?.status, 'canceled');
   assert.equal((await service.getJob(c.id))?.status, 'canceled');
+});
+
+test('QueueService validates v2 target payloads before inserting jobs', async () => {
+  const repo = new MemoryQueueRepository();
+  const service = new QueueService(repo, undefined, { queuePipelineV2: 'on' });
+  const existing = await service.enqueue({ prompt: 'Valid project job', target: 'project' });
+
+  await assert.rejects(
+    () => service.enqueue({ prompt: 'Missing terminal payload', target: 'terminal' }),
+    (err) => {
+      assert.equal((err as { status?: number }).status, 400);
+      assert.match((err as Error).message, /terminal target payload is required/);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    () => service.enqueue({ prompt: 'Malformed team payload', target: 'team', payload: { mode: 'append' } }),
+    (err) => {
+      assert.equal((err as { status?: number }).status, 400);
+      assert.match((err as Error).message, /team append target payload.runId is required/);
+      return true;
+    },
+  );
+
+  const state = await service.getState();
+  assert.deepEqual(
+    state.jobs.map((job) => job.id),
+    [existing.id],
+  );
+  assert.equal(state.jobs[0]?.targetType, 'project');
+});
+
+test('QueueService exposes the explicit pipeline flag and keeps flag-off state legacy', async () => {
+  const repo = new MemoryQueueRepository();
+  const service = new QueueService(repo, undefined, { queuePipelineV2: 'off' });
+  const existing = await service.enqueue({ prompt: 'Legacy project job', provider: 'codex' });
+
+  await assert.rejects(
+    () => service.enqueue({ prompt: 'Terminal should not silently coerce', target: 'terminal', payload: { name: 'Hidden terminal' } }),
+    (err) => {
+      assert.equal((err as { status?: number }).status, 400);
+      assert.match((err as Error).message, /queuePipelineV2 is disabled/);
+      return true;
+    },
+  );
+
+  const state = await service.getState();
+  assert.equal(state.queuePipelineV2, false);
+  assert.equal('liveItems' in state, false);
+  assert.equal('historyCounts' in state, false);
+  assert.deepEqual(
+    state.jobs.map((job) => job.id),
+    [existing.id],
+  );
+  assert.equal(state.jobs[0]?.targetType, 'project');
+});
+
+test('QueueService splits live items from finished history counts', async () => {
+  const repo = new MemoryQueueRepository();
+  const service = new QueueService(repo, undefined, { queuePipelineV2: 'on' });
+  const jobs: QueueJob[] = [];
+  for (let i = 0; i < 103; i++) {
+    jobs.push(await service.enqueue({ prompt: `Queue split job ${i + 1}`, target: 'project' }));
+  }
+  for (const job of jobs.slice(0, 100)) {
+    await service.completeJob(job.id);
+  }
+
+  const state = await service.getState();
+  assert.equal(state.queuePipelineV2, true);
+  assert.equal(state.jobs.length, 103);
+  assert.equal(state.liveItems?.length, 3);
+  assert.deepEqual(
+    state.liveItems?.map((job) => job.id),
+    jobs.slice(100).map((job) => job.id),
+  );
+  assert.equal(state.historyCounts?.total, 100);
+  assert.equal(state.historyCounts?.byStatus.completed, 100);
+  assert.equal(state.historyCounts?.byTarget.project, 100);
+
+  const history = await service.getHistory({ limit: 25 });
+  assert.equal(history.total, 100);
+  assert.equal(history.items.length, 25);
+  assert.equal(history.nextCursor, '25');
+  assert.equal(history.hasMore, true);
+
+  const terminalHistory = await service.getHistory({ target: 'terminal' });
+  assert.equal(terminalHistory.total, 0);
+  assert.equal(terminalHistory.items.length, 0);
 });

@@ -3,11 +3,13 @@ import { nanoid } from 'nanoid';
 import type { AppCtx } from '../context.js';
 import type {
   QueueBulkAction,
+  QueueJobStatus,
   QueueProvider,
   QueueRule,
   QueueRuleAction,
   QueueRuleOperator,
   QueueRuleProvider,
+  QueueTargetType,
 } from '../queue/types.js';
 import { badRequest, notFound } from './errors.js';
 
@@ -16,7 +18,9 @@ function str(v: unknown): string | undefined {
 }
 
 function int(v: unknown, fallback = 0): number {
-  return typeof v === 'number' && Number.isInteger(v) && Number.isFinite(v) ? v : fallback;
+  if (typeof v === 'number' && Number.isInteger(v) && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && /^-?\d+$/.test(v.trim())) return Number.parseInt(v, 10);
+  return fallback;
 }
 
 function provider(v: unknown, fallback: QueueProvider = 'claude'): QueueProvider {
@@ -43,6 +47,22 @@ const BULK_ACTIONS: ReadonlySet<QueueBulkAction> = new Set<QueueBulkAction>(['pa
 function bulkAction(v: unknown): QueueBulkAction {
   if (typeof v === 'string' && BULK_ACTIONS.has(v as QueueBulkAction)) return v as QueueBulkAction;
   throw badRequest('action must be pause, resume, cancel, retry, or delete');
+}
+
+function targetType(v: unknown): QueueTargetType | undefined {
+  if (v === undefined) return undefined;
+  if (v === 'terminal' || v === 'project' || v === 'team') return v;
+  throw badRequest('target must be terminal, project, or team');
+}
+
+function terminalStatus(v: unknown): QueueJobStatus | undefined {
+  if (v === undefined) return undefined;
+  if (v === 'completed' || v === 'failed' || v === 'canceled') return v;
+  throw badRequest('status must be completed, failed, or canceled');
+}
+
+function cursor(v: unknown): string | undefined {
+  return typeof v === 'string' && /^\d+$/.test(v) ? v : undefined;
 }
 
 function ruleFromBody(body: Record<string, unknown>, existing?: QueueRule): QueueRule {
@@ -79,16 +99,36 @@ export function createQueueRouter(ctx: AppCtx): Router {
     res.json(await service.getState());
   });
 
+  router.get('/history', async (req, res) => {
+    res.json(
+      await service.getHistory({
+        status: terminalStatus(req.query.status),
+        target: targetType(req.query.target),
+        cursor: cursor(req.query.cursor),
+        limit: int(req.query.limit, 50),
+      }),
+    );
+  });
+
   router.post('/enqueue', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const job = await service.enqueue({
       prompt: typeof body.prompt === 'string' ? body.prompt : '',
+      body: typeof body.body === 'string' ? body.body : undefined,
+      title: str(body.title),
       workspacePath: str(body.workspacePath) ?? str(body.workspace),
       projectName: str(body.projectName),
       provider: body.provider === undefined ? undefined : provider(body.provider),
       priority: int(body.priority, 0),
       maxAttempts: int(body.maxAttempts, 1),
       configSnapshot: body.configSnapshot && typeof body.configSnapshot === 'object' ? body.configSnapshot : undefined,
+      target: body.target === undefined ? undefined : targetType(typeof body.target === 'string' ? body.target : (body.target as { type?: unknown } | undefined)?.type),
+      payload:
+        body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+          ? (body.payload as Record<string, unknown>)
+          : body.target && typeof body.target === 'object' && !Array.isArray(body.target)
+            ? ((body.target as Record<string, unknown>).payload as Record<string, unknown> | undefined)
+            : undefined,
     });
     res.status(202).json(job);
   });

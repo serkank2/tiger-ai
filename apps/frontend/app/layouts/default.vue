@@ -5,10 +5,12 @@
 import { NAV_ITEMS, activeNavKey } from '~/lib/navigation';
 import NavRail from '~/components/shell/NavRail.vue';
 import LimitStatusBadge from '~/components/shell/LimitStatusBadge.vue';
+import LimitTopPanel from '~/components/shell/LimitTopPanel.vue';
 import { useT } from '~/composables/useT';
 
 const route = useRoute();
 const conn = useConnectionStore();
+const config = useRuntimeConfig();
 const { t } = useT();
 
 // Localized nav entries: translate `label` via the item's `labelKey`, keeping the
@@ -18,6 +20,7 @@ const navItems = computed(() =>
 );
 
 const activeKey = computed(() => activeNavKey(route.path));
+const showLimitTopPanel = computed(() => Boolean(config.public.limitTopPanel));
 const sectionTitle = computed(() => {
   const item = NAV_ITEMS.find((i) => i.key === activeKey.value);
   return item ? t(item.labelKey) : 'Kaplan';
@@ -40,9 +43,10 @@ const connLabel = computed(() => {
     <NavRail :items="navItems" :active-path="route.path" />
 
     <div class="main">
-      <header class="topbar">
+      <header class="topbar" :class="{ 'has-limit-panel': showLimitTopPanel }">
         <h1 class="section">{{ sectionTitle }}</h1>
         <span class="spacer" />
+        <LimitTopPanel v-if="showLimitTopPanel" class="limit-panel-slot" />
         <span
           class="conn"
           :class="conn.status"
@@ -53,8 +57,7 @@ const connLabel = computed(() => {
           <span class="dot" aria-hidden="true" />
           <span class="conn-label">{{ connLabel }}</span>
         </span>
-        <!-- Compact limit-status slot -->
-        <LimitStatusBadge />
+        <LimitStatusBadge v-if="!showLimitTopPanel" />
       </header>
 
       <main class="content">
@@ -88,14 +91,29 @@ const connLabel = computed(() => {
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
 }
+.topbar.has-limit-panel {
+  height: auto;
+  min-height: 108px;
+  align-items: stretch;
+  padding-block: 8px;
+}
 .section {
   margin: 0;
   font-size: var(--text-md);
   font-weight: 700;
   letter-spacing: 0.2px;
+  flex: none;
+  align-self: center;
 }
 .spacer {
   flex: 1;
+}
+.topbar.has-limit-panel .spacer {
+  display: none;
+}
+.limit-panel-slot {
+  flex: 1;
+  min-width: 0;
 }
 .conn {
   display: inline-flex;
@@ -106,6 +124,11 @@ const connLabel = computed(() => {
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
+  flex: none;
+}
+.topbar.has-limit-panel .conn {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 .conn .dot {
   width: 8px;
@@ -141,6 +164,21 @@ const connLabel = computed(() => {
 @media (max-width: 820px) {
   .shell {
     flex-direction: column;
+  }
+  .topbar.has-limit-panel {
+    min-height: 128px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+  }
+  .topbar.has-limit-panel .section {
+    max-width: calc(100% - 84px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar.has-limit-panel .limit-panel-slot {
+    order: 3;
+    flex-basis: 100%;
   }
   .conn-label {
     display: none;

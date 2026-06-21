@@ -7,6 +7,8 @@ import type {
   QueueBulkResult,
   QueueClientEvent,
   QueueEnqueueInput,
+  QueueHistoryQuery,
+  QueueHistoryResponse,
   QueueJobStatus,
   QueueJobView,
   QueueRule,
@@ -46,8 +48,18 @@ export const useQueueStore = defineStore('queue', () => {
   const actionError = ref<string | null>(null);
   const busyKeys = ref<Record<string, boolean>>({});
   const events = ref<QueueClientEvent[]>([]);
+  const historyItems = ref<QueueJobView[]>([]);
+  const historyTotal = ref(0);
+  const historyNextCursor = ref<string | null>(null);
+  const historyHasMore = ref(false);
+  const historyLoaded = ref(false);
+  const historyLoading = ref(false);
+  const historyError = ref<string | null>(null);
 
-  const jobs = computed(() => [...(state.value?.jobs ?? [])].sort(byQueueOrder));
+  const queuePipelineV2 = computed(() => state.value?.queuePipelineV2 === true);
+  const jobs = computed(() =>
+    [...(queuePipelineV2.value ? state.value?.liveItems ?? [] : state.value?.jobs ?? [])].sort(byQueueOrder),
+  );
   const rules = computed(() => state.value?.rules ?? []);
   const updatedAt = computed(() => state.value?.updatedAt ?? null);
   const activeJob = computed(() => jobs.value.find((job) => job.status === 'running') ?? null);
@@ -56,7 +68,16 @@ export const useQueueStore = defineStore('queue', () => {
   const dispatchableJobs = computed(() =>
     jobs.value.filter((job) => job.status === 'queued' || job.status === 'retrying'),
   );
-  const terminalJobs = computed(() => jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)));
+  const terminalJobs = computed(() =>
+    queuePipelineV2.value ? [...historyItems.value] : jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)),
+  );
+  const historyCounts = computed(() =>
+    state.value?.historyCounts ?? {
+      total: jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)).length,
+      byStatus: {},
+      byTarget: {},
+    },
+  );
 
   function setBusy(key: string, busy: boolean): void {
     const next = { ...busyKeys.value };
@@ -169,6 +190,28 @@ export const useQueueStore = defineStore('queue', () => {
     }
   }
 
+  async function loadHistory(query: QueueHistoryQuery = {}, options: { append?: boolean } = {}): Promise<QueueHistoryResponse> {
+    setBusy('history', true);
+    historyLoading.value = true;
+    historyError.value = null;
+    try {
+      const res = await api.getQueueHistory(query);
+      historyItems.value = options.append ? [...historyItems.value, ...res.items] : res.items;
+      historyTotal.value = res.total;
+      historyNextCursor.value = res.nextCursor;
+      historyHasMore.value = res.hasMore;
+      historyLoaded.value = true;
+      return res;
+    } catch (e) {
+      historyError.value = errText(e);
+      actionError.value = historyError.value;
+      throw e;
+    } finally {
+      historyLoading.value = false;
+      setBusy('history', false);
+    }
+  }
+
   async function reorder(ids: string[]): Promise<void> {
     setBusy('reorder', true);
     actionError.value = null;
@@ -261,6 +304,14 @@ export const useQueueStore = defineStore('queue', () => {
     actionError,
     busyKeys,
     events,
+    historyItems,
+    historyTotal,
+    historyNextCursor,
+    historyHasMore,
+    historyLoaded,
+    historyLoading,
+    historyError,
+    queuePipelineV2,
     jobs,
     rules,
     updatedAt,
@@ -269,9 +320,11 @@ export const useQueueStore = defineStore('queue', () => {
     pausedJobs,
     dispatchableJobs,
     terminalJobs,
+    historyCounts,
     isBusy,
     applyState,
     load,
+    loadHistory,
     enqueue,
     reorder,
     pause,

@@ -124,16 +124,32 @@ async function discard(taskId: string): Promise<void> {
 .coord-block { margin-bottom: var(--space-3); }
 .coord-block h4 { font-size: var(--text-xs); color: var(--text-dim); margin: 0 0 var(--space-1); text-transform: uppercase; letter-spacing: 0.04em; }
 .coord-list { list-style: none; margin: 0; padding: 0; }
-.coord-row { display: flex; align-items: center; gap: var(--space-2); padding: 3px 0; font-size: var(--text-sm); }
+.coord-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 3px var(--space-2);
+  min-width: 0;
+  padding: 3px 0;
+  font-size: var(--text-sm);
+}
 .coord-row .spacer { flex: 1; }
-.flow { font-weight: 600; }
-.task { font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--accent); }
-.branch { font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--text-dim); }
-.ttl { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.note { color: var(--red); font-size: var(--text-xs); }
+.flow {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.task { flex: none; font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--accent); }
+.branch { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--text-dim); }
+.ttl { flex: 1 1 12rem; min-width: 0; color: var(--text-dim); overflow-wrap: anywhere; line-height: var(--leading-snug); }
+.note { min-width: 0; color: var(--red); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .coord-hint { color: var(--amber); font-size: var(--text-xs); margin: var(--space-1) 0 0; }
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-sm);
   font-size: 11px; font-weight: 700; border: 1px solid var(--border-strong);
 }

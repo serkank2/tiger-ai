@@ -28,6 +28,57 @@ test('parseTeamOutput forces TeamMessage.from to the executing role, ignoring a 
   assert.equal(parsed.messages[0]!.to, 'tester');
 });
 
+test('parseTeamOutput normalizes bad TeamMessage kinds and keeps valid blocks', () => {
+  const output = [
+    '```TeamMessage',
+    JSON.stringify({ kind: 'AnalysisSummary', to: 'all', body: 'Architecture readout.' }),
+    '```',
+    '```TeamMessage',
+    JSON.stringify({ kind: 'decision', to: 'lead', body: 'Proceed with the minimal parser fix.' }),
+    '```',
+  ].join('\n');
+
+  const parsed = parseTeamOutput(output, DEFAULTS);
+  assert.equal(parsed.messages.length, 2);
+  assert.equal(parsed.messages[0]!.kind, 'chat');
+  assert.equal(parsed.messages[0]!.body, 'Architecture readout.');
+  assert.equal(parsed.messages[1]!.kind, 'decision');
+  assert.equal(parsed.parseWarnings?.length, 1);
+  assert.equal(parsed.parseWarnings?.[0]?.declaredType, 'TeamMessage');
+  assert.equal(parsed.parseWarnings?.[0]?.declaredKind, 'AnalysisSummary');
+});
+
+test('parseTeamOutput skips a TeamMessage missing body and records a warning while keeping others', () => {
+  const output = [
+    '```TeamMessage',
+    JSON.stringify({ kind: 'chat', to: 'all' }),
+    '```',
+    '```TeamMessage',
+    JSON.stringify({ kind: 'chat', to: 'all', body: 'The valid block survives.' }),
+    '```',
+  ].join('\n');
+
+  const parsed = parseTeamOutput(output, DEFAULTS);
+  assert.equal(parsed.messages.length, 1);
+  assert.equal(parsed.messages[0]!.body, 'The valid block survives.');
+  assert.equal(parsed.parseWarnings?.length, 1);
+  assert.match(parsed.parseWarnings?.[0]?.reason ?? '', /TeamMessage\.body is required/);
+});
+
+test('parseTeamOutput defaults an unknown TeamMessage kind to chat with a warning', () => {
+  const output = [
+    '```TeamMessage',
+    JSON.stringify({ kind: 'TotallyNewKind', to: 'all', body: 'Still visible.' }),
+    '```',
+  ].join('\n');
+
+  const parsed = parseTeamOutput(output, DEFAULTS);
+  assert.equal(parsed.messages.length, 1);
+  assert.equal(parsed.messages[0]!.kind, 'chat');
+  assert.equal(parsed.messages[0]!.body, 'Still visible.');
+  assert.match(parsed.parseWarnings?.[0]?.reason ?? '', /defaulted to "chat"/);
+});
+
 // A turn can only sign off for ITSELF: a forged `roleId` on a SignOffDirective must not let
 // one agent satisfy the done-gate on behalf of another required role.
 test('parseTeamOutput forces SignOffDirective.roleId to the executing role, ignoring a forged roleId', () => {
@@ -137,11 +188,17 @@ test('parseTeamOutput forces CoordinationDirective.fromRoleId to the executing r
   assert.equal(parsed.coordinationDirectives[0]!.toRoleId, 'tester');
 });
 
-test('parseTeamOutput rejects an unsupported coordination verb', () => {
+test('parseTeamOutput skips an unsupported coordination verb with a parse warning', () => {
   const output = [
     '```CoordinationDirective',
     JSON.stringify({ verb: 'teleport', to: 'tester', body: 'nope' }),
     '```',
   ].join('\n');
-  assert.throws(() => parseTeamOutput(output, DEFAULTS), /unsupported CoordinationDirective.verb/);
+
+  const parsed = parseTeamOutput(output, DEFAULTS);
+  assert.equal(parsed.coordinationDirectives.length, 0);
+  assert.equal(parsed.parseWarnings?.length, 1);
+  assert.equal(parsed.parseWarnings?.[0]?.declaredType, 'CoordinationDirective');
+  assert.equal(parsed.parseWarnings?.[0]?.declaredKind, 'teleport');
+  assert.match(parsed.parseWarnings?.[0]?.reason ?? '', /unsupported CoordinationDirective\.verb/);
 });

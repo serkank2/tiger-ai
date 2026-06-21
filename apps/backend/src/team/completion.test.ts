@@ -316,6 +316,37 @@ test('evaluateCompletion: a missing required sign-off blocks completion', () => 
   assert.deepEqual(result.pendingRoleIds, ['lead']);
 });
 
+test('evaluateCompletion: one fresh sign-off satisfies multiple required instances of the same kind', () => {
+  const input = greenInput();
+  input.roles = [
+    roleInstance({ id: 'developer', name: 'Developer #1', canWriteCode: true, requiredForSignoff: true }),
+    roleInstance({ id: 'developer-2', name: 'Developer #2', canWriteCode: true, requiredForSignoff: true }),
+    roleInstance({ id: 'developer-3', name: 'Developer #3', canWriteCode: true, requiredForSignoff: true }),
+  ];
+  input.signoffs = [signoff({ roleId: 'developer-2', done: true, createdAt: T2 })];
+
+  const result = evaluateCompletion(input);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.requiredRoleIds, ['developer', 'developer-2', 'developer-3']);
+  assert.deepEqual(result.freshSignoffRoleIds, ['developer-2']);
+  assert.deepEqual(result.pendingRoleIds, []);
+});
+
+test('evaluateCompletion: a blocked required instance keeps its kind from satisfying the gate', () => {
+  const input = greenInput();
+  input.roles = [
+    roleInstance({ id: 'developer', name: 'Developer #1', canWriteCode: true, requiredForSignoff: true, status: 'blocked' }),
+    roleInstance({ id: 'developer-2', name: 'Developer #2', canWriteCode: true, requiredForSignoff: true }),
+    roleInstance({ id: 'developer-3', name: 'Developer #3', canWriteCode: true, requiredForSignoff: true }),
+  ];
+  input.signoffs = [signoff({ roleId: 'developer-2', done: true, createdAt: T2 })];
+
+  const result = evaluateCompletion(input);
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.pendingRoleIds, ['developer']);
+  assert.ok(result.blockers.some((blocker) => blocker.code === 'signoff_missing' && /blocked instance/i.test(blocker.message)));
+});
+
 test('evaluateCompletion: a withdrawn (done=false) latest sign-off counts as missing', () => {
   const input = greenInput();
   input.signoffs = [

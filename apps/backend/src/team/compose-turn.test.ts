@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { TigerPaths } from '../orchestrator/paths.js';
 import { composeRoleTurnPrompt, normalizeTeamRole, type RoleTurnRole } from './compose-turn.js';
+import { BUILTIN_ROLE_TEMPLATES } from './templates.js';
 
 async function tmpPaths(projectPrompt?: string): Promise<{ paths: TigerPaths; cleanup: () => Promise<void> }> {
   const ws = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-'));
@@ -26,6 +27,12 @@ function baseOpts(paths: TigerPaths, over: Partial<Parameters<typeof composeRole
     markerPath: path.join(paths.root, 'team', 'out.done'),
     ...over,
   };
+}
+
+function builtInRole(id: string) {
+  const role = BUILTIN_ROLE_TEMPLATES.find((item) => item.id === id);
+  assert.ok(role, `missing built-in role ${id}`);
+  return role;
 }
 
 // --- normalizeTeamRole (pure) ---
@@ -128,6 +135,42 @@ test('composeRoleTurnPrompt keeps the per-turn assignment intact even when the p
     // The project prompt itself must have been truncated to respect the cap.
     assert.match(prompt, /truncated to respect Tiger context caps/);
     assert.ok(size.characters > 0);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('composeRoleTurnPrompt renders the role-system prompt improvements for company-mode teams', async () => {
+  const { paths, cleanup } = await tmpPaths('Coordinate a parallel company-mode team.');
+  try {
+    const lead = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('lead') }));
+    assert.match(lead.prompt, /CLI-first autonomous coding agent/);
+    assert.match(lead.prompt, /There are NO model API keys/);
+    assert.match(lead.prompt, /keep every idle non-Lead role instance busy/);
+    assert.match(lead.prompt, /address a role KIND/);
+    assert.match(lead.prompt, /project-complete/);
+    assert.match(lead.prompt, /Passing gates is necessary but not sufficient/);
+    assert.match(lead.prompt, /Do not assume you are the only role working/);
+    assert.match(lead.prompt, /Only the Lead assigns executable work/);
+    assert.match(lead.prompt, /Business Analyst's acceptance criteria become the Tester's cases/);
+
+    const ba = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('business-analyst') }));
+    assert.match(ba.prompt, /spec schema: success metrics, acceptance criteria, edge-case matrix/);
+    assert.match(ba.prompt, /BA-to-Tester cases/);
+    assert.match(ba.prompt, /feed the Lead updated requirements/);
+
+    const developer = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('developer') }));
+    assert.match(developer.prompt, /only source-editing turn at a time/);
+    assert.match(developer.prompt, /read-only peers may be reading concurrently/);
+
+    const tester = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('tester') }));
+    assert.match(tester.prompt, /create or modify TEST files/);
+    assert.match(tester.prompt, /never product source/);
+    assert.match(tester.prompt, /Report defects with this schema: severity, repro steps, expected behavior, actual behavior/);
+
+    const reviewer = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('reviewer') }));
+    assert.match(reviewer.prompt, /working tree vs HEAD when the work is uncommitted/);
+    assert.match(reviewer.prompt, /finding schema: severity, confidence, quoted path:line, impact, fix, and verification/);
   } finally {
     await cleanup();
   }

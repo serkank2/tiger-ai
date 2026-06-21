@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseTabs from '~/components/ui/BaseTabs.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
 import PromptEditor, { type PromptDraft } from '~/components/prompt/PromptEditor.vue';
 import PromptGenerationPanel from '~/components/prompt/PromptGenerationPanel.vue';
@@ -36,7 +37,7 @@ const notices = useNoticesStore();
 const socket = useSocket();
 const api = useApi();
 
-const activeTab = ref<Tab>('library');
+const activeTab = ref('library');
 const draft = reactive<PromptDraft>({ title: '', description: '', tagsText: '', target: '', run: false, body: '' });
 const values = reactive<Record<string, string>>({});
 const currentPath = ref<string | null>(null);
@@ -447,24 +448,20 @@ onBeforeUnmount(() => {
         <b>Prompts</b>
         <span>Library, history, and generation</span>
       </div>
-      <nav class="tabs" aria-label="Prompt sections">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          type="button"
-          :class="{ on: activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </nav>
       <span class="spacer" />
       <BaseButton variant="secondary" @click="emit('back')">Back to Terminals</BaseButton>
     </header>
 
     <main class="pbody">
-      <section class="main-panel">
-        <template v-if="activeTab === 'library'">
+      <BaseTabs
+        v-model="activeTab"
+        class="prompt-tabs"
+        :tabs="tabs"
+        label="Prompt sections"
+        id-prefix="prompt-section"
+        panel-class="main-panel"
+      >
+        <template #library>
           <div class="library-panel">
             <section class="library-list">
               <PromptLibrary
@@ -496,27 +493,29 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
-        <PromptHistoryPanel
-          v-else-if="activeTab === 'history'"
-          :items="history.items"
-          :selected-id="historySelectedId"
-          :loading="history.loading && !history.loaded"
-          :refreshing="history.refreshing"
-          :error="history.loadError"
-          @refresh="() => history.fetchAll().catch(() => {})"
-          @select="onHistorySelect"
-        />
+        <template #history>
+          <PromptHistoryPanel
+            :items="history.items"
+            :selected-id="historySelectedId"
+            :loading="history.loading && !history.loaded"
+            :refreshing="history.refreshing"
+            :error="history.loadError"
+            @refresh="() => history.fetchAll().catch(() => {})"
+            @select="onHistorySelect"
+          />
+        </template>
 
-        <PromptGenerationPanel
-          v-else
-          :state="generation.current"
-          :starting="generation.starting"
-          :loading="generation.loading"
-          :error="generation.loadError"
-          @submit="submitGeneration"
-          @select-result="activeTab = 'generation'"
-        />
-      </section>
+        <template #generation>
+          <PromptGenerationPanel
+            :state="generation.current"
+            :starting="generation.starting"
+            :loading="generation.loading"
+            :error="generation.loadError"
+            @submit="submitGeneration"
+            @select-result="activeTab = 'generation'"
+          />
+        </template>
+      </BaseTabs>
 
       <aside class="reuse-panel" aria-label="Prompt reuse actions">
         <div class="reuse-head">
@@ -540,7 +539,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="save-row">
-            <input v-model="savePath" placeholder="library-path.md" spellcheck="false" />
+            <input v-model="savePath" aria-label="Save path" placeholder="library-path.md" spellcheck="false" />
             <BaseButton variant="secondary" :loading="saving" :disabled="saving" @click="saveReusableText">
               Save
             </BaseButton>
@@ -625,27 +624,6 @@ onBeforeUnmount(() => {
   color: var(--text-dim);
   font-size: 12px;
 }
-.tabs {
-  display: flex;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-.tabs button {
-  border-radius: 0;
-  border-right: 1px solid var(--border);
-  padding: 7px 14px;
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
-}
-.tabs button:last-child {
-  border-right: 0;
-}
-.tabs button.on {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 .spacer {
   flex: 1;
 }
@@ -658,14 +636,17 @@ onBeforeUnmount(() => {
   padding: 14px;
   overflow: hidden;
 }
-.main-panel,
+.prompt-tabs {
+  min-height: 0;
+}
+:deep(.main-panel),
 .reuse-panel {
   min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-elev);
 }
-.main-panel {
+:deep(.main-panel) {
   padding: 14px;
   overflow: hidden;
 }

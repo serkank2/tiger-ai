@@ -73,6 +73,11 @@ function envBool(name: string, fallback: boolean): boolean {
   return raw === '1' || raw.toLowerCase() === 'true' || raw.toLowerCase() === 'yes';
 }
 
+function envChoice<T extends string>(name: string, choices: readonly T[], fallback: T): T {
+  const raw = process.env[name]?.trim();
+  return raw && choices.includes(raw as T) ? (raw as T) : fallback;
+}
+
 const isProd = process.env.NODE_ENV === 'production';
 
 /** Read an env var as an integer, falling back to `fallback` when unset/invalid. */
@@ -169,6 +174,9 @@ export const config = {
 
   // AI Team execution toggles.
   team: {
+    orchestrationMode: envChoice('KAPLAN_TEAM_ORCHESTRATION_MODE', ['legacy', 'company'] as const, 'legacy'),
+    maxConcurrentReadOnly: Math.max(1, envInt('KAPLAN_TEAM_MAX_CONCURRENT_READ_ONLY', 2)),
+    maxConcurrentWrite: Math.max(1, envInt('KAPLAN_TEAM_MAX_CONCURRENT_WRITE', 1)),
     // Git-worktree-per-task isolation for Team role turns. OFF by default: when enabled
     // (KAPLAN_TEAM_WORKTREE_PER_TASK=1) AND the workspace is a git repo, each role's CLAIMED
     // board task runs in its OWN throwaway git worktree (branch kaplan/<runId>-<taskId>) so a
@@ -178,6 +186,11 @@ export const config = {
     // it. When disabled, role turns use the shared workspace cwd exactly as today (byte-for-byte
     // unchanged). Extends the Tiger-only worktree feature (config.tiger.worktreePerTask).
     worktreePerTask: envBool('KAPLAN_TEAM_WORKTREE_PER_TASK', false),
+  },
+
+  // Queue execution toggles.
+  queue: {
+    queuePipelineV2: envChoice('KAPLAN_QUEUE_PIPELINE_V2', ['off', 'on'] as const, 'off'),
   },
 
   // Cue — event-driven orchestration engine. OFF by default: when enabled (KAPLAN_CUE_ENABLED=1)

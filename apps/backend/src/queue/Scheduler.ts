@@ -4,7 +4,9 @@ import { nanoid } from 'nanoid';
 import { STAGE_ORDER, type OrchestratorState, type StageId, type StageRunConfig, type TigerConfig } from '../orchestrator/types.js';
 import type { ExecutionOwner } from '../orchestrator/persistence.js';
 import type { QueueService, QueueControlEvent } from '../services/QueueService.js';
-import type { QueueJob } from './types.js';
+import type { QueueJob, QueueTargetType, QueueTeamTargetPayload, QueueTerminalTargetPayload } from './types.js';
+import type { PersistedState, TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
+import type { CreateTeamRunInput } from '../team/TeamOrchestrator.js';
 
 export interface QueueOrchestrator extends EventEmitter {
   initialize(workspace: string, projectPrompt: string): Promise<void>;
@@ -21,6 +23,24 @@ export interface SchedulerOptions {
   executionOwner?: ExecutionOwner;
   leaseMs?: number;
   idlePollMs?: number;
+  terminalTarget?: QueueTerminalTargetRuntime;
+  teamTarget?: QueueTeamTargetRuntime;
+}
+
+export interface QueueTerminalTargetRuntime {
+  state: Pick<PersistedState, 'terminals' | 'settings'>;
+  manager: {
+    upsertDefinition(def: TerminalDefinition): { deferred: boolean };
+    start(id: string, cols?: number, rows?: number): Promise<TerminalRuntimeStatus>;
+  };
+  save(): Promise<void>;
+}
+
+export interface QueueTeamTargetRuntime {
+  tryGetState(): { runId: string } | null;
+  steer(body: string): Promise<unknown>;
+  createTeamRun(input: CreateTeamRunInput): Promise<{ runId: string }>;
+  start(): Promise<unknown>;
 }
 
 const TERMINAL_STAGE_STATUSES = new Set(['completed', 'failed', 'stopped']);
@@ -57,11 +77,49 @@ function messageFromUnknown(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isQueueTargetType(value: unknown): value is QueueTargetType {
+  return value === 'terminal' || value === 'project' || value === 'team';
+}
+
+function effectiveTargetType(job: QueueJob): QueueTargetType {
+  return isQueueTargetType(job.targetType) ? job.targetType : 'project';
+}
+
+function terminalPayload(job: QueueJob): QueueTerminalTargetPayload {
+  const payload = job.targetPayload;
+  if (!isRecord(payload) || typeof payload.name !== 'string' || !payload.name.trim()) {
+    throw new Error('Terminal target payload is missing a name.');
+  }
+  return payload as unknown as QueueTerminalTargetPayload;
+}
+
+function teamPayload(job: QueueJob): QueueTeamTargetPayload {
+  const payload = job.targetPayload;
+  if (!isRecord(payload) || (payload.mode !== 'append' && payload.mode !== 'create')) {
+    throw new Error('Team target payload is missing a mode.');
+  }
+  if (payload.mode === 'append' && (typeof payload.runId !== 'string' || !payload.runId.trim())) {
+    throw new Error('Team append target payload is missing a runId.');
+  }
+  return payload as unknown as QueueTeamTargetPayload;
+}
+
+function teamRoles(value: unknown): CreateTeamRunInput['roles'] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((role) => ({ ...role })) as CreateTeamRunInput['roles'];
+}
+
 export class Scheduler {
   private readonly owner: string;
   private readonly executionOwner: ExecutionOwner;
   private readonly leaseMs: number;
   private readonly idlePollMs: number;
+  private readonly terminalTarget?: QueueTerminalTargetRuntime;
+  private readonly teamTarget?: QueueTeamTargetRuntime;
   private wakeTimer: NodeJS.Timeout | null = null;
   private resumeTimer: NodeJS.Timeout | null = null;
   private working = false;
@@ -77,6 +135,8 @@ export class Scheduler {
     this.executionOwner = options.executionOwner ?? { type: 'queue', id: `${process.pid}:${nanoid(6)}` };
     this.leaseMs = options.leaseMs ?? 60_000;
     this.idlePollMs = options.idlePollMs ?? 5_000;
+    this.terminalTarget = options.terminalTarget;
+    this.teamTarget = options.teamTarget;
   }
 
   async start(): Promise<void> {
@@ -140,67 +200,134 @@ export class Scheduler {
 
   private async runJob(job: QueueJob): Promise<void> {
     this.activeJobId = job.id;
-    // Persist every Tiger stage this job dispatches under the queue owner so execution_runs,
-    // run_stages, agent_runs, task claims, and finding claims are recorded as queue-owned (not manual).
-    this.orchestrator.setExecutionOwner(this.executionOwner);
     let leaseRefresh: NodeJS.Timeout | null = null;
     try {
       leaseRefresh = setInterval(() => void this.queue.refreshLease(job.id, this.owner, this.leaseMs), Math.max(1000, this.leaseMs / 2));
       leaseRefresh.unref();
-      await fs.mkdir(job.workspacePath, { recursive: true });
-      await this.orchestrator.initialize(job.workspacePath, job.prompt);
-
-      const steps = await this.queue.listSteps(job.id);
-      const fromStage = job.configSnapshot.fromStage;
-      const fromIndex = fromStage ? STAGE_ORDER.indexOf(fromStage) : 0;
-      const firstIndex = fromIndex >= 0 ? fromIndex : 0;
-
-      for (const stage of STAGE_ORDER.slice(firstIndex)) {
-        if (this.stopped) return;
-        const latest = await this.queue.getJob(job.id);
-        if (!latest || latest.status !== 'running') return;
-
-        const step = steps.find((s) => s.stepKey === stage) ?? (await this.queue.listSteps(job.id)).find((s) => s.stepKey === stage);
-        if (step?.status === 'completed' || step?.status === 'skipped') continue;
-
-        const decision = await this.queue.evaluateJobRules(latest);
-        if (!decision.allowed) {
-          await this.queue.blockRunningJob(job.id, decision);
-          await this.queue.markStepPending(job.id, stage, decision.reason);
-          return;
-        }
-
-        await this.queue.markStepRunning(job.id, stage);
-        const cfg = job.configSnapshot.configs?.[stage] ?? defaultStageConfig(this.orchestrator.getConfig(), stage);
-        const outcome = await this.runStage(stage, cfg);
-        const after = await this.queue.getJob(job.id);
-        if (!after) return;
-        if (after.status === 'paused') {
-          await this.queue.markStepPending(job.id, stage, 'Paused by user.');
-          return;
-        }
-        if (after.status === 'canceled') {
-          await this.queue.markStepPending(job.id, stage, 'Canceled by user.');
-          return;
-        }
-        if (outcome.status === 'completed') {
-          await this.queue.markStepCompleted(job.id, stage);
-          continue;
-        }
-        const reason = outcome.message || `Stage ${stage} ended with status ${outcome.status}.`;
-        await this.queue.markStepFailed(job.id, stage, reason);
-        await this.queue.failJob(job.id, reason);
+      const targetType = effectiveTargetType(job);
+      if (targetType === 'terminal') {
+        await this.runTerminalJob(job);
         return;
       }
-
-      await this.queue.completeJob(job.id);
+      if (targetType === 'team') {
+        await this.runTeamJob(job);
+        return;
+      }
+      await this.runProjectJob(job);
     } catch (err) {
-      await this.queue.failJob(job.id, messageFromUnknown(err));
+      const targetType = effectiveTargetType(job);
+      await this.queue.failJob(job.id, messageFromUnknown(err), targetType === 'project' ? undefined : `${targetType}_dispatch`);
     } finally {
       if (leaseRefresh) clearInterval(leaseRefresh);
       this.orchestrator.setExecutionOwner(null);
       this.activeJobId = null;
     }
+  }
+
+  private async runProjectJob(job: QueueJob): Promise<void> {
+    // Persist every Tiger stage this job dispatches under the queue owner so execution_runs,
+    // run_stages, agent_runs, task claims, and finding claims are recorded as queue-owned (not manual).
+    this.orchestrator.setExecutionOwner(this.executionOwner);
+    await fs.mkdir(job.workspacePath, { recursive: true });
+    await this.orchestrator.initialize(job.workspacePath, job.prompt);
+
+    const steps = await this.queue.listSteps(job.id);
+    const fromStage = job.configSnapshot.fromStage;
+    const fromIndex = fromStage ? STAGE_ORDER.indexOf(fromStage) : 0;
+    const firstIndex = fromIndex >= 0 ? fromIndex : 0;
+
+    for (const stage of STAGE_ORDER.slice(firstIndex)) {
+      if (this.stopped) return;
+      const latest = await this.queue.getJob(job.id);
+      if (!latest || latest.status !== 'running') return;
+
+      const step = steps.find((s) => s.stepKey === stage) ?? (await this.queue.listSteps(job.id)).find((s) => s.stepKey === stage);
+      if (step?.status === 'completed' || step?.status === 'skipped') continue;
+
+      const decision = await this.queue.evaluateJobRules(latest);
+      if (!decision.allowed) {
+        await this.queue.blockRunningJob(job.id, decision);
+        await this.queue.markStepPending(job.id, stage, decision.reason);
+        return;
+      }
+
+      await this.queue.markStepRunning(job.id, stage);
+      const cfg = job.configSnapshot.configs?.[stage] ?? defaultStageConfig(this.orchestrator.getConfig(), stage);
+      const outcome = await this.runStage(stage, cfg);
+      const after = await this.queue.getJob(job.id);
+      if (!after) return;
+      if (after.status === 'paused') {
+        await this.queue.markStepPending(job.id, stage, 'Paused by user.');
+        return;
+      }
+      if (after.status === 'canceled') {
+        await this.queue.markStepPending(job.id, stage, 'Canceled by user.');
+        return;
+      }
+      if (outcome.status === 'completed') {
+        await this.queue.markStepCompleted(job.id, stage);
+        continue;
+      }
+      const reason = outcome.message || `Stage ${stage} ended with status ${outcome.status}.`;
+      await this.queue.markStepFailed(job.id, stage, reason);
+      await this.queue.failJob(job.id, reason);
+      return;
+    }
+
+    await this.queue.completeJob(job.id);
+  }
+
+  private async runTerminalJob(job: QueueJob): Promise<void> {
+    if (!this.terminalTarget) throw new Error('Queue terminal target is not configured.');
+    const payload = terminalPayload(job);
+    const now = new Date().toISOString();
+    const cwd = payload.cwd || job.workspacePath;
+    await fs.mkdir(cwd, { recursive: true });
+    const def: TerminalDefinition = {
+      id: nanoid(),
+      name: payload.name,
+      groupId: payload.groupId ?? null,
+      cwd,
+      initialCommand: payload.initialCommand ?? job.body ?? job.prompt,
+      shell: (payload.shell as TerminalDefinition['shell'] | undefined) ?? this.terminalTarget.state.settings.defaultShell,
+      env: payload.env,
+      autostart: payload.autostart,
+      protected: payload.protected,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.terminalTarget.state.terminals.push(def);
+    this.terminalTarget.manager.upsertDefinition(def);
+    await this.terminalTarget.save();
+    await this.terminalTarget.manager.start(def.id, payload.cols, payload.rows);
+    await this.queue.recordTargetRef(job.id, { terminalId: def.id });
+    await this.queue.completeJob(job.id);
+  }
+
+  private async runTeamJob(job: QueueJob): Promise<void> {
+    if (!this.teamTarget) throw new Error('Queue team target is not configured.');
+    const payload = teamPayload(job);
+    const body = job.body ?? job.prompt;
+    if (payload.mode === 'append') {
+      const active = this.teamTarget.tryGetState();
+      if (!active || active.runId !== payload.runId) {
+        throw new Error(`No active team run is available for ${payload.runId}.`);
+      }
+      await this.teamTarget.steer(body);
+      await this.queue.recordTargetRef(job.id, { runId: active.runId });
+      await this.queue.completeJob(job.id);
+      return;
+    }
+
+    const created = await this.teamTarget.createTeamRun({
+      workspace: payload.workspacePath ?? payload.workspace ?? job.workspacePath,
+      goal: body,
+      roles: teamRoles(payload.roles),
+      orchestrationMode: payload.orchestrationMode,
+    });
+    await this.teamTarget.start();
+    await this.queue.recordTargetRef(job.id, { runId: created.runId });
+    await this.queue.completeJob(job.id);
   }
 
   private runStage(stageId: StageId, cfg: StageRunConfig): Promise<{ status: string; message?: string }> {

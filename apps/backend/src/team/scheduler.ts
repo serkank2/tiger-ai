@@ -4,10 +4,23 @@ export type TeamPhase = 'manager' | 'analysis' | 'implementation' | 'testing' | 
 
 export type TeamRunStatus = 'running' | 'done' | 'blocked';
 
+export type TeamRoleStatus =
+  | 'idle'
+  | 'running'
+  | 'paused'
+  | 'blocked'
+  | 'done'
+  | 'interrupted'
+  | 'thinking'
+  | 'working'
+  | 'waiting'
+  | 'failed';
+
 export interface TeamRole {
   id: string;
   kind: TeamRoleKind;
   label?: string;
+  status?: TeamRoleStatus;
   /**
    * Defaults to true for developers and false for all other built-in roles.
    * A write-capable turn is always serialized.
@@ -196,19 +209,25 @@ function chooseCandidates(state: TeamSchedulerState, phase: TeamPhase): TeamRole
   const roles = sortedRoles(state.roles);
   const decisionIds = state.coordinatorDecision?.roleIds?.filter((id) => id.trim().length > 0) ?? [];
   if (decisionIds.length > 0) {
-    const wanted = new Set(decisionIds);
-    return roles.filter((role) => wanted.has(role.id));
+    const wantedIds = new Set(decisionIds);
+    const wantedKinds = new Set(decisionIds.filter(isRoleKind));
+    return roles.filter((role) => wantedIds.has(role.id) || wantedKinds.has(role.kind));
   }
 
   return PHASE_ROLE_KINDS[phase].flatMap((kind) => roles.filter((role) => role.kind === kind));
 }
 
 function serializeCandidates(state: TeamSchedulerState, phase: TeamPhase, candidates: TeamRole[]): SelectedTeamTurn[] {
-  const writeRole = candidates.find(isWriteCapable);
-  if (writeRole) return [toTurn(writeRole, phase, state, true)];
+  const writeCandidates = candidates.filter(isWriteCapable);
+  const idleWriteRole = writeCandidates.find(isIdle);
+  if (idleWriteRole) return [toTurn(idleWriteRole, phase, state, true)];
+  if (writeCandidates.length > 0) return [];
 
   const limit = readOnlyLimit(state, phase);
-  return candidates.slice(0, limit).map((role) => toTurn(role, phase, state, false));
+  return candidates
+    .filter(isIdle)
+    .slice(0, limit)
+    .map((role) => toTurn(role, phase, state, false));
 }
 
 function toTurn(role: TeamRole, phase: TeamPhase, state: TeamSchedulerState, writeCapable: boolean): SelectedTeamTurn {
@@ -242,6 +261,14 @@ function isDoneGateBoundary(state: TeamSchedulerState, phase: TeamPhase): boolea
 
 function isWriteCapable(role: TeamRole): boolean {
   return role.writeCapable ?? role.kind === 'developer';
+}
+
+function isIdle(role: TeamRole): boolean {
+  return !role.status || role.status === 'idle';
+}
+
+function isRoleKind(value: string): value is TeamRoleKind {
+  return ['lead', 'coordinator', 'analyst', 'developer', 'tester', 'reviewer', 'signoff'].includes(value);
 }
 
 function sortedRoles(roles: TeamRole[]): TeamRole[] {

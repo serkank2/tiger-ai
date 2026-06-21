@@ -4,9 +4,9 @@ import type { CueEngine } from '../cue/CueEngine.js';
 import { badRequest, conflict, notFound } from './errors.js';
 
 /**
- * REST surface for the Cue engine. All routes are no-ops-by-construction when Cue is disabled:
- * the router is only mounted when `config.cue.enabled` is set (see index.ts), and a missing engine
- * yields a clear 409 so a probing client gets a stable signal rather than a 404 ambiguity.
+ * REST surface for the Cue engine. The router is mounted even when Cue is disabled so a probing
+ * client gets the stable 409 disabled signal instead of a 404; the engine itself is still only
+ * constructed when `config.cue.enabled` is set.
  */
 export function createCueRouter(ctx: AppCtx, getEngine: () => CueEngine | null): Router {
   const router = Router();

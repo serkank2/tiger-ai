@@ -15,6 +15,8 @@ import type {
   QueueRuleProvider,
   QueueState,
   QueueStepStatus,
+  QueueTargetType,
+  ShellKind,
 } from '~/types';
 
 withDefaults(defineProps<{ showHeader?: boolean }>(), { showHeader: false });
@@ -29,6 +31,8 @@ const nowMs = ref(Date.now());
 const selectedIds = ref<Set<string>>(new Set());
 const dragId = ref<string | null>(null);
 const dragOverId = ref<string | null>(null);
+const activeList = ref<'live' | 'history'>('live');
+const enqueueTarget = ref<QueueTargetType>('project');
 const providerOrder: QueueProvider[] = ['claude', 'codex', 'antigravity', 'mixed'];
 const draft = reactive({
   projectName: '',
@@ -37,6 +41,18 @@ const draft = reactive({
   provider: 'claude' as QueueProvider,
   priority: 0,
   maxAttempts: 1,
+});
+const terminalDraft = reactive({
+  name: '',
+  cwd: '',
+  shellKind: 'system-default' as ShellKind,
+  initialCommand: '',
+});
+const teamDraft = reactive({
+  mode: 'create' as 'create' | 'append',
+  runId: '',
+  workspacePath: '',
+  body: '',
 });
 const ruleDraft = reactive({
   name: 'Claude usage >= 90%',
@@ -55,7 +71,19 @@ let clock: ReturnType<typeof setInterval> | null = null;
 let unsubscribeQueueState: (() => void) | null = null;
 
 const jobs = computed(() => queue.jobs);
-const selectedJob = computed(() => jobs.value.find((job) => job.id === selectedJobId.value) ?? jobs.value[0] ?? null);
+const isPipelineV2 = computed(() => queue.queuePipelineV2);
+const pipelineModeLabel = computed(() => (isPipelineV2.value ? 'Pipeline v2' : 'Legacy'));
+const pipelineModeDetail = computed(() =>
+  isPipelineV2.value
+    ? 'Live queue and paginated history are active.'
+    : 'Enable with KAPLAN_QUEUE_PIPELINE_V2=on and restart the backend.',
+);
+const shownJobs = computed(() => (isPipelineV2.value && activeList.value === 'history' ? queue.historyItems : jobs.value));
+const jobListLabel = computed(() => {
+  if (!isPipelineV2.value) return 'Ordered queue jobs';
+  return activeList.value === 'history' ? 'Queue history items' : 'Live queue jobs';
+});
+const selectedJob = computed(() => shownJobs.value.find((job) => job.id === selectedJobId.value) ?? shownJobs.value[0] ?? null);
 const activeProgress = computed(() => progressFor(queue.activeJob));
 const enabledRules = computed(() => queue.rules.filter((rule) => rule.enabled));
 const disabledRules = computed(() => queue.rules.filter((rule) => !rule.enabled));
@@ -65,7 +93,13 @@ const savingRule = computed(() =>
 const canSaveRule = computed(
   () => ruleDraft.name.trim().length > 0 && Number.isFinite(ruleDraft.threshold) && ruleDraft.threshold >= 0 && ruleDraft.threshold <= 100 && !savingRule.value,
 );
-const canSubmit = computed(() => draft.prompt.trim().length > 0 && !queue.isBusy('enqueue'));
+const canSubmit = computed(() => {
+  if (queue.isBusy('enqueue')) return false;
+  if (!isPipelineV2.value || enqueueTarget.value === 'project') return draft.prompt.trim().length > 0;
+  if (enqueueTarget.value === 'terminal') return terminalDraft.name.trim().length > 0;
+  if (teamDraft.mode === 'append' && !teamDraft.runId.trim()) return false;
+  return teamDraft.body.trim().length > 0;
+});
 const selectedEvents = computed(() => {
   const job = selectedJob.value;
   if (!job) return queue.events.slice(0, 30);
@@ -86,12 +120,15 @@ const lanes = computed(() => {
 });
 
 const selectedCount = computed(() => selectedIds.value.size);
-const allSelectableIds = computed(() => jobs.value.map((job) => job.id));
+const allSelectableIds = computed(() =>
+  isPipelineV2.value && activeList.value === 'history' ? [] : jobs.value.map((job) => job.id),
+);
 const allSelected = computed(
   () => allSelectableIds.value.length > 0 && allSelectableIds.value.every((id) => selectedIds.value.has(id)),
 );
 
 function isReorderable(job: QueueJobView): boolean {
+  if (isPipelineV2.value && activeList.value === 'history') return false;
   return job.status === 'queued' || job.status === 'retrying';
 }
 
@@ -117,6 +154,7 @@ function clearSelection(): void {
 const dialog = useDialog();
 
 async function runBulk(action: QueueBulkAction): Promise<void> {
+  if (isPipelineV2.value && activeList.value === 'history') return;
   const ids = [...selectedIds.value];
   if (ids.length === 0 || queue.isBusy('bulk')) return;
   if (action === 'cancel' || action === 'delete') {
@@ -196,7 +234,7 @@ function focusJobRow(id: string): void {
 }
 
 function onJobListKeydown(ev: KeyboardEvent): void {
-  const items = jobs.value;
+  const items = shownJobs.value;
   if (items.length === 0) return;
   const currentId = selectedJob.value?.id ?? items[0]!.id;
   const idx = items.findIndex((job) => job.id === currentId);
@@ -223,7 +261,7 @@ function onJobListKeydown(ev: KeyboardEvent): void {
 }
 
 watch(
-  jobs,
+  shownJobs,
   (items) => {
     if (items.length === 0) {
       selectedJobId.value = null;
@@ -254,6 +292,18 @@ onMounted(() => {
   }, 1000);
 });
 
+watch(
+  () => queue.queuePipelineV2,
+  (enabled) => {
+    if (enabled) void queue.loadHistory({ limit: 50 }).catch(() => {});
+  },
+);
+
+watch(activeList, (tab) => {
+  clearSelection();
+  if (tab === 'history' && !queue.historyLoaded) void queue.loadHistory({ limit: 50 }).catch(() => {});
+});
+
 onBeforeUnmount(() => {
   if (clock) clearInterval(clock);
   unsubscribeQueueState?.();
@@ -277,18 +327,33 @@ function providerLabel(provider: QueueProvider): string {
   return 'Claude';
 }
 
+function targetLabel(target: QueueTargetType | null | undefined): string {
+  if (target === 'terminal') return 'Terminal';
+  if (target === 'team') return 'Team';
+  return 'Project';
+}
+
 function ruleLabel(rule: { provider: string; windowKey: string; operator: string; threshold: number }): string {
   const op = rule.operator === 'gte' ? '>=' : rule.operator === 'lte' ? '<=' : rule.operator;
   return `${rule.provider} ${rule.windowKey} ${op} ${rule.threshold}%`;
 }
 
 function jobTitle(job: QueueJobView): string {
-  return job.projectName?.trim() || `Job ${job.id.slice(0, 8)}`;
+  return job.title?.trim() || job.projectName?.trim() || `Job ${job.id.slice(0, 8)}`;
 }
 
 function shortPrompt(job: QueueJobView): string {
-  const prompt = job.prompt.replace(/\s+/g, ' ').trim();
+  const prompt = (job.body || job.prompt).replace(/\s+/g, ' ').trim();
   return prompt.length > 140 ? `${prompt.slice(0, 137)}...` : prompt;
+}
+
+function targetRefText(job: QueueJobView): string {
+  if (!job.targetRef || Object.keys(job.targetRef).length === 0) return 'None';
+  return JSON.stringify(job.targetRef);
+}
+
+function failureReason(job: QueueJobView): string {
+  return job.blockedReason || queue.events.find((event) => event.jobId === job.id && event.type === 'queue.failed')?.message || 'No failure reason was recorded.';
 }
 
 function formatTime(iso: string | null | undefined): string {
@@ -340,14 +405,64 @@ function statusClass(status: QueueJobStatus | QueueStepStatus): string {
 async function submitEnqueue(): Promise<void> {
   if (!canSubmit.value) return;
   try {
-    await queue.enqueue({
-      prompt: draft.prompt.trim(),
-      projectName: draft.projectName.trim() || undefined,
-      workspacePath: draft.workspacePath.trim() || undefined,
-      provider: draft.provider,
-      priority: Number.isFinite(draft.priority) ? draft.priority : 0,
-      maxAttempts: Number.isFinite(draft.maxAttempts) && draft.maxAttempts > 0 ? draft.maxAttempts : 1,
-    });
+    if (!isPipelineV2.value || enqueueTarget.value === 'project') {
+      await queue.enqueue({
+        prompt: draft.prompt.trim(),
+        projectName: draft.projectName.trim() || undefined,
+        workspacePath: draft.workspacePath.trim() || undefined,
+        provider: draft.provider,
+        priority: Number.isFinite(draft.priority) ? draft.priority : 0,
+        maxAttempts: Number.isFinite(draft.maxAttempts) && draft.maxAttempts > 0 ? draft.maxAttempts : 1,
+        ...(isPipelineV2.value
+          ? {
+              target: { type: 'project' },
+              payload: {
+                projectName: draft.projectName.trim() || undefined,
+                workspacePath: draft.workspacePath.trim() || undefined,
+                provider: draft.provider,
+              },
+            }
+          : {}),
+      });
+    } else if (enqueueTarget.value === 'terminal') {
+      const command = terminalDraft.initialCommand.trim();
+      await queue.enqueue({
+        prompt: command || terminalDraft.name.trim(),
+        body: command || undefined,
+        title: terminalDraft.name.trim(),
+        priority: Number.isFinite(draft.priority) ? draft.priority : 0,
+        maxAttempts: Number.isFinite(draft.maxAttempts) && draft.maxAttempts > 0 ? draft.maxAttempts : 1,
+        target: { type: 'terminal' },
+        payload: {
+          name: terminalDraft.name.trim(),
+          cwd: terminalDraft.cwd.trim() || undefined,
+          initialCommand: command || undefined,
+          shell: { kind: terminalDraft.shellKind },
+        },
+      });
+      terminalDraft.name = '';
+      terminalDraft.cwd = '';
+      terminalDraft.initialCommand = '';
+      terminalDraft.shellKind = 'system-default';
+    } else {
+      await queue.enqueue({
+        prompt: teamDraft.body.trim(),
+        body: teamDraft.body.trim(),
+        title: teamDraft.mode === 'append' ? `Append to ${teamDraft.runId.trim()}` : 'Create team run',
+        priority: Number.isFinite(draft.priority) ? draft.priority : 0,
+        maxAttempts: Number.isFinite(draft.maxAttempts) && draft.maxAttempts > 0 ? draft.maxAttempts : 1,
+        target: { type: 'team' },
+        payload: {
+          mode: teamDraft.mode,
+          runId: teamDraft.mode === 'append' ? teamDraft.runId.trim() : undefined,
+          workspacePath: teamDraft.mode === 'create' ? teamDraft.workspacePath.trim() || undefined : undefined,
+        },
+      });
+      teamDraft.body = '';
+      teamDraft.runId = '';
+      teamDraft.workspacePath = '';
+      teamDraft.mode = 'create';
+    }
     draft.prompt = '';
     draft.projectName = '';
     draft.workspacePath = '';
@@ -356,6 +471,36 @@ async function submitEnqueue(): Promise<void> {
   } catch {
     /* surfaced through queue.actionError */
   }
+}
+
+async function retryAsNew(job: QueueJobView): Promise<void> {
+  if (queue.isBusy('enqueue')) return;
+  await queue.enqueue({
+    prompt: job.prompt,
+    body: job.body ?? undefined,
+    title: job.title ?? job.projectName ?? undefined,
+    workspacePath: job.workspacePath,
+    projectName: job.projectName ?? undefined,
+    provider: job.provider,
+    maxAttempts: job.maxAttempts,
+    target: job.targetType ? { type: job.targetType } : undefined,
+    payload: job.targetPayload && typeof job.targetPayload === 'object' ? (job.targetPayload as Record<string, unknown>) : undefined,
+  });
+  activeList.value = 'live';
+}
+
+async function archiveHistoryJob(job: QueueJobView): Promise<void> {
+  if (queue.isBusy('bulk')) return;
+  const ok = await dialog.confirm({
+    title: 'Archive history item',
+    message: `Archive ${jobTitle(job)} from queue history? This removes the stored queue item.`,
+    confirmText: 'Archive',
+    danger: true,
+  });
+  if (!ok) return;
+  await queue.bulk('delete', [job.id]);
+  await queue.loadHistory({ limit: 50 }).catch(() => {});
+  selectedJobId.value = null;
 }
 
 function resetRuleDraft(): void {
@@ -407,7 +552,7 @@ async function deleteRule(rule: QueueRule): Promise<void> {
 
 async function moveSelected(delta: -1 | 1): Promise<void> {
   const job = selectedJob.value;
-  if (!job || queue.isBusy('reorder')) return;
+  if (!job || !isReorderable(job) || queue.isBusy('reorder')) return;
   const ids = jobs.value.map((item) => item.id);
   const idx = ids.indexOf(job.id);
   const next = idx + delta;
@@ -422,7 +567,7 @@ async function moveSelected(delta: -1 | 1): Promise<void> {
 
 async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Promise<void> {
   const job = selectedJob.value;
-  if (!job) return;
+  if (!job || (isPipelineV2.value && activeList.value === 'history')) return;
   try {
     if (action === 'pause') await queue.pause(job.id);
     else if (action === 'resume') await queue.resume(job.id);
@@ -519,6 +664,12 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <span v-else class="meta">Waiting for queue state</span>
         </div>
 
+        <div class="metric pipeline-panel" data-testid="pipeline-mode-panel">
+          <span class="label">Pipeline</span>
+          <b>{{ pipelineModeLabel }}</b>
+          <span class="meta">{{ pipelineModeDetail }}</span>
+        </div>
+
         <div class="metric rules-panel" data-testid="rules-panel">
           <span class="label">Rules</span>
           <b>{{ enabledRules.length }} enabled</b>
@@ -594,62 +745,178 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
       <section class="content">
         <aside class="left">
           <form class="enqueue" data-testid="enqueue-form" @submit.prevent="submitEnqueue">
-            <div class="form-grid">
+        <div v-if="isPipelineV2" class="target-tabs" data-testid="enqueue-target-tabs" role="group" aria-label="Queue target">
+          <button
+            type="button"
+            data-testid="enqueue-target-project"
+            :class="{ active: enqueueTarget === 'project' }"
+            :aria-pressed="enqueueTarget === 'project'"
+            @click="enqueueTarget = 'project'"
+          >
+            Project
+          </button>
+          <button
+            type="button"
+            data-testid="enqueue-target-terminal"
+            :class="{ active: enqueueTarget === 'terminal' }"
+            :aria-pressed="enqueueTarget === 'terminal'"
+            @click="enqueueTarget = 'terminal'"
+          >
+            Terminal
+          </button>
+          <button
+            type="button"
+            data-testid="enqueue-target-team"
+            :class="{ active: enqueueTarget === 'team' }"
+            :aria-pressed="enqueueTarget === 'team'"
+            @click="enqueueTarget = 'team'"
+          >
+            Team
+          </button>
+        </div>
+
+            <template v-if="!isPipelineV2 || enqueueTarget === 'project'">
+              <div class="form-grid">
+                <label>
+                  <span>Project</span>
+                  <input v-model="draft.projectName" data-testid="enqueue-project" placeholder="Optional project name" />
+                </label>
+                <label>
+                  <span>Provider</span>
+                  <select v-model="draft.provider" data-testid="enqueue-provider">
+                    <option value="claude">Claude</option>
+                    <option value="codex">Codex</option>
+                    <option value="antigravity">Antigravity</option>
+                    <option value="mixed">Mixed</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Priority</span>
+                  <input v-model.number="draft.priority" data-testid="enqueue-priority" type="number" step="1" />
+                </label>
+                <label>
+                  <span>Attempts</span>
+                  <input v-model.number="draft.maxAttempts" data-testid="enqueue-attempts" type="number" min="1" step="1" />
+                </label>
+              </div>
               <label>
-                <span>Project</span>
-                <input v-model="draft.projectName" data-testid="enqueue-project" placeholder="Optional project name" />
+                <span>Workspace</span>
+                <input v-model="draft.workspacePath" data-testid="enqueue-workspace" placeholder="Optional absolute path" />
               </label>
               <label>
-                <span>Provider</span>
-                <select v-model="draft.provider" data-testid="enqueue-provider">
-                  <option value="claude">Claude</option>
-                  <option value="codex">Codex</option>
-                  <option value="antigravity">Antigravity</option>
-                  <option value="mixed">Mixed</option>
-                </select>
+                <span>Prompt</span>
+                <textarea
+                  v-model="draft.prompt"
+                  data-testid="enqueue-prompt"
+                  rows="5"
+                  placeholder="Write the autonomous prompt to run..."
+                />
+              </label>
+            </template>
+
+            <template v-else-if="enqueueTarget === 'terminal'">
+              <div class="form-grid terminal-grid">
+                <label>
+                  <span>Name</span>
+                  <input v-model="terminalDraft.name" data-testid="enqueue-terminal-name" placeholder="Terminal name" />
+                </label>
+                <label>
+                  <span>Shell</span>
+                  <select v-model="terminalDraft.shellKind" data-testid="enqueue-terminal-shell">
+                    <option value="system-default">Default</option>
+                    <option value="powershell">PowerShell</option>
+                    <option value="pwsh">pwsh</option>
+                    <option value="cmd">cmd</option>
+                    <option value="bash">bash</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                <span>CWD</span>
+                <input v-model="terminalDraft.cwd" data-testid="enqueue-terminal-cwd" placeholder="Optional working directory" />
               </label>
               <label>
-                <span>Priority</span>
-                <input v-model.number="draft.priority" data-testid="enqueue-priority" type="number" step="1" />
+                <span>Command</span>
+                <textarea
+                  v-model="terminalDraft.initialCommand"
+                  data-testid="enqueue-terminal-command"
+                  rows="4"
+                  placeholder="Optional startup command"
+                />
               </label>
+            </template>
+
+            <template v-else>
+              <div class="form-grid team-grid">
+                <label>
+                  <span>Mode</span>
+                  <select v-model="teamDraft.mode" data-testid="enqueue-team-mode">
+                    <option value="create">Create</option>
+                    <option value="append">Append</option>
+                  </select>
+                </label>
+                <label v-if="teamDraft.mode === 'append'">
+                  <span>Run id</span>
+                  <input v-model="teamDraft.runId" data-testid="enqueue-team-run-id" placeholder="Active run id" />
+                </label>
+                <label v-else>
+                  <span>Workspace</span>
+                  <input v-model="teamDraft.workspacePath" data-testid="enqueue-team-workspace" placeholder="Optional workspace" />
+                </label>
+              </div>
               <label>
-                <span>Attempts</span>
-                <input v-model.number="draft.maxAttempts" data-testid="enqueue-attempts" type="number" min="1" step="1" />
+                <span>Body</span>
+                <textarea
+                  v-model="teamDraft.body"
+                  data-testid="enqueue-team-body"
+                  rows="5"
+                  placeholder="Write the Team instruction..."
+                />
               </label>
-            </div>
-            <label>
-              <span>Workspace</span>
-              <input v-model="draft.workspacePath" data-testid="enqueue-workspace" placeholder="Optional absolute path" />
-            </label>
-            <label>
-              <span>Prompt</span>
-              <textarea
-                v-model="draft.prompt"
-                data-testid="enqueue-prompt"
-                rows="5"
-                placeholder="Write the autonomous prompt to run..."
-              />
-            </label>
+            </template>
+
             <BaseButton variant="primary" block data-testid="enqueue-submit" type="submit" :loading="queue.isBusy('enqueue')" :disabled="!canSubmit">
               Enqueue
             </BaseButton>
           </form>
 
+          <div v-if="isPipelineV2" class="queue-tabs" data-testid="queue-tabs" role="group" aria-label="Queue list view">
+            <button
+              type="button"
+              data-testid="queue-tab-live"
+              :class="{ active: activeList === 'live' }"
+              :aria-pressed="activeList === 'live'"
+              @click="activeList = 'live'"
+            >
+              Live {{ jobs.length }}
+            </button>
+            <button
+              type="button"
+              data-testid="queue-tab-history"
+              :class="{ active: activeList === 'history' }"
+              :aria-pressed="activeList === 'history'"
+              @click="activeList = 'history'"
+            >
+              History {{ queue.historyCounts.total }}
+            </button>
+          </div>
+
           <div class="list-head">
-            <label class="select-all" title="Select all jobs">
+            <label class="select-all" :title="activeList === 'history' ? 'History rows cannot be bulk edited' : 'Select all jobs'">
               <input
+                v-if="!isPipelineV2 || activeList === 'live'"
                 type="checkbox"
                 data-testid="select-all"
                 :checked="allSelected"
                 :disabled="jobs.length === 0"
                 @change="toggleSelectAll"
               />
-              <b>Ordered jobs</b>
+              <b>{{ isPipelineV2 ? (activeList === 'history' ? 'History' : 'Live pipeline') : 'Ordered jobs' }}</b>
             </label>
-            <span>{{ jobs.length }} total</span>
+            <span>{{ isPipelineV2 && activeList === 'history' ? `${queue.historyTotal || queue.historyCounts.total} total` : `${jobs.length} total` }}</span>
           </div>
 
-          <div v-if="selectedCount > 0" class="bulk-bar" data-testid="bulk-bar">
+          <div v-if="selectedCount > 0 && (!isPipelineV2 || activeList === 'live')" class="bulk-bar" data-testid="bulk-bar">
             <span class="bulk-count">{{ selectedCount }} selected</span>
             <div class="bulk-actions">
               <BaseButton size="sm" variant="secondary" data-testid="bulk-pause" :disabled="queue.isBusy('bulk')" @click="runBulk('pause')">Pause</BaseButton>
@@ -664,20 +931,30 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <div v-if="queue.loading && !queue.loaded" class="loading" data-testid="loading-state">
             Loading queue...
           </div>
-          <div v-else-if="jobs.length === 0" class="empty" data-testid="empty-state">
-            <b>No queued jobs</b>
-            <span>Submit a prompt to start sequential autonomous execution.</span>
+          <div v-else-if="shownJobs.length === 0" class="empty" data-testid="empty-state">
+            <template v-if="isPipelineV2 && activeList === 'live'">
+              <b>Pipeline is empty</b>
+              <span>New work items will appear here until they finish.</span>
+            </template>
+            <template v-else-if="isPipelineV2">
+              <b>No history items</b>
+              <span>Finished work items load here.</span>
+            </template>
+            <template v-else>
+              <b>No queued jobs</b>
+              <span>Submit a prompt to start sequential autonomous execution.</span>
+            </template>
           </div>
           <div
             v-else
             class="job-list"
             data-testid="job-list"
             role="listbox"
-            aria-label="Ordered queue jobs"
+            :aria-label="jobListLabel"
             @keydown="onJobListKeydown"
           >
             <div
-              v-for="job in jobs"
+              v-for="job in shownJobs"
               :key="job.id"
               class="job-row"
               :class="{ selected: selectedJob?.id === job.id, 'drag-over': dragOverId === job.id, dragging: dragId === job.id, fixed: !isReorderable(job) }"
@@ -695,6 +972,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               @dragend="onDragEnd"
             >
               <input
+                v-if="!isPipelineV2 || activeList === 'live'"
                 type="checkbox"
                 class="job-check"
                 :data-testid="`select-job-${job.id}`"
@@ -702,12 +980,13 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 @click.stop
                 @change="toggleSelected(job.id)"
               />
+              <span v-else class="job-check-spacer" />
               <span class="pos">{{ job.position }}</span>
               <span class="job-main">
                 <span class="job-title">{{ jobTitle(job) }}</span>
                 <span class="job-prompt">{{ shortPrompt(job) }}</span>
               </span>
-              <span class="provider">{{ providerLabel(job.provider) }}</span>
+              <span class="provider">{{ isPipelineV2 ? targetLabel(job.targetType) : providerLabel(job.provider) }}</span>
               <span class="pill" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span>
             </div>
           </div>
@@ -722,15 +1001,47 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <span class="pill large" :class="statusClass(selectedJob.status)">{{ statusLabel(selectedJob.status) }}</span>
           </div>
 
+          <div v-if="isPipelineV2" class="target-detail" data-testid="target-detail">
+            <span><b>Target</b> {{ targetLabel(selectedJob.targetType) }}</span>
+            <span><b>Reference</b> {{ targetRefText(selectedJob) }}</span>
+          </div>
+
           <div v-if="selectedJob.status === 'blocked_by_limit'" class="blocked-detail" data-testid="selected-blocked">
             <b>{{ selectedJob.blockedReason ?? 'Blocked by an active limit rule.' }}</b>
             <span>Expected resume: {{ formatTime(selectedJob.resumeAfter) }}</span>
             <span>Countdown: {{ countdown(selectedJob.resumeAfter) }}</span>
           </div>
 
-          <div class="controls" aria-label="Queue job controls">
-            <BaseButton size="sm" variant="secondary" data-testid="move-up-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(-1)">Move up</BaseButton>
-            <BaseButton size="sm" variant="secondary" data-testid="move-down-job" :disabled="queue.isBusy('reorder')" @click="moveSelected(1)">Move down</BaseButton>
+          <div v-if="selectedJob.status === 'failed'" class="failure-detail" data-testid="failure-detail">
+            <b>{{ failureReason(selectedJob) }}</b>
+            <span>{{ targetLabel(selectedJob.targetType) }} / {{ selectedJob.attempts }}/{{ selectedJob.maxAttempts }} attempts</span>
+            <span>Next action: {{ isPipelineV2 && activeList === 'history' ? 'retry as new' : 'retry' }}</span>
+          </div>
+
+          <div v-if="isPipelineV2 && activeList === 'history'" class="controls" aria-label="Queue history controls">
+            <BaseButton
+              size="sm"
+              variant="secondary"
+              data-testid="retry-as-new-job"
+              :loading="queue.isBusy('enqueue')"
+              @click="retryAsNew(selectedJob)"
+            >
+              Retry as new
+            </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="danger"
+              data-testid="archive-history-job"
+              :loading="queue.isBusy('bulk')"
+              @click="archiveHistoryJob(selectedJob)"
+            >
+              Archive
+            </BaseButton>
+          </div>
+
+          <div v-else class="controls" aria-label="Queue job controls">
+            <BaseButton size="sm" variant="secondary" data-testid="move-up-job" :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)" @click="moveSelected(-1)">Move up</BaseButton>
+            <BaseButton size="sm" variant="secondary" data-testid="move-down-job" :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)" @click="moveSelected(1)">Move down</BaseButton>
             <BaseButton
               size="sm"
               variant="secondary"
@@ -779,7 +1090,10 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 <b>Step timeline</b>
                 <span>{{ progressFor(selectedJob).completed }}/{{ progressFor(selectedJob).total }}</span>
               </div>
-              <ol>
+              <div v-if="selectedJob.steps.length === 0" class="empty small">
+                <span>No Tiger stages for this target.</span>
+              </div>
+              <ol v-else>
                 <li v-for="step in selectedJob.steps" :key="step.id" :class="statusClass(step.status)">
                   <span class="step-dot" />
                   <span class="step-main">
@@ -903,7 +1217,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
 }
 .summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 .lanes {
@@ -924,6 +1238,39 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
 .lane.full {
   color: var(--amber);
   border-color: var(--amber);
+}
+.target-tabs,
+.queue-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.queue-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.target-tabs button,
+.queue-tabs button {
+  min-height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.target-tabs button.active,
+.queue-tabs button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--bg-elev-2);
+}
+.target-tabs button:focus-visible,
+.queue-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .select-all {
   display: inline-flex;
@@ -1186,6 +1533,10 @@ textarea {
   width: 15px;
   height: 15px;
 }
+.job-check-spacer {
+  width: 15px;
+  height: 15px;
+}
 .pos {
   font-family: var(--font-mono);
   color: var(--text-faint);
@@ -1288,6 +1639,30 @@ textarea {
 .blocked-detail span {
   color: var(--text-dim);
   font-size: 12px;
+}
+.target-detail,
+.failure-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.target-detail span,
+.failure-detail span,
+.target-detail b,
+.failure-detail b {
+  overflow-wrap: anywhere;
+}
+.failure-detail {
+  color: var(--amber);
+  border-color: var(--amber);
+  background: rgba(224, 176, 58, 0.08);
 }
 .controls {
   display: flex;

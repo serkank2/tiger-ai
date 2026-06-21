@@ -2,7 +2,7 @@
 // prints a readiness banner, waits for the instruction line (or a fallback timer), then behaves
 // per --mode. Not a real agent; never imported by production code.
 //
-// Usage: node fake-cli.mjs --out <file> --marker <file> --mode <marker|team|exit|missing|idle|growing-idle|hang>
+// Usage: node fake-cli.mjs --out <file> --marker <file> --mode <marker|team|team-warning|team-invalid-output|exit|missing|idle|growing-idle|hang>
 import { promises as fs } from 'node:fs';
 
 function arg(name, def) {
@@ -68,6 +68,30 @@ async function act(chunk) {
         '```',
         '',
       ].join('\n'),
+      'utf8',
+    );
+    await fs.writeFile(marker, 'done', 'utf8');
+    process.exit(0);
+  } else if (mode === 'team-warning') {
+    await fs.writeFile(
+      out,
+      [
+        '```TeamMessage',
+        JSON.stringify({ kind: 'AnalysisSummary', to: 'all', body: 'Recovered analysis block.' }, null, 2),
+        '```',
+        '```TeamMessage',
+        JSON.stringify({ kind: 'chat', to: 'all', body: 'Valid block still applied.' }, null, 2),
+        '```',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await fs.writeFile(marker, 'done', 'utf8');
+    process.exit(0);
+  } else if (mode === 'team-invalid-output') {
+    await fs.writeFile(
+      out,
+      ['```TeamMessage', JSON.stringify({ kind: 'chat', to: 'all' }, null, 2), '```', ''].join('\n'),
       'utf8',
     );
     await fs.writeFile(marker, 'done', 'utf8');

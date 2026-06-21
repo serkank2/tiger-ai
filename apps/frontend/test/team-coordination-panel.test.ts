@@ -23,6 +23,9 @@ const role = (id: string, name: string, inbox = 0): RoleSnapshot => ({
   id,
   name,
   tool: 'codex',
+  model: 'gpt-5',
+  effort: 'medium',
+  permission: 'workspace-write',
   status: 'idle',
   canWriteCode: true,
   requiredForSignoff: true,
@@ -75,6 +78,29 @@ describe('TeamCoordinationPanel', () => {
     expect(pending.text()).toContain('Lead → Tester');
     expect(pending.text()).toContain('TASK-0001');
     expect(pending.text()).toContain('blocking');
+  });
+
+  it('renders a long handoff title in a wrapping-safe title cell', () => {
+    const title = 'Spec: multiple same-kind agent instances with Lead idle-routing and a deliberately long title that must not collide with the task id';
+    store.roles = [role('lead', 'Lead / Coordinator'), role('business-analyst', 'Business Analyst')];
+    store.handoffs = [
+      {
+        id: 'h1',
+        fromRoleId: 'lead',
+        toRoleId: 'business-analyst',
+        taskId: 'TASK-0001',
+        title,
+        pending: true,
+        createdAt: 't0',
+      },
+    ];
+    const wrapper = mount(TeamCoordinationPanel, mountOpts);
+    const pending = wrapper.find('[data-testid="handoff-pending"]');
+    const titleCell = pending.find('.ttl');
+
+    expect(titleCell.text()).toBe(title);
+    expect(titleCell.classes()).toContain('ttl');
+    expect(getComputedStyle(titleCell.element).whiteSpace).not.toBe('nowrap');
   });
 
   it('shows per-role inbox counts (sendMessage deliveries)', () => {

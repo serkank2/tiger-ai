@@ -8,6 +8,7 @@ import type { QueueEvent, QueueJobView, QueueState, QueueStep, TigerStageId } fr
 
 const api = vi.hoisted(() => ({
   getQueueState: vi.fn(),
+  getQueueHistory: vi.fn(),
   enqueueQueue: vi.fn(),
   reorderQueue: vi.fn(),
   bulkQueue: vi.fn(),
@@ -79,6 +80,7 @@ function event(id: string, jobId: string | null, type: string, message: string, 
 
 function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
   return {
+    queuePipelineV2: false,
     jobs,
     rules: [
       {
@@ -100,6 +102,28 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
     runningByProvider: { claude: 0, codex: 0, antigravity: 0, mixed: 0 },
     providerConcurrency: { claude: 2, codex: 2, antigravity: 1, mixed: 1 },
     updatedAt: '2026-06-18T08:00:00.000Z',
+  };
+}
+
+function v2State(allJobs: QueueJobView[], liveItems?: QueueJobView[], events: QueueEvent[] = []): QueueState {
+  const terminalJobs = allJobs.filter((item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled');
+  const live = liveItems ?? allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled');
+  return {
+    ...state(allJobs, events),
+    queuePipelineV2: true,
+    liveItems: live,
+    historyCounts: {
+      total: terminalJobs.length,
+      byStatus: terminalJobs.reduce<NonNullable<QueueState['historyCounts']>['byStatus']>((acc, item) => {
+        acc[item.status] = (acc[item.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+      byTarget: terminalJobs.reduce<NonNullable<QueueState['historyCounts']>['byTarget']>((acc, item) => {
+        const target = item.targetType ?? 'project';
+        acc[target] = (acc[target] ?? 0) + 1;
+        return acc;
+      }, {}),
+    },
   };
 }
 
@@ -125,6 +149,7 @@ describe('QueueView', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    api.getQueueHistory.mockResolvedValue({ items: [], total: 0, nextCursor: null, hasMore: false });
     mocks.conn = reactive({ status: 'connected' });
     mocks.socket = { onServerEvent: vi.fn(() => vi.fn()) };
   });
@@ -138,6 +163,8 @@ describe('QueueView', () => {
     const wrapper = await mountQueue(state([]));
 
     expect(wrapper.find('[data-testid="disconnected-banner"]').text()).toContain('disconnected');
+    expect(wrapper.find('[data-testid="pipeline-mode-panel"]').text()).toContain('Legacy');
+    expect(wrapper.find('[data-testid="pipeline-mode-panel"]').text()).toContain('KAPLAN_QUEUE_PIPELINE_V2=on');
     expect(wrapper.find('[data-testid="empty-state"]').text()).toContain('No queued jobs');
   });
 
@@ -156,6 +183,169 @@ describe('QueueView', () => {
         projectName: 'Queued project',
         provider: 'mixed',
         prompt: 'Build the queue screen',
+      }),
+    );
+    expect(api.enqueueQueue.mock.calls[0]?.[0]).not.toHaveProperty('target');
+  });
+
+  it('splits v2 live items from paginated history', async () => {
+    const live = [
+      job('live-1', { position: 1, status: 'queued' }),
+      job('live-2', { position: 2, status: 'running' }),
+      job('live-3', { position: 3, status: 'paused' }),
+    ];
+    const history = Array.from({ length: 100 }, (_, i) =>
+      job(`history-${i}`, {
+        position: i + 4,
+        status: i === 0 ? 'failed' : 'completed',
+        targetType: i === 0 ? 'terminal' : 'project',
+        targetRef: i === 0 ? { terminalId: 'term-1' } : null,
+        blockedReason: i === 0 ? 'Terminal failed to start.' : null,
+        attempts: 1,
+        completedAt: '2026-06-18T09:00:00.000Z',
+      }),
+    );
+    api.getQueueHistory.mockResolvedValueOnce({ items: history, total: 100, nextCursor: null, hasMore: false });
+
+    const wrapper = await mountQueue(v2State([...live, ...history], live));
+
+    expect(wrapper.find('[data-testid="pipeline-mode-panel"]').text()).toContain('Pipeline v2');
+    expect(wrapper.find('[data-testid="pipeline-mode-panel"]').text()).not.toContain('KAPLAN_QUEUE_PIPELINE_V2=on');
+    expect(wrapper.find('[data-testid="queue-tab-live"]').text()).toContain('Live 3');
+    expect(wrapper.find('[data-testid="queue-tab-history"]').text()).toContain('History 100');
+    expect(wrapper.findAll('.job-row')).toHaveLength(3);
+    expect(wrapper.text()).not.toContain('history-1');
+
+    await wrapper.find('[data-testid="queue-tab-history"]').trigger('click');
+    await flushPromises();
+
+    expect(api.getQueueHistory).toHaveBeenCalledWith({ limit: 50 });
+    expect(wrapper.findAll('.job-row')).toHaveLength(100);
+    expect(wrapper.find('[data-testid="job-row-history-0"]').text()).toContain('Terminal');
+    await wrapper.find('[data-testid="job-row-history-0"]').trigger('click');
+    expect(wrapper.find('[data-testid="failure-detail"]').text()).toContain('Terminal failed to start.');
+    expect(wrapper.find('[data-testid="target-detail"]').text()).toContain('term-1');
+    expect(wrapper.find('[data-testid="retry-as-new-job"]').exists()).toBe(true);
+  });
+
+  it('exposes v2 filters as segmented controls with dynamic list labels', async () => {
+    const first = job('live-1', { position: 1, status: 'queued' });
+    const second = job('live-2', { position: 2, status: 'queued' });
+    const historyItem = job('history-done', {
+      position: 3,
+      status: 'completed',
+      completedAt: '2026-06-18T09:00:00.000Z',
+    });
+    api.getQueueHistory.mockResolvedValue({ items: [historyItem], total: 1, nextCursor: null, hasMore: false });
+    api.reorderQueue.mockResolvedValue(v2State([{ ...second, position: 1 }, { ...first, position: 2 }], [second, first]));
+
+    const wrapper = await mountQueue(v2State([first, second], [first, second]));
+
+    const targetGroup = wrapper.find('[data-testid="enqueue-target-tabs"]');
+    expect(targetGroup.attributes('role')).toBe('group');
+    expect(targetGroup.attributes('aria-label')).toBe('Queue target');
+    expect(wrapper.find('[role="tablist"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="enqueue-target-project"]').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.find('[data-testid="enqueue-target-terminal"]').attributes('aria-pressed')).toBe('false');
+
+    await wrapper.find('[data-testid="enqueue-target-terminal"]').trigger('click');
+    await nextTick();
+    expect(wrapper.find('[data-testid="enqueue-target-project"]').attributes('aria-pressed')).toBe('false');
+    expect(wrapper.find('[data-testid="enqueue-target-terminal"]').attributes('aria-pressed')).toBe('true');
+
+    const queueGroup = wrapper.find('[data-testid="queue-tabs"]');
+    expect(queueGroup.attributes('role')).toBe('group');
+    expect(queueGroup.attributes('aria-label')).toBe('Queue list view');
+    expect(wrapper.find('[data-testid="queue-tab-live"]').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.find('[data-testid="queue-tab-history"]').attributes('aria-pressed')).toBe('false');
+    expect(wrapper.find('[data-testid="job-list"]').attributes('aria-label')).toBe('Live queue jobs');
+
+    await wrapper.find('[data-testid="select-job-live-1"]').setValue(true);
+    expect(wrapper.find('[data-testid="bulk-bar"]').text()).toContain('1 selected');
+
+    await wrapper.find('[data-testid="move-down-job"]').trigger('click');
+    await flushPromises();
+    expect(api.reorderQueue).toHaveBeenCalledWith(['live-2', 'live-1']);
+
+    await wrapper.find('[data-testid="queue-tab-history"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="queue-tab-live"]').attributes('aria-pressed')).toBe('false');
+    expect(wrapper.find('[data-testid="queue-tab-history"]').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.find('[data-testid="job-list"]').attributes('aria-label')).toBe('Queue history items');
+    expect(wrapper.find('[data-testid="select-job-history-done"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="bulk-bar"]').exists()).toBe(false);
+  });
+
+  it('renders legacy single-list UI when the explicit v2 flag is false despite v2-shaped fields', async () => {
+    const finished = job('finished', { position: 1, status: 'completed', completedAt: '2026-06-18T09:00:00.000Z' });
+    const live = job('live', { position: 2, status: 'queued' });
+    const wrapper = await mountQueue({ ...v2State([finished, live], [live]), queuePipelineV2: false });
+
+    expect(wrapper.find('[data-testid="pipeline-mode-panel"]').text()).toContain('Legacy');
+    expect(wrapper.find('[data-testid="enqueue-target-tabs"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="queue-tabs"]').exists()).toBe(false);
+    expect(wrapper.find('.list-head').text()).toContain('Ordered jobs');
+    expect(wrapper.findAll('.job-row')).toHaveLength(2);
+    expect(wrapper.find('[data-testid="job-row-finished"]').exists()).toBe(true);
+  });
+
+  it('submits v2 project, terminal, and team target payloads', async () => {
+    const wrapper = await mountQueue(v2State([]));
+    api.enqueueQueue.mockResolvedValue(job('new'));
+
+    await wrapper.find('[data-testid="enqueue-project"]').setValue('Queued project');
+    await wrapper.find('[data-testid="enqueue-provider"]').setValue('mixed');
+    await wrapper.find('[data-testid="enqueue-prompt"]').setValue('Build the project');
+    await wrapper.find('[data-testid="enqueue-form"]').trigger('submit');
+    await flushPromises();
+
+    await wrapper.find('[data-testid="enqueue-target-terminal"]').trigger('click');
+    await wrapper.find('[data-testid="enqueue-terminal-name"]').setValue('Test terminal');
+    await wrapper.find('[data-testid="enqueue-terminal-cwd"]').setValue('C:\\repo');
+    await wrapper.find('[data-testid="enqueue-terminal-shell"]').setValue('pwsh');
+    await wrapper.find('[data-testid="enqueue-terminal-command"]').setValue('npm test');
+    await wrapper.find('[data-testid="enqueue-form"]').trigger('submit');
+    await flushPromises();
+
+    await wrapper.find('[data-testid="enqueue-target-team"]').trigger('click');
+    await wrapper.find('[data-testid="enqueue-team-mode"]').setValue('append');
+    await wrapper.find('[data-testid="enqueue-team-run-id"]').setValue('run-123');
+    await wrapper.find('[data-testid="enqueue-team-body"]').setValue('Review the queue results');
+    await wrapper.find('[data-testid="enqueue-form"]').trigger('submit');
+    await flushPromises();
+
+    expect(api.enqueueQueue).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        prompt: 'Build the project',
+        projectName: 'Queued project',
+        provider: 'mixed',
+        target: { type: 'project' },
+        payload: expect.objectContaining({ projectName: 'Queued project', provider: 'mixed' }),
+      }),
+    );
+    expect(api.enqueueQueue).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        prompt: 'npm test',
+        body: 'npm test',
+        target: { type: 'terminal' },
+        payload: expect.objectContaining({
+          name: 'Test terminal',
+          cwd: 'C:\\repo',
+          initialCommand: 'npm test',
+          shell: { kind: 'pwsh' },
+        }),
+      }),
+    );
+    expect(api.enqueueQueue).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        prompt: 'Review the queue results',
+        body: 'Review the queue results',
+        target: { type: 'team' },
+        payload: expect.objectContaining({ mode: 'append', runId: 'run-123' }),
       }),
     );
   });

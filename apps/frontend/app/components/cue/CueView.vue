@@ -123,6 +123,7 @@ async function onTrigger(id: string): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .status {
   font-size: 12px;
@@ -145,11 +146,20 @@ async function onTrigger(id: string): Promise<void> {
 .grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+.grid > * {
+  min-width: 0;
 }
 .loading {
   display: grid;
   place-items: center;
   padding: 40px;
+}
+@media (max-width: 520px) {
+  .bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

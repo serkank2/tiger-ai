@@ -71,6 +71,14 @@ export interface ParsedTeamOutput {
   signOffDirectives: SignOffDirective[];
   verificationDirectives: VerificationDirective[];
   coordinationDirectives: CoordinationDirective[];
+  parseWarnings?: ParseWarning[];
+}
+
+export interface ParseWarning {
+  blockIndex: number;
+  declaredType: OutputBlock['kind'];
+  declaredKind?: string;
+  reason: string;
 }
 
 export interface ParseTeamOutputDefaults {
@@ -163,27 +171,52 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
     verificationDirectives: [],
     coordinationDirectives: [],
   };
+  const parseWarnings: ParseWarning[] = [];
   const timestamp = defaults.timestamp ?? new Date().toISOString();
   const blocks = extractBlocks(output);
 
-  for (const block of blocks) {
-    const value = parseBlockJson(block);
+  blocks.forEach((block, blockIndex) => {
+    let value: unknown;
+    try {
+      value = parseBlockJson(block);
+    } catch (err) {
+      parseWarnings.push({
+        blockIndex,
+        declaredType: block.kind,
+        reason: messageOf(err),
+      });
+      return;
+    }
     const values = Array.isArray(value) ? value : [value];
     for (const item of values) {
-      if (block.kind === 'TeamMessage') {
-        parsed.messages.push(normalizeMessage(item, defaults, timestamp));
-      } else if (block.kind === 'TaskDirective') {
-        parsed.taskDirectives.push(normalizeTaskDirective(item));
-      } else if (block.kind === 'VerificationDirective') {
-        parsed.verificationDirectives.push(normalizeVerificationDirective(item, defaults.roleId));
-      } else if (block.kind === 'CoordinationDirective') {
-        parsed.coordinationDirectives.push(normalizeCoordinationDirective(item, defaults.roleId));
-      } else {
-        parsed.signOffDirectives.push(normalizeSignOffDirective(item, defaults.roleId));
+      try {
+        if (block.kind === 'TeamMessage') {
+          parsed.messages.push(normalizeMessage(item, defaults, timestamp, {
+            blockIndex,
+            declaredType: block.kind,
+            parseWarnings,
+          }));
+        } else if (block.kind === 'TaskDirective') {
+          parsed.taskDirectives.push(normalizeTaskDirective(item));
+        } else if (block.kind === 'VerificationDirective') {
+          parsed.verificationDirectives.push(normalizeVerificationDirective(item, defaults.roleId));
+        } else if (block.kind === 'CoordinationDirective') {
+          parsed.coordinationDirectives.push(normalizeCoordinationDirective(item, defaults.roleId));
+        } else {
+          parsed.signOffDirectives.push(normalizeSignOffDirective(item, defaults.roleId));
+        }
+      } catch (err) {
+        parseWarnings.push({
+          blockIndex,
+          declaredType: block.kind,
+          declaredKind: declaredKindFor(block.kind, item),
+          reason: messageOf(err),
+        });
       }
     }
-  }
+  });
 
+  if (parseWarnings.length) parsed.parseWarnings = parseWarnings;
   return parsed;
 }
 
@@ -206,6 +239,33 @@ export function systemBlockerMessage(input: {
     refs: input.taskId ? [{ kind: 'task', value: input.taskId }] : undefined,
     createdAt: input.timestamp ?? new Date().toISOString(),
   };
+}
+
+export function systemParseWarningMessage(input: {
+  runId: string;
+  turnId: string;
+  warnings: ParseWarning[];
+  taskId?: string;
+  timestamp?: string;
+}): TeamMessage {
+  return {
+    id: nanoid(),
+    runId: input.runId,
+    turnId: input.turnId,
+    seq: 0,
+    from: 'system',
+    to: 'all',
+    kind: 'system',
+    body: renderParseWarnings(input.warnings),
+    refs: input.taskId ? [{ kind: 'task', value: input.taskId }] : undefined,
+    createdAt: input.timestamp ?? new Date().toISOString(),
+  };
+}
+
+interface MessageNormalizeContext {
+  blockIndex: number;
+  declaredType: OutputBlock['kind'];
+  parseWarnings: ParseWarning[];
 }
 
 interface OutputBlock {
@@ -244,11 +304,24 @@ function parseBlockJson(block: OutputBlock): unknown {
   }
 }
 
-function normalizeMessage(raw: unknown, defaults: ParseTeamOutputDefaults, timestamp: string): TeamMessage {
+function normalizeMessage(
+  raw: unknown,
+  defaults: ParseTeamOutputDefaults,
+  timestamp: string,
+  context: MessageNormalizeContext,
+): TeamMessage {
   if (!isRecord(raw)) throw new Error('TeamMessage block must contain a JSON object');
   const body = (stringField(raw, 'body') || stringField(raw, 'content')).trim();
   if (!body) throw new Error('TeamMessage.body is required');
-  const kind = parseMessageKind(stringField(raw, 'kind') || stringField(raw, 'type', 'chat'));
+  const declaredKind = stringField(raw, 'kind') || stringField(raw, 'type', 'chat');
+  const kind = parseMessageKind(declaredKind, (reason) => {
+    context.parseWarnings.push({
+      blockIndex: context.blockIndex,
+      declaredType: context.declaredType,
+      declaredKind,
+      reason,
+    });
+  });
   // SECURITY / trust boundary: an agent's output may only ever speak AS ITSELF. The sender
   // identity is forced to the executing role and is NEVER read from an agent-supplied
   // `roleId`/`roleName`. Otherwise a worker could emit a message with `roleId: "<lead>"` and
@@ -367,8 +440,9 @@ function parseVerificationOutcome(value: string): VerificationDirectiveOutcome {
   }
 }
 
-function parseMessageKind(value: string): TeamMessageKind {
-  switch (value) {
+function parseMessageKind(value: string, warn?: (reason: string) => void): TeamMessageKind {
+  const lower = value.trim().toLowerCase();
+  switch (lower) {
     case 'chat':
     case 'decision':
     case 'task':
@@ -380,13 +454,26 @@ function parseMessageKind(value: string): TeamMessageKind {
     case 'signoff':
     case 'system':
     case 'blocker':
-      return value;
+      return lower;
     case 'status':
     case 'instruction':
     case 'question':
       return 'chat';
+    case 'analysis':
+    case 'analysissummary':
+    case 'summary':
+    case 'report':
+    case 'designsystemrecommendation':
+    case 'recommendation':
+      warn?.(`TeamMessage.kind "${value}" was normalized to "chat"`);
+      return 'chat';
+    case 'findingreport':
+    case 'findingrecommendation':
+      warn?.(`TeamMessage.kind "${value}" was normalized to "finding"`);
+      return 'finding';
     default:
-      throw new Error(`unsupported TeamMessage.kind: ${value}`);
+      warn?.(`unsupported TeamMessage.kind: ${value}; defaulted to "chat"`);
+      return 'chat';
   }
 }
 
@@ -451,6 +538,28 @@ function stringArrayField(raw: Record<string, unknown>, key: string, fallback: s
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function declaredKindFor(kind: OutputBlock['kind'], item: unknown): string | undefined {
+  if (!isRecord(item)) return undefined;
+  if (kind === 'TeamMessage') return stringField(item, 'kind') || stringField(item, 'type') || undefined;
+  if (kind === 'TaskDirective') return stringField(item, 'action') || undefined;
+  if (kind === 'SignOffDirective') return stringField(item, 'status') || undefined;
+  if (kind === 'VerificationDirective') return stringField(item, 'outcome') || stringField(item, 'status') || undefined;
+  if (kind === 'CoordinationDirective') return stringField(item, 'verb') || stringField(item, 'action') || undefined;
+  return undefined;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function renderParseWarnings(warnings: ParseWarning[]): string {
+  const rendered = warnings.map((warning) => {
+    const declaredKind = warning.declaredKind ? ` ${warning.declaredKind}` : '';
+    return `block ${warning.blockIndex} ${warning.declaredType}${declaredKind}: ${warning.reason}`;
+  });
+  return `Some structured output blocks were skipped or normalized:\n${rendered.join('\n')}`;
 }
 
 async function nextMessageSeq(paths: TigerPaths, runId: string): Promise<number> {

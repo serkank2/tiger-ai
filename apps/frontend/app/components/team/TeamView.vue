@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useDialog } from '~/composables/useDialog';
+import { displayRoleName } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
 import { useConnectionStore } from '~/stores/connection';
 import BaseButton from '../ui/BaseButton.vue';
@@ -58,6 +59,17 @@ const terminalRole = computed(
   () => state.value?.roles.find((r) => r.id === selectedRoleId.value && r.terminalId) ?? null,
 );
 const isActive = computed(() => status.value === 'running' || status.value === 'paused' || status.value === 'blocked');
+
+function roleDisplayName(index: number): string {
+  const roles = state.value?.roles ?? [];
+  const role = roles[index];
+  return role ? displayRoleName(roles, role, index) : '';
+}
+const terminalRoleTitle = computed(() => {
+  const roles = state.value?.roles ?? [];
+  const index = roles.findIndex((role) => role.id === terminalRole.value?.id);
+  return index >= 0 ? roleDisplayName(index) : terminalRole.value?.name ?? '';
+});
 
 const dialog = useDialog();
 async function closeRun(id: string) {
@@ -218,18 +230,25 @@ async function reset() {
             size="sm"
             variant="ghost"
             class="manage-toggle"
-            :title="showRoleControls ? 'Hide role controls' : 'Pause / steer / edit / remove roles'"
+            :title="showRoleControls ? 'Hide role controls' : 'Add / pause / steer / edit / remove roles'"
             @click="showRoleControls = !showRoleControls"
           >{{ showRoleControls ? 'Done' : 'Manage' }}</BaseButton>
         </div>
         <div v-if="showRoleControls" class="roles">
-          <TeamRoleControls v-for="role in state.roles" :key="role.id" :role="role" />
+          <TeamRoleControls
+            v-for="(role, i) in state.roles"
+            :key="role.id"
+            :role="role"
+            :roles="state.roles"
+            :display-name="roleDisplayName(i)"
+          />
         </div>
         <div v-else class="roles">
           <TeamRoleTile
-            v-for="role in state.roles"
+            v-for="(role, i) in state.roles"
             :key="role.id"
             :role="role"
+            :display-name="roleDisplayName(i)"
             @select="selectedRoleId = role.id"
           />
         </div>
@@ -256,7 +275,7 @@ async function reset() {
     <TeamTerminalPane
       v-if="terminalRole"
       :term-id="terminalRole.terminalId!"
-      :title="terminalRole.name"
+      :title="terminalRoleTitle"
       @close="selectedRoleId = null"
     />
 
@@ -427,5 +446,15 @@ async function reset() {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+@media (max-width: 720px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .rail {
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
 }
 </style>

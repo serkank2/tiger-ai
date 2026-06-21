@@ -17,6 +17,7 @@ export type QueueStepStatus = 'pending' | 'running' | 'completed' | 'failed' | '
 export type QueueRuleProvider = QueueProvider | 'any';
 export type QueueRuleOperator = 'gte' | 'gt' | 'lte' | 'lt' | 'eq';
 export type QueueRuleAction = 'block_dispatch';
+export type QueueTargetType = 'terminal' | 'project' | 'team';
 
 export const QUEUE_TERMINAL_STATUSES = new Set<QueueJobStatus>(['completed', 'failed', 'canceled']);
 
@@ -25,6 +26,43 @@ export interface QueueJobConfigSnapshot {
   configs?: Partial<Record<StageId, StageRunConfig>>;
   templateName?: string;
   values?: Record<string, unknown>;
+}
+
+export interface QueueProjectTargetPayload {
+  workspacePath?: string;
+  projectName?: string;
+  provider?: QueueProvider;
+  configSnapshot?: QueueJobConfigSnapshot;
+}
+
+export interface QueueTerminalTargetPayload {
+  name: string;
+  cwd?: string;
+  initialCommand?: string;
+  groupId?: string | null;
+  shell?: Record<string, unknown>;
+  env?: Record<string, string>;
+  autostart?: boolean;
+  protected?: boolean;
+  cols?: number;
+  rows?: number;
+}
+
+export interface QueueTeamTargetPayload {
+  mode: 'create' | 'append';
+  runId?: string;
+  workspacePath?: string;
+  workspace?: string;
+  templateId?: string;
+  roles?: unknown[];
+  orchestrationMode?: 'legacy' | 'company';
+}
+
+export type QueueTargetPayload = QueueProjectTargetPayload | QueueTerminalTargetPayload | QueueTeamTargetPayload;
+
+export interface QueueTarget {
+  type: QueueTargetType;
+  payload?: Record<string, unknown>;
 }
 
 export interface QueueJob {
@@ -37,6 +75,13 @@ export interface QueueJob {
   projectName: string | null;
   prompt: string;
   configSnapshot: QueueJobConfigSnapshot;
+  targetType?: QueueTargetType | null;
+  targetPayload?: QueueTargetPayload | null;
+  targetRef?: Record<string, unknown> | null;
+  title?: string | null;
+  body?: string | null;
+  failureKind?: string | null;
+  historyArchivedAt?: string | null;
   attempts: number;
   maxAttempts: number;
   blockedReason: string | null;
@@ -49,6 +94,8 @@ export interface QueueJob {
   createdAt: string;
   updatedAt: string;
 }
+
+export type PipelineItem = QueueJob;
 
 export interface QueueStep {
   id: string;
@@ -104,7 +151,18 @@ export interface QueueJobView extends QueueJob {
 export type QueueProviderCounts = Record<QueueProvider, number>;
 
 export interface QueueState {
+  /** Explicit source of truth for Queue Pipeline v2 behavior. */
+  queuePipelineV2: boolean;
+  /** Backward-compatible full list during the Queue Pipeline v2 migration. */
   jobs: QueueJobView[];
+  /** Non-terminal queue items only: queued/running/paused/retrying/blocked_by_limit. */
+  liveItems?: QueueJobView[];
+  /** Finished item counts kept out of the live list. */
+  historyCounts?: {
+    total: number;
+    byStatus: Partial<Record<QueueJobStatus, number>>;
+    byTarget: Partial<Record<QueueTargetType, number>>;
+  };
   rules: QueueRule[];
   events: QueueEvent[];
   /** Current count of running jobs per provider lane. */
@@ -112,6 +170,20 @@ export interface QueueState {
   /** Configured max concurrent running jobs per provider lane. */
   providerConcurrency: QueueProviderCounts;
   updatedAt: string;
+}
+
+export interface QueueHistoryQuery {
+  status?: QueueJobStatus;
+  target?: QueueTargetType;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export interface QueueHistoryResponse {
+  items: QueueJobView[];
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export type QueueBulkAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete';
@@ -139,6 +211,13 @@ export interface QueueJobPatch {
   projectName?: string | null;
   prompt?: string;
   configSnapshot?: QueueJobConfigSnapshot;
+  targetType?: QueueTargetType | null;
+  targetPayload?: QueueTargetPayload | null;
+  targetRef?: Record<string, unknown> | null;
+  title?: string | null;
+  body?: string | null;
+  failureKind?: string | null;
+  historyArchivedAt?: string | null;
   attempts?: number;
   maxAttempts?: number;
   blockedReason?: string | null;

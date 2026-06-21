@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { RoleSnapshot } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 
-const props = defineProps<{ role: RoleSnapshot }>();
+const props = defineProps<{ role: RoleSnapshot; displayName?: string }>();
 const emit = defineEmits<{ select: [] }>();
 
 const hasTerminal = computed(() => !!props.role.terminalId);
+const label = computed(() => props.displayName ?? props.role.name);
 
 const STATUS_LABEL: Record<string, string> = {
   idle: 'Idle',
@@ -20,23 +21,36 @@ const STATUS_LABEL: Record<string, string> = {
 
 const statusLabel = computed(() => STATUS_LABEL[props.role.status] ?? props.role.status);
 const isActive = computed(() => props.role.status === 'working' || props.role.status === 'thinking');
+const root = ref<HTMLElement | null>(null);
+
+function select(): void {
+  if (hasTerminal.value) emit('select');
+}
+
+function onTileKeydown(ev: KeyboardEvent): void {
+  if (ev.target !== root.value) return;
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  ev.preventDefault();
+  select();
+}
 </script>
 
 <template>
   <div
+    ref="root"
     class="role-tile"
     :class="[`s-${role.status}`, { signed: role.signedOff, clickable: hasTerminal }]"
     :role="hasTerminal ? 'button' : undefined"
     :tabindex="hasTerminal ? 0 : undefined"
     :title="hasTerminal ? 'Open the agent terminal' : undefined"
-    @click="hasTerminal && emit('select')"
-    @keydown.enter="hasTerminal && emit('select')"
+    @click="select"
+    @keydown="onTileKeydown"
   >
     <span class="dot" :class="{ pulse: isActive }" />
     <div class="body">
       <div class="line">
         <TeamAgentBadge :tool="role.tool" />
-        <span class="name" :title="role.name">{{ role.name }}</span>
+        <span class="name" :title="label">{{ label }}</span>
         <span v-if="hasTerminal" class="term-ic" title="Open terminal">🖥</span>
         <span v-if="role.signedOff" class="check" title="Signed off">✓</span>
       </div>

@@ -70,6 +70,12 @@ onBeforeUnmount(() => {
 function activate() {
   terminals.setActive(props.terminal.id);
 }
+function onTileKeydown(ev: KeyboardEvent) {
+  if (ev.target !== root.value) return;
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  ev.preventDefault();
+  activate();
+}
 function expand() {
   terminals.setActive(props.terminal.id);
   terminals.layoutMode = 'focus';
@@ -86,7 +92,7 @@ function expand() {
     :aria-label="`Terminal ${terminal.name}`"
     @mousedown="activate"
     @focusin="activate"
-    @keydown.enter="activate"
+    @keydown="onTileKeydown"
   >
     <div class="tile-head">
       <StatusDot :state="terminal.status.state" />

@@ -41,6 +41,8 @@ export const TIGER_EXECUTION_LIMITS = {
   maxCorrectionCycles: { min: 0, max: 20 },
 } satisfies Record<'maxConcurrent' | 'lockTtlMs' | 'maxCorrectionCycles', NumberLimit>;
 
+const DEFAULT_AGENT_TIMEOUT_MS = 60 * 60 * 1000;
+
 /**
  * Default Tiger configuration. Command templates + flags live here so Claude/Codex
  * invocation can be changed without touching orchestration code.
@@ -124,7 +126,7 @@ export function defaultTigerConfig(): TigerConfig {
       readyMaxWaitMs: 20000,
       doneIdleMs: 60000,
       markerPollMs: 1500,
-      agentTimeoutMs: 30 * 60 * 1000,
+      agentTimeoutMs: envIntegerInRange('KAPLAN_AGENT_TIMEOUT_MS', DEFAULT_AGENT_TIMEOUT_MS, TIGER_TIMING_LIMITS.agentTimeoutMs),
       settleMaxWaitMs: 8000,
       submitDelayMs: 800,
     },
@@ -142,10 +144,10 @@ export function defaultTigerConfig(): TigerConfig {
 /** Fill any missing fields from defaults so a partial/old config.json is always usable. */
 export function normalizeConfig(parsed: unknown): TigerConfig {
   const def = defaultTigerConfig();
-  if (!parsed || typeof parsed !== 'object') return def;
+  if (!parsed || typeof parsed !== 'object') return applyEnvOverrides(def);
   const p = parsed as Partial<TigerConfig>;
   const pcli = (p.cli ?? {}) as Partial<TigerConfig['cli']>;
-  return {
+  return applyEnvOverrides({
     version: typeof p.version === 'number' ? p.version : def.version,
     cli: {
       claude: normalizeCliTool('claude', pcli.claude, def.cli.claude),
@@ -173,7 +175,7 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
         TIGER_EXECUTION_LIMITS,
       ),
     },
-  };
+  });
 }
 
 /** Validate a user-supplied PUT /api/tiger/config body. Returns a 400-safe error message if invalid. */
@@ -355,6 +357,21 @@ function validateIntegerInRange(value: unknown, label: string, limit: NumberLimi
     return `${label} must be between ${limit.min} and ${limit.max}`;
   }
   return null;
+}
+
+function envIntegerInRange(name: string, fallback: number, limit: NumberLimit): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  const integer = Math.trunc(value);
+  return integer >= limit.min && integer <= limit.max ? integer : fallback;
+}
+
+function applyEnvOverrides(cfg: TigerConfig): TigerConfig {
+  const agentTimeoutMs = envIntegerInRange('KAPLAN_AGENT_TIMEOUT_MS', cfg.timing.agentTimeoutMs, TIGER_TIMING_LIMITS.agentTimeoutMs);
+  if (agentTimeoutMs === cfg.timing.agentTimeoutMs) return cfg;
+  return { ...cfg, timing: { ...cfg.timing, agentTimeoutMs } };
 }
 
 function validateModelList(value: unknown, label: string, allowLabel: boolean): string | null {

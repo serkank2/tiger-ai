@@ -1,14 +1,58 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { deriveTeamRoleKind, displayRoleName, isLeadRole, nextRoleName } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
-import type { RoleSnapshot, TeamAgentType } from '~/types';
+import { useTigerStore } from '~/stores/tiger';
+import type { RoleConfigInput, RoleSnapshot, TeamAgentType } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
-const props = defineProps<{ role: RoleSnapshot }>();
+const props = defineProps<{ role: RoleSnapshot; roles: RoleSnapshot[]; displayName?: string }>();
 const team = useTeamStore();
+const tiger = useTigerStore();
 
 const TOOLS: TeamAgentType[] = ['claude', 'codex', 'antigravity'];
+const EFFORTS_BY_TOOL: Record<TeamAgentType, string[]> = {
+  claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+  codex: ['', 'low', 'medium', 'high', 'xhigh'],
+  antigravity: [''],
+};
+const AUTONOMOUS_PERM: Record<TeamAgentType, string> = {
+  claude: 'acceptEdits',
+  codex: 'workspace-write',
+  antigravity: 'dangerous',
+};
+
+const config = computed(() => tiger.config);
+const roleLabel = computed(() => props.displayName ?? displayRoleName(props.roles, props.role));
+const leadCount = computed(() => props.roles.filter((role) => isLeadRole(role)).length);
+const leadRole = computed(() => isLeadRole(props.role));
+const canDuplicate = computed(() => !leadRole.value);
+const canRemove = computed(() => !leadRole.value || leadCount.value > 1);
+const controlError = ref('');
+
+onMounted(() => {
+  if (!tiger.config) void tiger.load().catch(() => {});
+});
+
+function withCurrent(list: string[], current: string | undefined): string[] {
+  const out = [...list];
+  if (current && !out.includes(current)) out.push(current);
+  return out;
+}
+
+function models(tool: TeamAgentType, current?: string): string[] {
+  return withCurrent(['', ...(config.value?.cli[tool].models ?? [])], current);
+}
+
+function permissions(tool: TeamAgentType, current?: string): string[] {
+  const keys = Object.keys(config.value?.cli[tool].permissionModes ?? {});
+  return withCurrent(keys.length ? keys : [AUTONOMOUS_PERM[tool]], current);
+}
+
+function efforts(tool: TeamAgentType, current?: string): string[] {
+  return withCurrent(EFFORTS_BY_TOOL[tool], current);
+}
 
 // Per-role steering input.
 const steerOpen = ref(false);
@@ -30,21 +74,53 @@ const editOpen = ref(false);
 const edit = reactive({
   name: props.role.name,
   tool: props.role.tool,
+  model: props.role.model,
+  effort: props.role.effort,
+  permission: props.role.permission,
   canWriteCode: props.role.canWriteCode,
   requiredForSignoff: props.role.requiredForSignoff,
 });
 function openEdit(): void {
+  controlError.value = '';
   edit.name = props.role.name;
   edit.tool = props.role.tool;
+  edit.model = props.role.model;
+  edit.effort = props.role.effort;
+  edit.permission = props.role.permission;
   edit.canWriteCode = props.role.canWriteCode;
   edit.requiredForSignoff = props.role.requiredForSignoff;
   editOpen.value = true;
 }
+function onToolChange(): void {
+  if (!models(edit.tool).includes(edit.model)) edit.model = '';
+  if (!efforts(edit.tool).includes(edit.effort)) edit.effort = '';
+  if (!permissions(edit.tool).includes(edit.permission)) edit.permission = AUTONOMOUS_PERM[edit.tool];
+}
 async function saveEdit(): Promise<void> {
+  controlError.value = '';
+  const candidate = {
+    id: props.role.id,
+    name: edit.name.trim() || props.role.name,
+    canWriteCode: edit.canWriteCode,
+    requiredForSignoff: edit.requiredForSignoff,
+  };
+  const candidateIsLead = deriveTeamRoleKind(candidate) === 'lead';
+  const otherLeadExists = props.roles.some((role) => role.id !== props.role.id && isLeadRole(role));
+  if (candidateIsLead && otherLeadExists) {
+    controlError.value = 'Exactly one Lead role is required.';
+    return;
+  }
+  if (leadRole.value && !candidateIsLead && !otherLeadExists) {
+    controlError.value = 'Exactly one Lead role is required.';
+    return;
+  }
   try {
     await team.reconfigureRole(props.role.id, {
       name: edit.name.trim() || undefined,
       tool: edit.tool,
+      model: edit.model,
+      effort: edit.effort,
+      permission: edit.permission,
       canWriteCode: edit.canWriteCode,
       requiredForSignoff: edit.requiredForSignoff,
     });
@@ -54,7 +130,36 @@ async function saveEdit(): Promise<void> {
   }
 }
 
+async function addInstance(): Promise<void> {
+  controlError.value = '';
+  if (!canDuplicate.value) {
+    controlError.value = 'Exactly one Lead role is required.';
+    return;
+  }
+  const role: RoleConfigInput = {
+    name: nextRoleName(props.roles, props.role),
+    description: '',
+    persona: '',
+    tool: props.role.tool,
+    model: props.role.model,
+    effort: props.role.effort,
+    permission: props.role.permission || AUTONOMOUS_PERM[props.role.tool],
+    canWriteCode: props.role.canWriteCode,
+    requiredForSignoff: props.role.requiredForSignoff,
+  };
+  try {
+    await team.addRole(role);
+  } catch {
+    /* notices surface the error */
+  }
+}
+
 async function remove(): Promise<void> {
+  controlError.value = '';
+  if (!canRemove.value) {
+    controlError.value = 'Exactly one Lead role is required.';
+    return;
+  }
   try {
     await team.removeRole(props.role.id);
   } catch {
@@ -70,7 +175,7 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
   <div class="rc">
     <div class="rc-line">
       <TeamAgentBadge :tool="role.tool" />
-      <span class="rc-name" :title="role.name">{{ role.name }}</span>
+      <span class="rc-name" :title="roleLabel">{{ roleLabel }}</span>
       <span class="rc-status">{{ role.status }}</span>
     </div>
     <div class="rc-btns">
@@ -90,10 +195,19 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
       <BaseButton size="sm" variant="ghost" @click="steerOpen = !steerOpen">Steer</BaseButton>
       <BaseButton size="sm" variant="ghost" @click="openEdit">Edit</BaseButton>
       <BaseButton
+        v-if="canDuplicate"
+        size="sm"
+        variant="ghost"
+        :loading="team.isBusy('role-add')"
+        title="Add another instance of this role kind"
+        @click="addInstance"
+      >Add another</BaseButton>
+      <BaseButton
         size="sm"
         variant="danger"
+        :disabled="!canRemove"
         :loading="team.isBusy(`role-remove:${role.id}`)"
-        title="Remove this role from the run (the Lead is protected)"
+        :title="canRemove ? 'Remove this role from the run' : 'The team must keep exactly one Lead'"
         @click="remove"
       >Remove</BaseButton>
     </div>
@@ -109,8 +223,23 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
     <div v-if="editOpen" class="rc-form">
       <label class="fld"><span>Name</span><input v-model="edit.name" type="text" /></label>
       <label class="fld"><span>Tool</span>
-        <select v-model="edit.tool">
+        <select v-model="edit.tool" @change="onToolChange">
           <option v-for="t in TOOLS" :key="t" :value="t">{{ toolLabel(t) }}</option>
+        </select>
+      </label>
+      <label class="fld"><span>Model</span>
+        <select v-model="edit.model">
+          <option v-for="m in models(edit.tool, edit.model)" :key="m" :value="m">{{ m || '(default)' }}</option>
+        </select>
+      </label>
+      <label class="fld"><span>Effort</span>
+        <select v-model="edit.effort">
+          <option v-for="e in efforts(edit.tool, edit.effort)" :key="e" :value="e">{{ e || '(default)' }}</option>
+        </select>
+      </label>
+      <label class="fld"><span>Permission</span>
+        <select v-model="edit.permission">
+          <option v-for="p in permissions(edit.tool, edit.permission)" :key="p" :value="p">{{ p }}</option>
         </select>
       </label>
       <label class="chk"><input v-model="edit.canWriteCode" type="checkbox" /> May write code</label>
@@ -120,6 +249,7 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
         <BaseButton size="sm" variant="ghost" @click="editOpen = false">Cancel</BaseButton>
       </div>
     </div>
+    <p v-if="controlError" class="rc-error">{{ controlError }}</p>
   </div>
 </template>
 
@@ -148,6 +278,7 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
 .rc-form-btns { display: flex; gap: var(--space-2); }
 .fld { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-xs); color: var(--text-dim); }
 .fld input, .fld select {
+  width: 100%;
   font-size: var(--text-sm);
   color: var(--text);
   background: var(--bg);
@@ -156,4 +287,9 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
   padding: 2px var(--space-2);
 }
 .chk { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); color: var(--text-dim); }
+.rc-error {
+  margin: var(--space-2) 0 0;
+  color: var(--red);
+  font-size: var(--text-xs);
+}
 </style>

@@ -267,4 +267,11 @@ dd {
   color: var(--amber);
   font-size: var(--text-sm);
 }
+
+@media (max-width: 560px) {
+  .row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
 </style>

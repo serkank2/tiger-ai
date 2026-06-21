@@ -20,6 +20,7 @@ import {
   artifactsFile,
   parseTeamOutput,
   systemBlockerMessage,
+  systemParseWarningMessage,
   teamRuntimeDir,
   turnsFile,
   type ParsedTeamOutput,
@@ -217,7 +218,8 @@ async function parseCompletedOrBlocker(
 ): Promise<ParseOutcome> {
   const outputCheck = await checkOutputFile(outputPath);
   const outputText = outputCheck.ok ? await fs.readFile(outputPath, 'utf8') : '';
-  if (sessionResult.state === 'completed' && outputCheck.ok) {
+  const shouldParseOutput = outputCheck.ok && (sessionResult.state === 'completed' || isTimeoutResult(sessionResult));
+  if (shouldParseOutput) {
     try {
       const parsed = parseTeamOutput(outputText, {
         runId: opts.runId,
@@ -228,7 +230,18 @@ async function parseCompletedOrBlocker(
       if (parsed.messages.length === 0) {
         throw new Error('output did not contain any TeamMessage blocks');
       }
-      return { outcome: sessionResult, parsed, messages: parsed.messages };
+      const messages = parsed.parseWarnings?.length
+        ? [
+            ...parsed.messages,
+            systemParseWarningMessage({
+              runId: opts.runId,
+              turnId,
+              taskId: opts.assignedTask?.id,
+              warnings: parsed.parseWarnings,
+            }),
+          ]
+        : parsed.messages;
+      return { outcome: sessionResult, parsed: { ...parsed, messages }, messages };
     } catch (err) {
       return blockerOutcome(opts, turnId, `Role turn output was invalid: ${messageOf(err)}`);
     }
@@ -251,6 +264,10 @@ async function parseCompletedOrBlocker(
   });
   const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [], coordinationDirectives: [] };
   return { outcome: failed, parsed, messages: parsed.messages };
+}
+
+function isTimeoutResult(result: AgentRunResult): boolean {
+  return result.state === 'failed' && /timed out/i.test(result.error ?? '');
 }
 
 function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string): ParseOutcome {

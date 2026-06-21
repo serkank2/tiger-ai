@@ -1,3 +1,5 @@
+import { isLimitTopPanelEnabled } from './app/lib/runtimeFlags';
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
@@ -11,7 +13,8 @@ export default defineNuxtConfig({
       // Use 127.0.0.1 (not localhost) to match the backend's IPv4 bind — avoids
       // the Windows localhost->::1 (IPv6) mismatch that breaks the connection.
       apiBase: process.env.KAPLAN_API_BASE || 'http://127.0.0.1:4517',
-      wsBase: process.env.KAPLAN_WS_BASE || 'ws://127.0.0.1:4517'
+      wsBase: process.env.KAPLAN_WS_BASE || 'ws://127.0.0.1:4517',
+      limitTopPanel: isLimitTopPanelEnabled(process.env.KAPLAN_LIMIT_TOP_PANEL)
     }
   },
   app: {

@@ -501,11 +501,12 @@ onMounted(() => {
   font-size: 11px;
 }
 .wsrow {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 .wsrow input {
-  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
 }
 textarea {
@@ -655,7 +656,7 @@ code {
 }
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   gap: 12px;
 }
 .hint {
@@ -680,5 +681,10 @@ code {
   margin: 0;
   line-height: 1.5;
   color: var(--text);
+}
+@media (max-width: 520px) {
+  .wsrow {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

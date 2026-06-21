@@ -58,8 +58,8 @@ const tiles = computed(() => terminals.items);
   min-height: 0;
   display: grid;
   gap: 8px;
-  /* responsive auto-tiling with a usable minimum tile width */
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  /* responsive auto-tiling with a usable preferred tile width */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   grid-auto-rows: minmax(200px, 1fr);
   padding: 8px;
   overflow: auto;

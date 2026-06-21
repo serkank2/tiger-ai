@@ -99,4 +99,20 @@ describe('TerminalTile virtualization', () => {
     expect(captured.liveId?.value).toBe('t1');
     expect(wrapper.find('[data-testid="tile-placeholder"]').exists()).toBe(false);
   });
+
+  it('activates the focused tile with Enter or Space without stealing inner button keys', async () => {
+    const wrapper = await mountTile();
+    const tile = wrapper.find('.tile');
+
+    await tile.trigger('keydown', { key: ' ' });
+    expect(store.setActive).toHaveBeenCalledWith('t1');
+
+    store.setActive.mockClear();
+    await tile.trigger('keydown', { key: 'Enter' });
+    expect(store.setActive).toHaveBeenCalledWith('t1');
+
+    store.setActive.mockClear();
+    await wrapper.find('[aria-label="Stop terminal"]').trigger('keydown', { key: ' ' });
+    expect(store.setActive).not.toHaveBeenCalled();
+  });
 });

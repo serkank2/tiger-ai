@@ -5,6 +5,7 @@ import type { QueueEvent, QueueJobView, QueueState, QueueStep, TigerStageId } fr
 
 const api = vi.hoisted(() => ({
   getQueueState: vi.fn(),
+  getQueueHistory: vi.fn(),
   enqueueQueue: vi.fn(),
   reorderQueue: vi.fn(),
   bulkQueue: vi.fn(),
@@ -66,6 +67,7 @@ function event(id: string, jobId: string | null, type: string, message: string, 
 
 function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
   return {
+    queuePipelineV2: false,
     jobs,
     rules: [
       {
@@ -90,10 +92,28 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
   };
 }
 
+function v2State(allJobs: QueueJobView[], liveItems?: QueueJobView[]): QueueState {
+  const terminalJobs = allJobs.filter((item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled');
+  return {
+    ...state(allJobs),
+    queuePipelineV2: true,
+    liveItems: liveItems ?? allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled'),
+    historyCounts: {
+      total: terminalJobs.length,
+      byStatus: terminalJobs.reduce<NonNullable<QueueState['historyCounts']>['byStatus']>((acc, item) => {
+        acc[item.status] = (acc[item.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+      byTarget: {},
+    },
+  };
+}
+
 describe('useQueueStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    api.getQueueHistory.mockResolvedValue({ items: [], total: 0, nextCursor: null, hasMore: false });
   });
 
   it('loads and exposes jobs in queue order', async () => {
@@ -105,6 +125,50 @@ describe('useQueueStore', () => {
     expect(store.loaded).toBe(true);
     expect(store.jobs.map((item) => item.id)).toEqual(['b', 'a']);
     expect(store.rules).toHaveLength(1);
+  });
+
+  it('uses liveItems as the visible queue when the explicit v2 flag is enabled', async () => {
+    const finished = job('finished', { status: 'completed', completedAt: '2026-06-18T09:00:00.000Z' });
+    const live = [job('a'), job('b')];
+    api.getQueueState.mockResolvedValueOnce(v2State([finished, ...live], live));
+    const store = useQueueStore();
+
+    await store.load();
+
+    expect(store.queuePipelineV2).toBe(true);
+    expect(store.jobs.map((item) => item.id)).toEqual(['b', 'a']);
+    expect(store.historyCounts.total).toBe(1);
+    expect(store.jobs.some((item) => item.id === 'finished')).toBe(false);
+  });
+
+  it('does not infer v2 from liveItems/historyCounts when the explicit flag is disabled', async () => {
+    const finished = job('finished', { status: 'completed', completedAt: '2026-06-18T09:00:00.000Z' });
+    const live = [job('a')];
+    api.getQueueState.mockResolvedValueOnce({ ...v2State([finished, ...live], live), queuePipelineV2: false });
+    const store = useQueueStore();
+
+    await store.load();
+
+    expect(store.queuePipelineV2).toBe(false);
+    expect(store.jobs.map((item) => item.id)).toEqual(['finished', 'a']);
+    expect(store.terminalJobs.map((item) => item.id)).toEqual(['finished']);
+  });
+
+  it('loads queue history pages separately from live jobs', async () => {
+    api.getQueueHistory.mockResolvedValueOnce({
+      items: [job('finished', { status: 'failed', targetType: 'team', completedAt: '2026-06-18T09:00:00.000Z' })],
+      total: 1,
+      nextCursor: null,
+      hasMore: false,
+    });
+    const store = useQueueStore();
+
+    await store.loadHistory({ status: 'failed', target: 'team', limit: 25 });
+
+    expect(api.getQueueHistory).toHaveBeenCalledWith({ status: 'failed', target: 'team', limit: 25 });
+    expect(store.historyItems.map((item) => item.id)).toEqual(['finished']);
+    expect(store.historyTotal).toBe(1);
+    expect(store.historyHasMore).toBe(false);
   });
 
   it('enqueues then reconciles through REST state', async () => {

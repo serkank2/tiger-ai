@@ -14,6 +14,8 @@ import type {
   QueueBulkAction,
   QueueBulkResult,
   QueueEvent,
+  QueueHistoryQuery,
+  QueueHistoryResponse,
   QueueJob,
   QueueJobConfigSnapshot,
   QueueJobPatch,
@@ -27,19 +29,31 @@ import type {
   QueueState,
   QueueStep,
   QueueStepPatch,
+  QueueTarget,
+  QueueTargetPayload,
+  QueueTargetType,
 } from '../queue/types.js';
 import { QUEUE_TERMINAL_STATUSES } from '../queue/types.js';
 
 const QUEUE_STATE_EVENT_LIMIT = 120;
+const SHELL_KINDS = new Set(['system-default', 'powershell', 'pwsh', 'cmd', 'bash', 'zsh', 'fish', 'custom']);
 
 export interface EnqueueQueueJobInput {
-  prompt: string;
+  prompt?: string;
+  body?: string;
+  title?: string;
   workspacePath?: string;
   projectName?: string;
   provider?: QueueProvider;
   priority?: number;
   maxAttempts?: number;
   configSnapshot?: QueueJobConfigSnapshot;
+  target?: QueueTarget | QueueTargetType;
+  payload?: Record<string, unknown>;
+}
+
+export interface QueueServiceOptions {
+  queuePipelineV2?: 'off' | 'on' | boolean;
 }
 
 export type LeaseNextResult =
@@ -115,12 +129,18 @@ function statusAllowsRetry(status: QueueJobStatus): boolean {
 export class QueueService extends EventEmitter {
   private readonly ruleEngine = new RuleEngine();
   private readonly providerConcurrency: QueueProviderConcurrency;
+  private readonly queuePipelineV2: boolean;
   /** When >0, emitState() is coalesced (suppressed) so a batch can emit a single state at the end. */
   private emitSuppressed = 0;
 
-  constructor(private readonly repo: QueueRepository, providerConcurrency?: QueueProviderConcurrency) {
+  constructor(
+    private readonly repo: QueueRepository,
+    providerConcurrency?: QueueProviderConcurrency,
+    options: QueueServiceOptions = {},
+  ) {
     super();
     this.providerConcurrency = providerConcurrency ?? resolveProviderConcurrency();
+    this.queuePipelineV2 = normalizePipelineFlag(options.queuePipelineV2 ?? config.queue.queuePipelineV2);
   }
 
   async getState(): Promise<QueueState> {
@@ -140,7 +160,8 @@ export class QueueService extends EventEmitter {
       ...job,
       steps: (stepsByJob.get(job.id) ?? []).sort((a, b) => a.position - b.position),
     }));
-    return {
+    const base: QueueState = {
+      queuePipelineV2: this.queuePipelineV2,
       jobs: views,
       rules,
       events,
@@ -148,18 +169,65 @@ export class QueueService extends EventEmitter {
       providerConcurrency: { ...this.providerConcurrency },
       updatedAt: nowIso(),
     };
+    if (!this.queuePipelineV2) return base;
+    const liveItems = views.filter((job) => !QUEUE_TERMINAL_STATUSES.has(job.status));
+    const historyItems = views.filter((job) => QUEUE_TERMINAL_STATUSES.has(job.status));
+    return {
+      ...base,
+      liveItems,
+      historyCounts: historyCounts(historyItems),
+    };
+  }
+
+  async getHistory(query: QueueHistoryQuery = {}): Promise<QueueHistoryResponse> {
+    const status = query.status && QUEUE_TERMINAL_STATUSES.has(query.status) ? query.status : undefined;
+    const target = query.target && isQueueTargetType(query.target) ? query.target : undefined;
+    const limit = Math.max(1, Math.min(100, Number.isInteger(query.limit) ? query.limit! : 50));
+    const offset = Math.max(0, Number.parseInt(query.cursor ?? '0', 10) || 0);
+    const jobs = (await this.repo.listJobs())
+      .filter((job) => QUEUE_TERMINAL_STATUSES.has(job.status))
+      .filter((job) => !status || job.status === status)
+      .filter((job) => !target || effectiveTargetType(job) === target)
+      .sort(compareHistoryJobs);
+    const page = jobs.slice(offset, offset + limit);
+    const steps = await this.repo.listStepsForJobs(page.map((job) => job.id));
+    const stepsByJob = new Map<string, QueueStep[]>();
+    for (const step of steps) {
+      const arr = stepsByJob.get(step.jobId);
+      if (arr) arr.push(step);
+      else stepsByJob.set(step.jobId, [step]);
+    }
+    return {
+      items: page.map((job) => ({
+        ...job,
+        steps: (stepsByJob.get(job.id) ?? []).sort((a, b) => a.position - b.position),
+      })),
+      total: jobs.length,
+      nextCursor: offset + limit < jobs.length ? String(offset + limit) : null,
+      hasMore: offset + limit < jobs.length,
+    };
   }
 
   async enqueue(input: EnqueueQueueJobInput): Promise<QueueJob> {
-    const prompt = cleanPrompt(input.prompt);
+    const prompt = cleanPrompt(input.prompt ?? input.body ?? '');
     if (!prompt) throw httpError(400, 'prompt is required');
     const created = nowIso();
     const id = nanoid();
-    const projectName = input.projectName?.trim() || `Queue ${created.slice(0, 19).replace(/[T:]/g, '-')}`;
+    const target = normalizeTarget(input, this.queuePipelineV2);
+    const projectPayload = target.type === 'project' ? (target.payload as Record<string, unknown>) : {};
+    const projectName =
+      input.projectName?.trim() ||
+      stringValue(projectPayload.projectName) ||
+      input.title?.trim() ||
+      `Queue ${created.slice(0, 19).replace(/[T:]/g, '-')}`;
     const workspacePath =
       input.workspacePath?.trim() ||
+      stringValue(projectPayload.workspacePath) ||
       path.join(config.dataDir, 'queue-workspaces', `${sanitizeProjectName(projectName)}-${id.slice(0, 8)}`);
-    const configSnapshot = input.configSnapshot ?? {};
+    const configSnapshot = input.configSnapshot ?? configSnapshotValue(projectPayload.configSnapshot) ?? {};
+    const provider = input.provider ?? queueProviderValue(projectPayload.provider);
+    const title = input.title?.trim() || projectName;
+    const body = cleanPrompt(input.body ?? input.prompt ?? '');
     const job = await this.repo.transaction(async (tx) => {
       const position = await tx.nextPosition();
       const nextJob: QueueJob = {
@@ -167,11 +235,18 @@ export class QueueService extends EventEmitter {
         position,
         status: 'queued',
         priority: Number.isInteger(input.priority) ? input.priority! : 0,
-        provider: inferProvider(input),
+        provider: inferProvider({ ...input, provider, configSnapshot }),
         workspacePath,
         projectName,
         prompt,
         configSnapshot,
+        targetType: target.type,
+        targetPayload: target.payload,
+        targetRef: null,
+        title,
+        body,
+        failureKind: null,
+        historyArchivedAt: null,
         attempts: 0,
         maxAttempts: Number.isInteger(input.maxAttempts) && input.maxAttempts! > 0 ? input.maxAttempts! : 1,
         blockedReason: null,
@@ -185,10 +260,17 @@ export class QueueService extends EventEmitter {
         updatedAt: created,
       };
       await tx.insertJob(nextJob);
-      for (let i = 0; i < STAGE_ORDER.length; i++) {
-        await tx.insertStep(makeStep(nextJob.id, STAGE_ORDER[i]!, i + 1, created));
+      if (target.type === 'project') {
+        for (let i = 0; i < STAGE_ORDER.length; i++) {
+          await tx.insertStep(makeStep(nextJob.id, STAGE_ORDER[i]!, i + 1, created));
+        }
       }
-      await tx.insertEvent(event(nextJob.id, 'queue.submitted', 'Prompt submitted to the autonomous queue.', { provider: nextJob.provider }));
+      await tx.insertEvent(
+        event(nextJob.id, 'queue.submitted', 'Prompt submitted to the autonomous queue.', {
+          provider: nextJob.provider,
+          target: target.type,
+        }),
+      );
       await tx.insertEvent(
         event(nextJob.id, 'prompt.submitted', 'Queued prompt submitted.', {
           queueJobId: nextJob.id,
@@ -419,7 +501,14 @@ export class QueueService extends EventEmitter {
       const candidate = jobs.find((job) => running[job.provider] < this.providerConcurrency[job.provider]);
       if (!candidate) return { kind: 'empty' };
 
-      const decision = await this.evaluateRules(tx, candidate, now);
+      const decision =
+        effectiveTargetType(candidate) === 'project'
+          ? await this.evaluateRules(tx, candidate, now)
+          : {
+              allowed: true,
+              resumeAfter: null,
+              reason: 'Non-project queue targets bypass Tiger provider limit rules.',
+            };
       if (!decision.allowed) {
         const patch: QueueJobPatch = {
           status: 'blocked_by_limit',
@@ -537,7 +626,17 @@ export class QueueService extends EventEmitter {
     this.emitHistoryChanged();
   }
 
-  async failJob(id: string, reason: string): Promise<void> {
+  async recordTargetRef(id: string, targetRef: Record<string, unknown>): Promise<void> {
+    await this.repo.transaction(async (tx) => {
+      const now = nowIso();
+      await requireJob(tx, id);
+      await tx.updateJob(id, { targetRef, updatedAt: now });
+      await tx.insertEvent(event(id, 'queue.target_ref.recorded', 'Queue target reference recorded.', { targetRef }));
+    });
+    await this.emitState();
+  }
+
+  async failJob(id: string, reason: string, failureKind?: string): Promise<void> {
     await this.repo.transaction(async (tx) => {
       const now = nowIso();
       const job = await requireJob(tx, id);
@@ -547,11 +646,12 @@ export class QueueService extends EventEmitter {
       const retry = plan.retry;
       await tx.updateJob(id, {
         status: retry ? 'retrying' : 'failed',
-        blockedReason: retry ? reason : null,
+        blockedReason: retry || failureKind ? reason : null,
         resumeAfter: retry ? plan.resumeAfter : null,
         leaseOwner: null,
         leaseExpiresAt: null,
         completedAt: retry ? null : now,
+        failureKind: failureKind ?? job.failureKind ?? null,
         updatedAt: now,
       });
       await tx.insertEvent(event(id, retry ? 'queue.retrying' : 'queue.failed', reason));
@@ -637,7 +737,14 @@ export class QueueService extends EventEmitter {
       const jobs = (await tx.listJobs()).filter((job) => job.status === 'blocked_by_limit');
       for (const job of jobs) {
         const dueByTime = !!job.resumeAfter && new Date(job.resumeAfter).getTime() <= Date.now();
-        const decision = await this.evaluateRules(tx, job, now);
+        const decision =
+          effectiveTargetType(job) === 'project'
+            ? await this.evaluateRules(tx, job, now)
+            : {
+                allowed: true,
+                resumeAfter: null,
+                reason: 'Non-project queue targets bypass Tiger provider limit rules.',
+              };
         if (!dueByTime && !decision.allowed) continue;
         count++;
         await tx.updateJob(job.id, {
@@ -715,6 +822,162 @@ export class QueueService extends EventEmitter {
   private emitHistoryChanged(): void {
     this.emit('history.changed');
   }
+}
+
+function normalizePipelineFlag(value: 'off' | 'on' | boolean): boolean {
+  return value === true || value === 'on';
+}
+
+function normalizeTarget(
+  input: EnqueueQueueJobInput,
+  pipelineEnabled: boolean,
+): { type: QueueTargetType; payload: QueueTargetPayload } {
+  let type: QueueTargetType = 'project';
+  let payloadRaw: unknown = input.payload;
+  if (typeof input.target === 'string') {
+    if (!isQueueTargetType(input.target)) throw httpError(400, 'target.type must be terminal, project, or team');
+    type = input.target;
+  } else if (input.target !== undefined) {
+    if (!isRecord(input.target)) throw httpError(400, 'target must be a string or object');
+    const rawType = input.target.type;
+    if (!isQueueTargetType(rawType)) throw httpError(400, 'target.type must be terminal, project, or team');
+    type = rawType;
+    if (payloadRaw === undefined) payloadRaw = input.target.payload;
+  }
+
+  if (!pipelineEnabled) {
+    if (type !== 'project') {
+      throw httpError(400, 'queuePipelineV2 is disabled; terminal and team queue targets require KAPLAN_QUEUE_PIPELINE_V2=on');
+    }
+    return { type: 'project', payload: {} };
+  }
+
+  if (type === 'project') return { type, payload: normalizeProjectPayload(payloadRaw) };
+  if (!isRecord(payloadRaw)) throw httpError(400, `${type} target payload is required`);
+  return {
+    type,
+    payload: type === 'terminal' ? normalizeTerminalPayload(payloadRaw) : normalizeTeamPayload(payloadRaw),
+  };
+}
+
+function normalizeProjectPayload(raw: unknown): QueueTargetPayload {
+  if (raw == null) return {};
+  if (!isRecord(raw)) throw httpError(400, 'project target payload must be an object');
+  return {
+    workspacePath: stringValue(raw.workspacePath ?? raw.workspace),
+    projectName: stringValue(raw.projectName ?? raw.name),
+    provider: queueProviderValue(raw.provider),
+    configSnapshot: configSnapshotValue(raw.configSnapshot),
+  };
+}
+
+function normalizeTerminalPayload(raw: Record<string, unknown>): QueueTargetPayload {
+  const name = stringValue(raw.name ?? raw.title);
+  if (!name) throw httpError(400, 'terminal target payload.name is required');
+  const env = raw.env;
+  if (env != null && !isStringRecord(env)) throw httpError(400, 'terminal target payload.env must be a string map');
+  const shell = shellSpecValue(raw.shell);
+  const initialCommand = stringValue(raw.initialCommand ?? raw.command);
+  if (initialCommand && initialCommand.length > 8192) throw httpError(400, 'terminal target initialCommand too long (max 8192 chars)');
+  return {
+    name,
+    cwd: stringValue(raw.cwd ?? raw.workspacePath ?? raw.workspace),
+    initialCommand,
+    groupId: stringValue(raw.groupId) ?? null,
+    shell,
+    env: isStringRecord(env) ? { ...env } : undefined,
+    autostart: typeof raw.autostart === 'boolean' ? raw.autostart : undefined,
+    protected: typeof raw.protected === 'boolean' ? raw.protected : undefined,
+    cols: positiveInt(raw.cols),
+    rows: positiveInt(raw.rows),
+  };
+}
+
+function normalizeTeamPayload(raw: Record<string, unknown>): QueueTargetPayload {
+  const mode = raw.mode === 'create' || raw.action === 'create' ? 'create' : raw.mode === 'append' || raw.action === 'append' ? 'append' : null;
+  if (!mode) throw httpError(400, 'team target payload.mode must be create or append');
+  const runId = stringValue(raw.runId);
+  if (mode === 'append' && !runId) throw httpError(400, 'team append target payload.runId is required');
+  const roles = raw.roles;
+  if (roles != null && (!Array.isArray(roles) || !roles.every(isRecord))) {
+    throw httpError(400, 'team target payload.roles must be an array of objects');
+  }
+  return {
+    mode,
+    runId,
+    workspacePath: stringValue(raw.workspacePath),
+    workspace: stringValue(raw.workspace),
+    templateId: stringValue(raw.templateId),
+    roles: Array.isArray(roles) ? roles.map((role) => ({ ...role })) : undefined,
+    orchestrationMode: raw.orchestrationMode === 'company' ? 'company' : raw.orchestrationMode === 'legacy' ? 'legacy' : undefined,
+  };
+}
+
+function isQueueTargetType(value: unknown): value is QueueTargetType {
+  return value === 'terminal' || value === 'project' || value === 'team';
+}
+
+function effectiveTargetType(job: QueueJob): QueueTargetType {
+  return isQueueTargetType(job.targetType) ? job.targetType : 'project';
+}
+
+function historyCounts(items: QueueJobView[]): QueueState['historyCounts'] {
+  const byStatus: Partial<Record<QueueJobStatus, number>> = {};
+  const byTarget: Partial<Record<QueueTargetType, number>> = {};
+  for (const item of items) {
+    byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
+    const target = effectiveTargetType(item);
+    byTarget[target] = (byTarget[target] ?? 0) + 1;
+  }
+  return { total: items.length, byStatus, byTarget };
+}
+
+function compareHistoryJobs(a: QueueJob, b: QueueJob): number {
+  const aTime = a.completedAt ?? a.updatedAt ?? a.createdAt;
+  const bTime = b.completedAt ?? b.updatedAt ?? b.createdAt;
+  return bTime.localeCompare(aTime) || b.id.localeCompare(a.id);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function positiveInt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function shellSpecValue(value: unknown): Record<string, unknown> | undefined {
+  if (value == null) return undefined;
+  if (!isRecord(value)) throw httpError(400, 'terminal target payload.shell must be an object');
+  const kind = stringValue(value.kind);
+  if (!kind || !SHELL_KINDS.has(kind)) throw httpError(400, 'terminal target payload.shell.kind is invalid');
+  const path = value.path;
+  if (path != null && typeof path !== 'string') throw httpError(400, 'terminal target payload.shell.path must be a string');
+  const args = value.args;
+  if (args != null && (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string'))) {
+    throw httpError(400, 'terminal target payload.shell.args must be a string array');
+  }
+  return {
+    kind,
+    ...(typeof path === 'string' && path.trim() ? { path: path.trim() } : {}),
+    ...(Array.isArray(args) ? { args: [...args] } : {}),
+  };
+}
+
+function queueProviderValue(value: unknown): QueueProvider | undefined {
+  return value === 'claude' || value === 'codex' || value === 'antigravity' || value === 'mixed' ? value : undefined;
+}
+
+function configSnapshotValue(value: unknown): QueueJobConfigSnapshot | undefined {
+  return isRecord(value) ? (value as QueueJobConfigSnapshot) : undefined;
 }
 
 function makeStep(jobId: string, stepKey: StageId, position: number, now: string): QueueStep {

@@ -80,7 +80,6 @@ const limits = new LimitService({
 });
 await limits.initialize();
 const queueService = new QueueService(new MysqlQueueRepository());
-const queueScheduler = new Scheduler(queueService, orchestrator);
 const promptGenerations = createDefaultPromptGenerationService(manager, state, () => orchestrator.getConfig(), () => {
   const tiger = orchestrator.getState();
   return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
@@ -95,6 +94,10 @@ const teamOrchestrator = new TeamOrchestrator({
   executionPersistence: new MySqlExecutionPersistence(dbPool),
   runner: createTeamTurnRunner({ manager, config: orchestrator.getConfig() }),
   limitService: limits,
+});
+const queueScheduler = new Scheduler(queueService, orchestrator, {
+  terminalTarget: { state, manager, save },
+  teamTarget: teamOrchestrator,
 });
 
 const ctx: AppCtx = {
@@ -214,13 +217,13 @@ app.use('/api/settings', createSettingsRouter(ctx));
 app.use('/api/fs', createFsRouter(ctx));
 app.use('/api/limits', createLimitsRouter(ctx));
 
-// Cue — event-driven orchestration engine. Config-gated (OFF by default). The engine is only
-// constructed when enabled; the route is only mounted then too, so a normal boot is unchanged.
+// Cue: event-driven orchestration engine. Engine construction is config-gated (OFF by default),
+// but the route is always mounted so disabled clients get a stable 409 instead of a 404.
 let cueEngine: CueEngine | null = null;
 if (config.cue.enabled) {
   cueEngine = new CueEngine({ ctx, workspace: config.cue.workspace || null });
-  app.use('/api/cue', createCueRouter(ctx, () => cueEngine));
 }
+app.use('/api/cue', createCueRouter(ctx, () => cueEngine));
 
 // Central error handler (Express 5 forwards rejected async handlers here).
 app.use(errorHandler());

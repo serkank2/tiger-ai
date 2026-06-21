@@ -14,6 +14,8 @@ import type {
   QueueRuleProvider,
   QueueStep,
   QueueStepPatch,
+  QueueTargetPayload,
+  QueueTargetType,
 } from './types.js';
 
 type JsonValue = Record<string, unknown> | null;
@@ -28,6 +30,13 @@ interface QueueJobRow extends RowDataPacket {
   project_name: string | null;
   prompt: string;
   config_snapshot: string | QueueJobConfigSnapshot | null;
+  target_type: QueueTargetType | null;
+  target_payload: string | QueueTargetPayload | null;
+  target_ref: string | Record<string, unknown> | null;
+  title: string | null;
+  body: string | null;
+  failure_kind: string | null;
+  history_archived_at: Date | string | null;
   attempts: number;
   max_attempts: number;
   blocked_reason: string | null;
@@ -137,6 +146,13 @@ function mapJob(row: QueueJobRow): QueueJob {
     projectName: row.project_name,
     prompt: row.prompt,
     configSnapshot: json<QueueJobConfigSnapshot>(row.config_snapshot, {}),
+    targetType: row.target_type,
+    targetPayload: json<QueueTargetPayload | null>(row.target_payload, null),
+    targetRef: json<Record<string, unknown> | null>(row.target_ref, null),
+    title: row.title,
+    body: row.body,
+    failureKind: row.failure_kind,
+    historyArchivedAt: iso(row.history_archived_at),
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
     blockedReason: row.blocked_reason,
@@ -215,9 +231,10 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
     await this.execute(
       `INSERT INTO queue_jobs (
         id, position, status, priority, provider, workspace_path, project_name, prompt, config_snapshot,
+        target_type, target_payload, target_ref, title, body, failure_kind, history_archived_at,
         attempts, max_attempts, blocked_reason, resume_after, lease_owner, lease_expires_at, current_step,
         started_at, completed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         job.id,
         job.position,
@@ -228,6 +245,13 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
         job.projectName,
         job.prompt,
         jsonParam(job.configSnapshot),
+        job.targetType ?? null,
+        jsonParam(job.targetPayload),
+        jsonParam(job.targetRef),
+        job.title ?? null,
+        job.body ?? null,
+        job.failureKind ?? null,
+        mysqlDate(job.historyArchivedAt),
         job.attempts,
         job.maxAttempts,
         job.blockedReason,
@@ -444,6 +468,19 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
       pairs.push('config_snapshot = ?');
       values.push(jsonParam(patch.configSnapshot));
     }
+    if (patch.targetType !== undefined) add('target_type', patch.targetType);
+    if (patch.targetPayload !== undefined) {
+      pairs.push('target_payload = ?');
+      values.push(jsonParam(patch.targetPayload));
+    }
+    if (patch.targetRef !== undefined) {
+      pairs.push('target_ref = ?');
+      values.push(jsonParam(patch.targetRef));
+    }
+    if (patch.title !== undefined) add('title', patch.title);
+    if (patch.body !== undefined) add('body', patch.body);
+    if (patch.failureKind !== undefined) add('failure_kind', patch.failureKind);
+    if (patch.historyArchivedAt !== undefined) add('history_archived_at', mysqlDate(patch.historyArchivedAt));
     if (patch.attempts !== undefined) add('attempts', patch.attempts);
     if (patch.maxAttempts !== undefined) add('max_attempts', patch.maxAttempts);
     if (patch.blockedReason !== undefined) add('blocked_reason', patch.blockedReason);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { displayRoleName, isLeadRole, nextRoleName, uniqueRoleId } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
 import { useTigerStore } from '~/stores/tiger';
 import type { TeamAgentType, TeamTemplate } from '~/types';
@@ -48,6 +49,7 @@ const name = ref('');
 const description = ref('');
 const roles = reactive<EditableRole[]>([]);
 const error = ref('');
+const leadCount = computed(() => roles.filter((role) => isLeadRole(role)).length);
 
 const config = computed(() => tiger.config);
 // Each option list always includes the role's current value as a fallback, so a select
@@ -113,19 +115,52 @@ function onToolChange(role: EditableRole) {
   if (!permissions(role.tool).includes(role.permission)) role.permission = AUTONOMOUS_PERM[role.tool];
 }
 
-function addRole() {
+function defaultDeveloperRole(): EditableRole {
   const d = config.value?.defaults;
-  roles.push({
-    id: '', name: '', persona: '', responsibilities: '',
+  const role: EditableRole = {
+    id: '',
+    name: 'Developer',
+    persona: 'You implement assigned work as the smallest correct change that respects the existing conventions.',
+    responsibilities: 'Implement assigned work minimally and correctly\nWrite or update tests for the code you change',
     tool: 'claude',
     model: d?.claudeModel ?? '',
     effort: d?.claudeEffort ?? '',
     permission: AUTONOMOUS_PERM.claude,
-    canWriteCode: false,
+    canWriteCode: true,
     requiredForSignoff: true,
-  });
+  };
+  role.name = nextRoleName(roles, role);
+  role.id = uniqueRoleId(roles, role.name);
+  return role;
 }
+
+function addRole(source?: EditableRole) {
+  error.value = '';
+  if (source && isLeadRole(source)) {
+    error.value = 'Exactly one Lead role is required.';
+    return;
+  }
+  const role: EditableRole = source
+    ? {
+        ...source,
+        id: '',
+        name: nextRoleName(roles, source),
+      }
+    : defaultDeveloperRole();
+  role.id = uniqueRoleId(roles, role.name);
+  roles.push(role);
+}
+
+function canRemoveRole(role: EditableRole): boolean {
+  return !isLeadRole(role) || leadCount.value > 1;
+}
+
 function removeRole(i: number) {
+  if (!canRemoveRole(roles[i]!)) {
+    error.value = 'Exactly one Lead role is required.';
+    return;
+  }
+  error.value = '';
   roles.splice(i, 1);
 }
 
@@ -141,16 +176,32 @@ async function save() {
     error.value = 'Add at least one role.';
     return;
   }
+  if (leadCount.value !== 1) {
+    error.value = 'Exactly one Lead role is required.';
+    return;
+  }
   if (!roles.some((r) => r.requiredForSignoff)) {
     error.value = 'At least one role must be required for sign-off.';
     return;
   }
+  const usedRoleIds = new Set<string>();
+  function payloadRoleId(role: EditableRole, index: number): string {
+    const base = role.id.trim() || uniqueRoleId(roles, role.name.trim() || displayRoleName(roles, role, index), index);
+    let candidate = base;
+    let suffix = 2;
+    while (usedRoleIds.has(candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    usedRoleIds.add(candidate);
+    return candidate;
+  }
   const payload = {
     name: name.value.trim(),
     description: description.value.trim() || undefined,
-    roles: roles.map((r) => ({
-      id: r.id.trim() || r.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
-      name: r.name.trim(),
+    roles: roles.map((r, i) => ({
+      id: payloadRoleId(r, i),
+      name: r.name.trim() || displayRoleName(roles, r, i),
       description: '',
       persona: r.persona.trim(),
       responsibilities: r.responsibilities.split('\n').map((s) => s.trim()).filter(Boolean),
@@ -187,14 +238,28 @@ async function save() {
 
       <div class="roles-head">
         <h4>Roles</h4>
-        <BaseButton size="sm" variant="ghost" @click="addRole">+ Add role</BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="addRole()">+ Add Developer</BaseButton>
       </div>
 
       <div v-for="(role, i) in roles" :key="i" class="role-card">
         <div class="role-top">
           <TeamAgentBadge :tool="role.tool" />
+          <span class="role-instance" :title="displayRoleName(roles, role, i)">{{ displayRoleName(roles, role, i) }}</span>
           <input v-model="role.name" class="role-name" placeholder="Role name (e.g. Tester / QA)" />
-          <button type="button" class="rm" title="Remove role" @click="removeRole(i)">✕</button>
+          <BaseButton
+            size="sm"
+            variant="ghost"
+            :disabled="isLeadRole(role)"
+            title="Duplicate this non-Lead role"
+            @click="addRole(role)"
+          >Duplicate</BaseButton>
+          <button
+            type="button"
+            class="rm"
+            title="Remove role"
+            :disabled="!canRemoveRole(role)"
+            @click="removeRole(i)"
+          >x</button>
         </div>
 
         <div class="role-grid">
@@ -296,9 +361,20 @@ async function save() {
   align-items: center;
   gap: var(--space-2);
 }
+.role-instance {
+  max-width: 15ch;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
 .role-name {
   flex: 1;
   font-weight: 600;
+  min-width: 12ch;
 }
 .rm {
   background: transparent;
@@ -309,6 +385,11 @@ async function save() {
 }
 .rm:hover {
   color: var(--red);
+}
+.rm:disabled {
+  color: var(--text-faint);
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .role-grid {
   display: grid;

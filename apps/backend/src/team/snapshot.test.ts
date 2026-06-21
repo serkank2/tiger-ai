@@ -92,6 +92,17 @@ test('toRoleSnapshot defaults a blocked role status note to the role name and co
   assert.equal(snap.turnCount, 1);
 });
 
+test('toRoleSnapshot includes live role CLI configuration', () => {
+  const s = state({
+    roles: [role({ tool: 'codex', model: 'gpt-5', effort: 'high', permission: 'workspace-write' })],
+  });
+  const snap = toRoleSnapshot(s, s.roles[0]!);
+  assert.equal(snap.tool, 'codex');
+  assert.equal(snap.model, 'gpt-5');
+  assert.equal(snap.effort, 'high');
+  assert.equal(snap.permission, 'workspace-write');
+});
+
 // --- computeDoneGate ---
 
 test('computeDoneGate returns the authoritative gate shape and surfaces a board-pending blocker', () => {

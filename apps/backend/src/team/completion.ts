@@ -24,6 +24,7 @@ import type {
   SteeringDirective,
   VerificationRecord,
 } from './types.js';
+import type { TeamRoleKind } from './scheduler.js';
 
 // ---------------------------------------------------------------------------
 // Done-gate input contract.
@@ -103,8 +104,9 @@ export interface CompletionResult {
  *  - no review finding is open or being fixed;
  *  - the latest recorded verification passed;
  *  - no steering directive is pending/unacknowledged;
- *  - at least one role is required for sign-off, and every such role holds a
- *    "done" sign-off dated strictly after the latest material change.
+ *  - at least one role is required for sign-off, and every required role kind
+ *    has at least one fresh "done" sign-off dated strictly after the latest
+ *    material change.
  *
  * Any failing condition is reported as a specific blocker; a lone role declaring
  * itself done can never satisfy the gate while another condition fails.
@@ -168,7 +170,7 @@ export function evaluateCompletion(input: CompletionInput): CompletionResult {
     });
   }
 
-  // --- Gate 5: every required role holds a fresh sign-off ----------------------
+  // --- Gate 5: every required role kind holds a fresh sign-off -----------------
   const latestMaterialChange = computeLatestMaterialChange(input);
   const requiredRoles = input.roles.filter((r) => r.requiredForSignoff);
   const requiredRoleIds = requiredRoles.map((r) => r.id);
@@ -182,26 +184,44 @@ export function evaluateCompletion(input: CompletionInput): CompletionResult {
         'No role is marked required-for-sign-off; completion requires at least one accountable role to sign off.',
     });
   } else {
-    for (const role of requiredRoles) {
-      const label = role.name || role.id;
-      const signoff = latestDoneSignoff(input.signoffs, role.id);
-      if (!signoff) {
-        pendingRoleIds.push(role.id);
+    for (const [kind, roles] of groupRequiredRolesByKind(requiredRoles)) {
+      const blocked = roles.filter(isBlockedRole);
+      if (blocked.length > 0) {
+        pendingRoleIds.push(...blocked.map((role) => role.id));
         blockers.push({
           code: 'signoff_missing',
-          message: `Required role "${label}" has not signed off that its work is done.`,
+          message: `Required role kind "${kind}" has blocked instance(s): ${idList(blocked.map((role) => role.id))}.`,
         });
         continue;
       }
-      if (!isAfter(signoff.createdAt, latestMaterialChange)) {
-        pendingRoleIds.push(role.id);
+
+      const freshRoleIds = roles
+        .filter((role) => {
+          const signoff = latestDoneSignoff(input.signoffs, role.id);
+          return !!signoff && isAfter(signoff.createdAt, latestMaterialChange);
+        })
+        .map((role) => role.id);
+      if (freshRoleIds.length > 0) {
+        freshSignoffRoleIds.push(...freshRoleIds);
+        continue;
+      }
+
+      pendingRoleIds.push(...roles.map((role) => role.id));
+      const staleRole = roles.find((role) => {
+        const signoff = latestDoneSignoff(input.signoffs, role.id);
+        return !!signoff && !isAfter(signoff.createdAt, latestMaterialChange);
+      });
+      if (staleRole) {
         blockers.push({
           code: 'signoff_stale',
-          message: `Required role "${label}" signed off before the latest material change; the sign-off is stale and must be renewed.`,
+          message: `Required role kind "${kind}" last signed off before the latest material change; the sign-off is stale and must be renewed.`,
         });
-        continue;
+      } else {
+        blockers.push({
+          code: 'signoff_missing',
+          message: `Required role kind "${kind}" has no fresh sign-off that its work is done.`,
+        });
       }
-      freshSignoffRoleIds.push(role.id);
     }
   }
 
@@ -492,6 +512,32 @@ function latestDoneSignoff(signoffs: SignOff[], roleId: string): SignOff | null 
     (s) => s.createdAt,
   );
   return latest && latest.done ? latest : null;
+}
+
+function groupRequiredRolesByKind(roles: RoleInstance[]): Map<TeamRoleKind, RoleInstance[]> {
+  const groups = new Map<TeamRoleKind, RoleInstance[]>();
+  for (const role of roles) {
+    const kind = deriveCompletionRoleKind(role);
+    groups.set(kind, [...(groups.get(kind) ?? []), role]);
+  }
+  return groups;
+}
+
+function deriveCompletionRoleKind(role: RoleInstance): TeamRoleKind {
+  const text = `${role.id} ${role.name}`.toLowerCase();
+  if (/\blead\b|tech ?lead|team ?lead/.test(text)) return 'lead';
+  if (/coordinat|manager|product owner|\bpm\b/.test(text)) return 'coordinator';
+  if (/analy|requirement|business/.test(text)) return 'analyst';
+  if (/develop|engineer|programmer|coder|implement/.test(text)) return 'developer';
+  if (/test|\bqa\b|quality/.test(text)) return 'tester';
+  if (/review/.test(text)) return 'reviewer';
+  if (role.canWriteCode) return 'developer';
+  if (role.requiredForSignoff) return 'signoff';
+  return 'coordinator';
+}
+
+function isBlockedRole(role: RoleInstance): boolean {
+  return role.status === 'blocked' || role.status === 'failed';
 }
 
 /** The latest material change across tasks, findings, verifications, and steering. */

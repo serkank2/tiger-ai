@@ -15,6 +15,8 @@ import type {
   QueueBulkAction,
   QueueBulkResponse,
   QueueEnqueueInput,
+  QueueHistoryQuery,
+  QueueHistoryResponse,
   QueueJob,
   QueueRule,
   QueueState,
@@ -303,6 +305,8 @@ export function useApi() {
 
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),
+    getQueueHistory: (params: QueueHistoryQuery = {}) =>
+      req<QueueHistoryResponse>(`/api/queue/history${queryString(params as Record<string, unknown>)}`),
     enqueueQueueJob: (body: QueueEnqueueInput) =>
       req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
     enqueueQueue: (body: QueueEnqueueInput) => req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),

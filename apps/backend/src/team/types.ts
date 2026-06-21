@@ -324,6 +324,8 @@ export const TEAM_RUN_STATUSES: TeamRunStatus[] = [
   'interrupted',
 ];
 
+export type TeamOrchestrationMode = 'legacy' | 'company';
+
 /** The full persisted record of a team run (serialized to `team.json`). */
 export interface TeamRun {
   id: string;
@@ -480,6 +482,9 @@ export interface RoleSnapshot {
   id: string;
   name: string;
   tool: AgentType;
+  model: string;
+  effort: string;
+  permission: string;
   status: RoleStatus;
   canWriteCode: boolean;
   requiredForSignoff: boolean;
@@ -660,6 +665,7 @@ export interface TeamRunState {
   name: string;
   goal: string;
   status: TeamRunStatus;
+  orchestrationMode?: TeamOrchestrationMode;
   roles: RoleSnapshot[];
   doneGate: DoneGateState;
   /** Number of messages in the conversation so far. */
@@ -743,6 +749,7 @@ export interface CreateTeamRunRequest {
   goal: string;
   templateId?: string;
   roles?: RoleConfigInput[];
+  orchestrationMode?: TeamOrchestrationMode;
 }
 
 export interface CreateTeamRunResponse {
