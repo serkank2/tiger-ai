@@ -2,7 +2,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { useApi } from '~/composables/useApi';
 import { errText } from '~/lib/apiError';
-import type { CueEngineStatus, CueSubscriptionStatus } from '~/types';
+import type { CueEngineStatus, CueSubscriptionStatus, CueSubscriptionInput } from '~/types';
 
 /**
  * Cue engine store. Mirrors the existing limits/queue store idioms: a single `status` ref, a
@@ -84,6 +84,47 @@ export const useCueStore = defineStore('cue', () => {
     }
   }
 
+  async function create(sub: CueSubscriptionInput): Promise<void> {
+    setBusy('save', true);
+    loadError.value = null;
+    try {
+      const { status: next } = await api.createCueSubscription(sub);
+      applyStatus(next);
+    } catch (e) {
+      loadError.value = errText(e);
+      throw e;
+    } finally {
+      setBusy('save', false);
+    }
+  }
+
+  async function update(id: string, sub: CueSubscriptionInput): Promise<void> {
+    setBusy('save', true);
+    loadError.value = null;
+    try {
+      const { status: next } = await api.updateCueSubscription(id, sub);
+      applyStatus(next);
+    } catch (e) {
+      loadError.value = errText(e);
+      throw e;
+    } finally {
+      setBusy('save', false);
+    }
+  }
+
+  async function remove(id: string): Promise<void> {
+    setBusy(`delete:${id}`, true);
+    loadError.value = null;
+    try {
+      applyStatus(await api.deleteCueSubscription(id));
+    } catch (e) {
+      loadError.value = errText(e);
+      throw e;
+    } finally {
+      setBusy(`delete:${id}`, false);
+    }
+  }
+
   async function trigger(id: string): Promise<void> {
     const key = `trigger:${id}`;
     setBusy(key, true);
@@ -117,5 +158,8 @@ export const useCueStore = defineStore('cue', () => {
     load,
     reload,
     trigger,
+    create,
+    update,
+    remove,
   };
 });

@@ -3,8 +3,8 @@ import { computed } from 'vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import type { CueSubscriptionStatus } from '~/types';
 
-const props = defineProps<{ sub: CueSubscriptionStatus; busy?: boolean }>();
-const emit = defineEmits<{ trigger: [id: string] }>();
+const props = defineProps<{ sub: CueSubscriptionStatus; busy?: boolean; deleting?: boolean }>();
+const emit = defineEmits<{ trigger: [id: string]; edit: [id: string]; remove: [id: string] }>();
 
 const eventLabel: Record<CueSubscriptionStatus['event'], string> = {
   'file.changed': 'File changed',
@@ -29,15 +29,19 @@ const lastFired = computed(() =>
         <span class="badge target">→ {{ sub.target }}</span>
         <span v-if="!sub.enabled" class="badge off">disabled</span>
       </div>
-      <BaseButton
-        v-if="isManual"
-        size="sm"
-        :loading="busy"
-        :disabled="!sub.enabled"
-        @click="emit('trigger', sub.id)"
-      >
-        Trigger
-      </BaseButton>
+      <div class="card-actions">
+        <BaseButton
+          v-if="isManual"
+          size="sm"
+          :loading="busy"
+          :disabled="!sub.enabled"
+          @click="emit('trigger', sub.id)"
+        >
+          Trigger
+        </BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="emit('edit', sub.id)">Edit</BaseButton>
+        <BaseButton size="sm" variant="ghost" :loading="deleting" @click="emit('remove', sub.id)">Delete</BaseButton>
+      </div>
     </div>
 
     <dl class="meta">
@@ -70,6 +74,12 @@ const lastFired = computed(() =>
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .title {
   display: flex;

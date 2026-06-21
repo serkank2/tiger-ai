@@ -51,6 +51,7 @@ import type {
   TeamAttemptsResponse,
   CueEngineStatus,
   CueSubscriptionStatus,
+  CueSubscriptionInput,
 } from '~/types';
 
 /**
@@ -350,5 +351,19 @@ export function useApi() {
         method: 'POST',
         body: vars ? { vars } : {},
       }),
+    getCueSubscription: (id: string) =>
+      req<{ subscription: CueSubscriptionInput }>(`/api/cue/subscriptions/${encodeURIComponent(id)}`),
+    createCueSubscription: (sub: CueSubscriptionInput) =>
+      req<{ subscription: CueSubscriptionInput; status: CueEngineStatus }>('/api/cue/subscriptions', {
+        method: 'POST',
+        body: sub,
+      }),
+    updateCueSubscription: (id: string, sub: CueSubscriptionInput) =>
+      req<{ subscription: CueSubscriptionInput; status: CueEngineStatus }>(
+        `/api/cue/subscriptions/${encodeURIComponent(id)}`,
+        { method: 'PUT', body: sub },
+      ),
+    deleteCueSubscription: (id: string) =>
+      req<CueEngineStatus>(`/api/cue/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   };
 }

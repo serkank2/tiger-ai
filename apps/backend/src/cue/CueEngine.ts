@@ -3,7 +3,13 @@ import path from 'node:path';
 import { logger } from '../obs/logger.js';
 import { config } from '../config.js';
 import type { AppCtx } from '../context.js';
-import { configFromObject, loadCueConfig } from './config-loader.js';
+import {
+  configFromObject,
+  loadCueConfig,
+  readRawCueConfig,
+  validateSubscriptionStrict,
+  writeCueConfig,
+} from './config-loader.js';
 import { CueFileWatcher } from './file-watcher.js';
 import { FanInTracker } from './fanin.js';
 import { matchesFilter } from './matching.js';
@@ -18,6 +24,11 @@ import type {
 } from './types.js';
 
 const log = logger.child({ mod: 'cue.engine' });
+
+/** A bad UI edit (validation/duplicate/no-workspace) — maps to a 400/409 in the route. */
+export class CueConfigError extends Error {}
+/** A referenced subscription does not exist — maps to a 404 in the route. */
+export class CueNotFoundError extends Error {}
 
 /** File-change debounce: collapse an editor save's burst of events into one cue fire. */
 const FILE_DEBOUNCE_MS = 500;
@@ -109,6 +120,66 @@ export class CueEngine {
     this.detachAllWatchers();
     await this.loadAndAttach();
     return this.getStatus();
+  }
+
+  /** Read the full editable subscription (all fields) from `.kaplan/cue.json`, or null if unknown. */
+  async getEditableSubscription(id: string): Promise<CueSubscription | null> {
+    const ws = this.resolveWorkspace();
+    if (!ws) return null;
+    const { config: file } = await readRawCueConfig(ws);
+    return file.subscriptions.find((s) => s.id === id) ?? null;
+  }
+
+  /** Resolve the workspace the editor writes `.kaplan/cue.json` into, or throw a clear error. */
+  private requireWriteWorkspace(): string {
+    const ws = this.resolveWorkspace();
+    if (!ws) {
+      throw new CueConfigError('no active workspace; open a project before editing cue subscriptions');
+    }
+    return ws;
+  }
+
+  /**
+   * Create or update a subscription via the UI editor: strictly validates it, rewrites
+   * `.kaplan/cue.json`, then reloads so watchers/schedules reflect the change immediately.
+   * When `expectId` is given the matching entry is replaced (rename allowed); otherwise the new
+   * id must not already exist. Returns the saved subscription plus the fresh engine status.
+   */
+  async saveSubscription(
+    raw: unknown,
+    expectId?: string,
+  ): Promise<{ subscription: CueSubscription; status: CueEngineStatus }> {
+    const { sub, errors } = validateSubscriptionStrict(raw);
+    if (!sub) throw new CueConfigError(`invalid subscription: ${errors.join('; ')}`);
+    const ws = this.requireWriteWorkspace();
+    const { config: file } = await readRawCueConfig(ws);
+    const list = file.subscriptions;
+    const existingIndex = list.findIndex((s) => s.id === sub.id);
+    if (expectId) {
+      const targetIndex = list.findIndex((s) => s.id === expectId);
+      if (targetIndex < 0) throw new CueNotFoundError(`subscription "${expectId}" not found`);
+      // A rename must not collide with a different existing entry.
+      if (sub.id !== expectId && existingIndex >= 0) {
+        throw new CueConfigError(`subscription id "${sub.id}" already exists`);
+      }
+      list[targetIndex] = sub;
+    } else {
+      if (existingIndex >= 0) throw new CueConfigError(`subscription id "${sub.id}" already exists`);
+      list.push(sub);
+    }
+    await writeCueConfig(ws, file);
+    const status = await this.reload();
+    return { subscription: sub, status };
+  }
+
+  /** Delete a subscription from `.kaplan/cue.json` and reload. Throws if the id is unknown. */
+  async deleteSubscription(id: string): Promise<CueEngineStatus> {
+    const ws = this.requireWriteWorkspace();
+    const { config: file } = await readRawCueConfig(ws);
+    const next = file.subscriptions.filter((s) => s.id !== id);
+    if (next.length === file.subscriptions.length) throw new CueNotFoundError(`subscription "${id}" not found`);
+    await writeCueConfig(ws, { subscriptions: next });
+    return this.reload();
   }
 
   private async loadAndAttach(): Promise<void> {

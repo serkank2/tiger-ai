@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 import CueSubscriptionCard from '~/components/cue/CueSubscriptionCard.vue';
+import CueSubscriptionEditor from '~/components/cue/CueSubscriptionEditor.vue';
 import { useCueStore } from '~/stores/cue';
+import { useApi } from '~/composables/useApi';
+import { useDialog } from '~/composables/useDialog';
+import { errText } from '~/lib/apiError';
+import type { CueSubscriptionInput } from '~/types';
 
 const cue = useCueStore();
+const api = useApi();
+const dialog = useDialog();
+
+const editorOpen = ref(false);
+const editing = ref<CueSubscriptionInput | null>(null);
+const editorError = ref<string | null>(null);
 
 onMounted(() => {
   void cue.load();
@@ -27,6 +38,49 @@ async function onTrigger(id: string): Promise<void> {
     /* error surfaced via store.loadError */
   }
 }
+
+function onNew(): void {
+  editing.value = null;
+  editorError.value = null;
+  editorOpen.value = true;
+}
+
+async function onEdit(id: string): Promise<void> {
+  editorError.value = null;
+  try {
+    const { subscription } = await api.getCueSubscription(id);
+    editing.value = subscription;
+    editorOpen.value = true;
+  } catch (e) {
+    cue.loadError = errText(e);
+  }
+}
+
+async function onSave(sub: CueSubscriptionInput, originalId: string | null): Promise<void> {
+  editorError.value = null;
+  try {
+    if (originalId) await cue.update(originalId, sub);
+    else await cue.create(sub);
+    editorOpen.value = false;
+  } catch (e) {
+    editorError.value = errText(e);
+  }
+}
+
+async function onRemove(id: string): Promise<void> {
+  const ok = await dialog.confirm({
+    title: 'Delete subscription',
+    message: `Delete subscription "${id}" from .kaplan/cue.json? This cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await cue.remove(id);
+  } catch {
+    /* error surfaced via store.loadError */
+  }
+}
 </script>
 
 <template>
@@ -42,10 +96,12 @@ async function onTrigger(id: string): Promise<void> {
         <BaseButton
           :loading="cue.isBusy('reload')"
           :disabled="cue.disabled"
+          variant="ghost"
           @click="onReload"
         >
           Reload config
         </BaseButton>
+        <BaseButton :disabled="cue.disabled" @click="onNew">+ New subscription</BaseButton>
       </div>
     </header>
 
@@ -80,8 +136,12 @@ async function onTrigger(id: string): Promise<void> {
       <EmptyState
         v-if="cue.subscriptions.length === 0"
         title="No subscriptions"
-        description="Define subscriptions in .kaplan/cue.json in your workspace, then Reload config."
-      />
+        description="Create your first subscription to wake agents on file changes, schedules, or agent completions."
+      >
+        <template #actions>
+          <BaseButton @click="onNew">+ New subscription</BaseButton>
+        </template>
+      </EmptyState>
 
       <div v-else class="grid">
         <CueSubscriptionCard
@@ -89,10 +149,22 @@ async function onTrigger(id: string): Promise<void> {
           :key="sub.id"
           :sub="sub"
           :busy="cue.isBusy(`trigger:${sub.id}`)"
+          :deleting="cue.isBusy(`delete:${sub.id}`)"
           @trigger="onTrigger"
+          @edit="onEdit"
+          @remove="onRemove"
         />
       </div>
     </template>
+
+    <CueSubscriptionEditor
+      :open="editorOpen"
+      :initial="editing"
+      :saving="cue.isBusy('save')"
+      :error="editorError"
+      @close="editorOpen = false"
+      @save="onSave"
+    />
   </section>
 </template>
 

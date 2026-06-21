@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { AppCtx } from '../context.js';
-import type { CueEngine } from '../cue/CueEngine.js';
+import { CueConfigError, CueNotFoundError, type CueEngine } from '../cue/CueEngine.js';
 import { badRequest, conflict, notFound } from './errors.js';
 
 /**
@@ -33,6 +33,49 @@ export function createCueRouter(ctx: AppCtx, getEngine: () => CueEngine | null):
     res.json(status);
   });
 
+  // Fetch one subscription's full editable config (all fields, for the edit form).
+  router.get('/subscriptions/:id', async (req, res) => {
+    const id = req.params.id;
+    if (!id) throw badRequest('subscription id is required');
+    const subscription = await requireEngine().getEditableSubscription(id);
+    if (!subscription) throw notFound(`subscription "${id}" not found`);
+    res.json({ subscription });
+  });
+
+  // Create a new subscription (writes .kaplan/cue.json, then reloads).
+  router.post('/subscriptions', async (req, res) => {
+    try {
+      const { subscription, status } = await requireEngine().saveSubscription(req.body ?? {});
+      res.status(201).json({ subscription, status });
+    } catch (err) {
+      throw toCueHttpError(err);
+    }
+  });
+
+  // Update an existing subscription by id (rename allowed via the body's id).
+  router.put('/subscriptions/:id', async (req, res) => {
+    const id = req.params.id;
+    if (!id) throw badRequest('subscription id is required');
+    try {
+      const { subscription, status } = await requireEngine().saveSubscription(req.body ?? {}, id);
+      res.json({ subscription, status });
+    } catch (err) {
+      throw toCueHttpError(err);
+    }
+  });
+
+  // Delete a subscription by id.
+  router.delete('/subscriptions/:id', async (req, res) => {
+    const id = req.params.id;
+    if (!id) throw badRequest('subscription id is required');
+    try {
+      const status = await requireEngine().deleteSubscription(id);
+      res.json(status);
+    } catch (err) {
+      throw toCueHttpError(err);
+    }
+  });
+
   // Manually fire a cli.trigger subscription.
   router.post('/trigger/:id', async (req, res) => {
     const id = req.params.id;
@@ -54,6 +97,15 @@ export function createCueRouter(ctx: AppCtx, getEngine: () => CueEngine | null):
   });
 
   return router;
+}
+
+/** Map a Cue engine mutation error to the right HTTP status. */
+function toCueHttpError(err: unknown): Error {
+  if (err instanceof CueNotFoundError) return notFound(err.message);
+  if (err instanceof CueConfigError) {
+    return err.message.includes('already exists') ? conflict(err.message) : badRequest(err.message);
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 /** Coerce a free-form vars object to string→string for safe template substitution. */

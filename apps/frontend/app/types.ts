@@ -1291,6 +1291,39 @@ export type CueEventType =
 
 export type CueTargetKind = 'queue' | 'team';
 
+export type CueChangeType = 'created' | 'modified' | 'deleted' | 'any';
+
+export interface CueFilterInput {
+  changeType?: CueChangeType;
+  pathIncludes?: string;
+  triggeredBy?: 'team' | 'tiger';
+  allOf?: string[];
+}
+
+export interface CueTargetInput {
+  kind: CueTargetKind;
+  workspacePath?: string;
+  projectName?: string;
+  provider?: 'claude' | 'codex' | 'antigravity' | 'mixed';
+  priority?: number;
+  maxAttempts?: number;
+}
+
+/** The editable shape of a subscription, mirrored from the backend `CueSubscription`. */
+export interface CueSubscriptionInput {
+  id: string;
+  name?: string;
+  event: CueEventType;
+  filter?: CueFilterInput;
+  prompt?: string;
+  promptFile?: string;
+  target: CueTargetInput;
+  enabled?: boolean;
+  watch?: string;
+  intervalMs?: number;
+  at?: string;
+}
+
 export interface CueSubscriptionStatus {
   id: string;
   name: string | null;

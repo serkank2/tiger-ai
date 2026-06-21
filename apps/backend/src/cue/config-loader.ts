@@ -185,3 +185,66 @@ export function configFromObject(obj: CueConfigFile | unknown): CueConfigLoadRes
   const { subscriptions, warnings } = normalizeConfig(obj);
   return { subscriptions, warnings, configPath: null };
 }
+
+const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+
+export interface StrictSubscriptionResult {
+  /** The normalized subscription when valid, else null. */
+  sub: CueSubscription | null;
+  /** Human-readable validation errors; empty when valid. */
+  errors: string[];
+}
+
+/**
+ * Strictly validate ONE subscription authored via the UI editor. Unlike {@link normalizeConfig}
+ * (which silently drops bad entries so one typo can't disable the whole engine), this returns
+ * explicit errors so the form can show them. It elevates the per-event "required field" advisories
+ * to hard errors — a UI-authored cue with no way to fire is a mistake worth blocking on.
+ */
+export function validateSubscriptionStrict(raw: unknown): StrictSubscriptionResult {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { sub: null, errors: ['subscription must be an object'] };
+  }
+  const entry = raw as Record<string, unknown>;
+  const id = str(entry.id);
+  const preErrors: string[] = [];
+  if (id && !ID_RE.test(id)) {
+    preErrors.push('id must start with a letter/number and contain only letters, numbers, "-" or "_"');
+  }
+  const { subscriptions, warnings } = normalizeConfig({ subscriptions: [raw] });
+  const sub = subscriptions[0] ?? null;
+  if (!sub) {
+    // normalizeConfig's skip warnings ARE the validation errors here.
+    return { sub: null, errors: [...preErrors, ...warnings] };
+  }
+  // Elevate per-event "won't fire" advisories to hard errors for the editor.
+  const errors = [...preErrors, ...requiredFieldWarnings(sub)];
+  if (errors.length) return { sub: null, errors };
+  return { sub, errors: [] };
+}
+
+/**
+ * Read the raw `.kaplan/cue.json` as an editable config object (subscriptions array preserved
+ * verbatim, including promptFile-based or engine-degraded entries). A missing/!valid file yields
+ * an empty config so the first UI-authored cue can create it. Never throws.
+ */
+export async function readRawCueConfig(workspace: string): Promise<{ config: CueConfigFile; configPath: string }> {
+  const configPath = path.join(workspace, CUE_CONFIG_RELPATH);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await fs.readFile(configPath, 'utf8')) as unknown;
+  } catch {
+    return { config: { subscriptions: [] }, configPath };
+  }
+  const root = (parsed ?? {}) as { subscriptions?: unknown };
+  const subscriptions = Array.isArray(root.subscriptions) ? (root.subscriptions as CueSubscription[]) : [];
+  return { config: { subscriptions }, configPath };
+}
+
+/** Write a cue config back to `.kaplan/cue.json` (pretty-printed), creating `.kaplan` if needed. */
+export async function writeCueConfig(workspace: string, config: CueConfigFile): Promise<string> {
+  const configPath = path.join(workspace, CUE_CONFIG_RELPATH);
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  return configPath;
+}
