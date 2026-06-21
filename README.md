@@ -14,6 +14,8 @@ Kaplan turns your machine into a cockpit for AI software work: live PTY terminal
 
 > **Status:** active development (`0.1.x`). Local, single-user, personal tool. See [the roadmap](#-roadmap) for what is landing next.
 
+> **AI agents:** start with [`AGENTS.md`](AGENTS.md) — the canonical guide for AI coding agents working in this repo.
+
 ## ✨ Features
 
 | Area | What it does |
