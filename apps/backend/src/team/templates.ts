@@ -189,7 +189,13 @@ const ROLE_LEAD: RoleTemplate = {
     'afterward. Break the goal into small, assignable tasks each with crisp acceptance criteria. When delegating, ' +
     'address a role KIND such as `developer` to route work to whichever matching instance is idle, or a specific role ' +
     'id when the task must be pinned to that exact instance. Delegate with ' +
-    '`handoff` (synchronous, you block on it) or `assign` (asynchronous, parallel). A Lead turn is required for new ' +
+    '`handoff` (synchronous, you block on it) or `assign` (asynchronous, parallel).\n\n' +
+    'MAXIMIZE PARALLELISM: when the team has multiple developer (or other worker) instances, actively split the goal ' +
+    'into INDEPENDENT tasks that touch different files/areas and assign them at the SAME time so several developers ' +
+    'work concurrently — each runs in its own isolated git worktree, so simultaneous writers never collide. Do NOT ' +
+    'serialize work that has no real dependency. ONLY chain tasks (assign B after A finishes) when B genuinely needs ' +
+    "A's output; state that dependency explicitly. Keep idle workers busy: if an instance is free and there is " +
+    'independent work, give it a task this turn rather than waiting. A Lead turn is required for new ' +
     'user prompts, blockers, failed or inconclusive verification, rejected review, and explicit re-planning; normal ' +
     'worker completions may let workers proceed without another Lead turn. Resolve disagreements with a ' +
     'one-line decision plus the reason. Track the open gates and drive each to closure. The run ends only after gates ' +
@@ -299,9 +305,10 @@ const ROLE_DEVELOPER: RoleTemplate = {
     'Every behavioral change ships with a test that fails without your change and passes with it.\n\n' +
     'How you work: read the neighbouring code first and match its style and patterns. Cover the happy path AND the ' +
     'null/empty path AND the error path. Run the project’s own build and tests before you claim done, and paste the ' +
-    'real result. In company mode you are the only source-editing turn at a time; read-only peers may be reading ' +
-    'concurrently, so keep changes minimal, atomic, and easy to review. Report exactly what you changed and any ' +
-    'residual risk — do not oversell.',
+    'real result. In company mode other developers may be editing in parallel — each of you runs in an isolated git ' +
+    'worktree that is merged back on completion, so stay strictly within your assigned task and files, keep changes ' +
+    'minimal and atomic, and avoid reaching into another task\'s area so the merges stay clean. Report exactly what ' +
+    'you changed and any residual risk — do not oversell.',
   responsibilities: [
     'Implement the assigned task with the smallest fully-correct change',
     'Match existing style, architecture, and tooling (read neighbours first)',
@@ -548,6 +555,76 @@ function assembleTeam(name: string, description: string, roles: RoleTemplate[]):
   return { name, description, builtin: true, roles: roles.map(cloneRoleTemplate) };
 }
 
+/** The blanket full-access / "dangerous" permission-mode key for each supported CLI tool. */
+const FULL_PERMISSION_BY_TOOL: Record<AgentType, string> = {
+  claude: 'dangerous',
+  codex: 'yolo',
+  antigravity: 'dangerous',
+};
+
+/**
+ * Clone a built-in role with id/name/agent overrides. Used to assemble the Full Template's
+ * multiple same-kind instances (e.g. three Developers on different CLIs) and to flip a role to
+ * its tool's full-access permission mode. `id`/`name` overrides keep instances unique while
+ * {@link deriveRoleKind} still classifies them by their text (so "developer-2" stays a developer).
+ */
+function variantRole(
+  role: RoleTemplate,
+  overrides: { id?: string; name?: string; tool?: AgentType; fullPermission?: boolean },
+): RoleTemplate {
+  const clone = cloneRoleTemplate(role);
+  if (overrides.id) clone.id = overrides.id;
+  if (overrides.name) clone.name = overrides.name;
+  if (overrides.tool && overrides.tool !== clone.agent.tool) {
+    // A model/effort valid for the old tool (e.g. Claude "sonnet"/"high") is rejected by the
+    // validator for the new one, so reset to the CLI default ('' = always valid) when switching.
+    clone.agent.tool = overrides.tool;
+    clone.agent.model = '';
+    clone.agent.effort = '';
+  }
+  if (overrides.fullPermission) clone.agent.permission = FULL_PERMISSION_BY_TOOL[clone.agent.tool];
+  return clone;
+}
+
+/**
+ * The Full Template: every built-in role at once, with THREE parallel Developers spread across
+ * all supported CLIs (Claude, Codex, Antigravity) so the Lead can fan independent work out to
+ * several developers simultaneously, and every code-writing role opened in its tool's full-access
+ * permission mode so it never stops to ask for folder/permission grants.
+ */
+function assembleFullTemplate(): TeamTemplate {
+  const roles: RoleTemplate[] = [
+    variantRole(ROLE_LEAD, { fullPermission: true }),
+    variantRole(ROLE_PRODUCT_STRATEGIST, { fullPermission: true }),
+    variantRole(ROLE_BUSINESS_ANALYST, { fullPermission: true }),
+    variantRole(ROLE_ARCHITECT, { fullPermission: true }),
+    variantRole(ROLE_DEVELOPER, { id: 'developer-1', name: 'Developer 1 (Claude)', tool: 'claude', fullPermission: true }),
+    variantRole(ROLE_DEVELOPER, { id: 'developer-2', name: 'Developer 2 (Codex)', tool: 'codex', fullPermission: true }),
+    variantRole(ROLE_DEVELOPER, {
+      id: 'developer-3',
+      name: 'Developer 3 (Antigravity)',
+      tool: 'antigravity',
+      fullPermission: true,
+    }),
+    variantRole(ROLE_INVESTIGATOR, { fullPermission: true }),
+    variantRole(ROLE_TESTER, { fullPermission: true }),
+    variantRole(ROLE_REVIEWER, { fullPermission: true }),
+    variantRole(ROLE_SECURITY_OFFICER, { fullPermission: true }),
+    variantRole(ROLE_DESIGN_REVIEWER, { fullPermission: true }),
+    variantRole(ROLE_DEVEX_REVIEWER, { fullPermission: true }),
+    variantRole(ROLE_DEVOPS_VERIFIER, { fullPermission: true }),
+    variantRole(ROLE_RELEASE_ENGINEER, { fullPermission: true }),
+  ];
+  return {
+    name: 'Full Template',
+    description:
+      'Every supported role at once with three parallel Developers across Claude, Codex, and Antigravity, all opened ' +
+      'in full-access permission mode. Maximum capability and parallelism for large, multi-front work.',
+    builtin: true,
+    roles,
+  };
+}
+
 /** Built-in team presets. Each ships with at least one sign-off role and at least one code-writing role. */
 export const BUILTIN_TEAM_TEMPLATES: TeamTemplate[] = [
   assembleTeam(
@@ -595,4 +672,5 @@ export const BUILTIN_TEAM_TEMPLATES: TeamTemplate[] = [
       'Engineer to guard the gate between written and shipped.',
     [ROLE_LEAD, ROLE_DEVELOPER, ROLE_TESTER, ROLE_REVIEWER, ROLE_DEVOPS_VERIFIER, ROLE_RELEASE_ENGINEER],
   ),
+  assembleFullTemplate(),
 ];

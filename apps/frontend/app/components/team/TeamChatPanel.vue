@@ -1,15 +1,59 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useNoticesStore } from '~/stores/notices';
+import { useT } from '~/composables/useT';
+import { useTeamTranslation, type ChatLang } from '~/composables/useTeamTranslation';
 import type { TeamMessage, TeamMessageKind, TigerAgentType } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 
 const team = useTeamStore();
+const notices = useNoticesStore();
+const { t } = useT();
 
 const scroller = ref<HTMLElement | null>(null);
 const atBottom = ref(true);
 
 const messages = computed(() => team.messages);
+
+// Display-only translation: the team's agents always work in English (enforced
+// server-side); this only changes what the human reads. Failures fall back to the
+// original body and surface a single subtle toast.
+let toastedFailure = false;
+const translation = useTeamTranslation(() => {
+  if (toastedFailure) return;
+  toastedFailure = true;
+  notices.push(t('team.translateFailed'), 'error');
+});
+const { chatLang, translating, displayBody, hasTranslation, ensureTranslations, setChatLang } = translation;
+
+const LANG_OPTIONS: { value: ChatLang; key: string }[] = [
+  { value: 'original', key: 'team.langOriginal' },
+  { value: 'tr', key: 'team.langTurkish' },
+  { value: 'en', key: 'team.langEnglish' },
+];
+
+function pickLang(lang: ChatLang): void {
+  toastedFailure = false;
+  setChatLang(lang, messages.value.map((m) => ({ id: m.id, body: m.body })));
+}
+
+// Translate whatever is currently displayed whenever the set changes while a non-original
+// language is active. ensureTranslations is cheap (skips cached/queued ids) and debounces.
+watch(
+  [() => messages.value, chatLang],
+  () => {
+    if (chatLang.value === 'original') return;
+    ensureTranslations(messages.value.map((m) => ({ id: m.id, body: m.body })));
+  },
+  { immediate: true },
+);
+
+function bodyFor(m: TeamMessage): string {
+  return displayBody({ id: m.id, body: m.body });
+}
+
+onBeforeUnmount(() => translation.dispose());
 
 interface SenderInfo {
   label: string;
@@ -82,6 +126,28 @@ function loadOlder() {
 
 <template>
   <div class="chat">
+    <div class="chat-head">
+      <div class="lang-toggle" role="group" :aria-label="t('team.chatLanguage')">
+        <span class="lang-label">{{ t('team.chatLanguage') }}</span>
+        <button
+          v-for="opt in LANG_OPTIONS"
+          :key="opt.value"
+          type="button"
+          class="lang-btn"
+          :class="{ active: chatLang === opt.value }"
+          :aria-pressed="chatLang === opt.value"
+          @click="pickLang(opt.value)"
+        >
+          {{ t(opt.key) }}
+        </button>
+      </div>
+      <Transition name="fade">
+        <span v-if="translating" class="translating" role="status" aria-live="polite">
+          <span class="tdot" aria-hidden="true" />{{ t('team.translating') }}
+        </span>
+      </Transition>
+    </div>
+
     <div ref="scroller" class="stream" @scroll="onScroll">
       <div v-if="team.hasMoreMessages" class="load-more">
         <button type="button" :disabled="team.transcriptLoading" @click="loadOlder">
@@ -91,26 +157,33 @@ function loadOlder() {
 
       <p v-if="!messages.length" class="empty">No messages yet — the team is getting started.</p>
 
-      <article
-        v-for="m in messages"
-        :key="m.id"
-        class="msg"
-        :class="[`from-${senderInfo(m.from).kind}`, `kind-${m.kind}`]"
-      >
-        <div class="avatar">
-          <TeamAgentBadge v-if="senderInfo(m.from).tool" :tool="senderInfo(m.from).tool!" />
-          <span v-else class="glyph">{{ senderInfo(m.from).kind === 'user' ? '🧑' : '⚙' }}</span>
-        </div>
-        <div class="bubble">
-          <div class="head">
-            <span class="author">{{ senderInfo(m.from).label }}</span>
-            <span v-if="m.to && m.to !== 'all'" class="to">→ {{ roleById.get(m.to)?.name ?? m.to }}</span>
-            <span v-if="KIND_LABEL[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ KIND_LABEL[m.kind] }}</span>
-            <span class="time">{{ time(m.createdAt) }}</span>
+      <TransitionGroup name="msg" tag="div" class="msg-list">
+        <article
+          v-for="m in messages"
+          :key="m.id"
+          class="msg"
+          :class="[`from-${senderInfo(m.from).kind}`, `kind-${m.kind}`]"
+        >
+          <div class="avatar">
+            <TeamAgentBadge v-if="senderInfo(m.from).tool" :tool="senderInfo(m.from).tool!" />
+            <span v-else class="glyph">{{ senderInfo(m.from).kind === 'user' ? '🧑' : '⚙' }}</span>
           </div>
-          <p class="text">{{ m.body }}</p>
-        </div>
-      </article>
+          <div class="bubble">
+            <div class="head">
+              <span class="author">{{ senderInfo(m.from).label }}</span>
+              <span v-if="m.to && m.to !== 'all'" class="to">→ {{ roleById.get(m.to)?.name ?? m.to }}</span>
+              <span v-if="KIND_LABEL[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ KIND_LABEL[m.kind] }}</span>
+              <span
+                v-if="chatLang !== 'original' && !hasTranslation(m.id)"
+                class="pending-tag"
+                :title="t('team.translating')"
+              >…</span>
+              <span class="time">{{ time(m.createdAt) }}</span>
+            </div>
+            <p class="text">{{ bodyFor(m) }}</p>
+          </div>
+        </article>
+      </TransitionGroup>
     </div>
   </div>
 </template>
@@ -122,10 +195,72 @@ function loadOlder() {
   min-height: 0;
   flex: 1;
 }
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.lang-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-wrap: wrap;
+}
+.lang-label {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lang-btn {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
+  background: var(--bg-elev);
+}
+.lang-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.lang-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.translating {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.tdot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  animation: tpulse 1.1s var(--ease-in-out) infinite;
+}
+@keyframes tpulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
 .stream {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  scroll-behavior: smooth;
+}
+.msg-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -213,6 +348,11 @@ function loadOlder() {
   font-size: 10px;
   color: var(--text-faint);
 }
+.pending-tag {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+}
 .kind-tag {
   font-size: 10px;
   text-transform: uppercase;
@@ -234,5 +374,25 @@ function loadOlder() {
   line-height: var(--leading-normal);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* New messages fade + slide up on arrival. Kept cheap (transform/opacity only) and
+   covered by the global prefers-reduced-motion safety net. */
+.msg-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.msg-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

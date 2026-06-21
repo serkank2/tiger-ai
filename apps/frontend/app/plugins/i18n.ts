@@ -6,12 +6,15 @@
 // partially-translated locale degrades gracefully rather than rendering blanks.
 import { createI18n } from 'vue-i18n';
 import { DEFAULT_LOCALE, messages } from '~/locales';
+import { getStoredLocale } from '~/composables/useLocale';
 
 export default defineNuxtPlugin((nuxtApp) => {
   const i18n = createI18n({
     legacy: false, // Composition API mode — required for `useI18n()` in <script setup>
     globalInjection: true, // exposes `$t` in templates without per-component setup
-    locale: DEFAULT_LOCALE,
+    // Seed from the persisted choice (localStorage `kaplan.locale`); useLocale()
+    // keeps this in sync at runtime. Falls back to DEFAULT_LOCALE when unset.
+    locale: getStoredLocale(),
     fallbackLocale: DEFAULT_LOCALE,
     missingWarn: import.meta.dev,
     fallbackWarn: import.meta.dev,

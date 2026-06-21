@@ -160,8 +160,8 @@ test('composeRoleTurnPrompt renders the role-system prompt improvements for comp
     assert.match(ba.prompt, /feed the Lead updated requirements/);
 
     const developer = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('developer') }));
-    assert.match(developer.prompt, /only source-editing turn at a time/);
-    assert.match(developer.prompt, /read-only peers may be reading concurrently/);
+    assert.match(developer.prompt, /other developers may be editing in parallel/);
+    assert.match(developer.prompt, /isolated git\s+worktree that is merged back on completion/);
 
     const tester = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('tester') }));
     assert.match(tester.prompt, /create or modify TEST files/);

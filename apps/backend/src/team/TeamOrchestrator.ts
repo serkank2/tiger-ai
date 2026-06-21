@@ -127,6 +127,8 @@ export interface TeamRoleInstance {
   activeTerminalId?: string;
   /** Task-board counts for this role (todo/in-progress/done). */
   taskCounts?: { todo: number; inProgress: number; done: number };
+  /** How many times this role's CLI session has been auto-restarted after dying (health signal). */
+  restartCount?: number;
 }
 
 export interface TeamDirective {
@@ -476,6 +478,12 @@ export interface TeamRoleTurnResult {
   }[];
   materialChange?: boolean;
   reason?: string;
+  /**
+   * Set when this role's persistent CLI session died this turn (exited/crashed/poisoned by a hard
+   * timeout) and was evicted, so the next turn spawns a fresh CLI. The orchestrator surfaces a
+   * visible self-recovery notice and bumps the role's restart counter when this is true.
+   */
+  sessionRestarted?: boolean;
 }
 
 export interface TeamTurnRunner {
@@ -979,6 +987,8 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         model: input.role.model,
         effort: input.role.effort,
         permission: input.role.permission,
+        // Honor a deliberately-chosen dangerous/full-permission template mode (gated by config).
+        allowDangerousPermissions: appConfig.team.honorDangerousPermissions,
         signal: input.signal,
         // The orchestrator is the single authoritative writer of conversation.jsonl
         // (it assigns seq and emits the WS message event); the runner must not also
@@ -991,7 +1001,7 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
       // into an unknown live state.
       if (!session.isAlive) {
         sessions.delete(key);
-        return mapRunnerResult(result);
+        return { ...mapRunnerResult(result), sessionRestarted: true };
       }
       // When this role has fed its CLI a lot of context, ask it to compact before the
       // next turn so the live session stays efficient instead of growing unbounded.
@@ -1445,8 +1455,14 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxIdleLeadTurns: number;
   private readonly maxDurationMs?: number;
   private readonly maxBudget?: number;
-  /** Part B: run each claimed task in its own git worktree (config-gated; off by default). */
+  /** Part B: run each claimed task in its own git worktree (config-gated; on by default). */
   private readonly worktreePerTask: boolean;
+  /**
+   * Cached result of {@link worktreeIsolationActive} (feature on AND workspace is a git repo),
+   * refreshed once per scheduling pass. Gates writable concurrency: parallel writers are only
+   * allowed when each gets its own isolated worktree, otherwise it clamps to 1 (shared cwd).
+   */
+  private worktreeActiveCache = false;
   private readonly defaultOrchestrationMode: TeamOrchestrationMode;
   private readonly maxConcurrentReadOnly: number;
   private readonly maxConcurrentWrite: number;
@@ -2433,6 +2449,11 @@ export class TeamOrchestrator extends EventEmitter {
       if (await this.completeOrStopFromGate()) return;
       if (await this.pauseIfRequested()) return;
 
+      // Refresh once per pass whether per-task worktree isolation is actually engaged (feature
+      // on AND git workspace). effectiveMaxWrite() reads this to decide if multiple developers
+      // may write in parallel (isolated) or must be clamped to one writer (shared cwd).
+      this.worktreeActiveCache = await this.worktreeIsolationActive();
+
       // Lead-owned sequencing. The Lead owns the queue: it processes user prompts, reviews
       // each role result, assigns the next unit of work, and signs off. A worker role runs
       // ONLY from a Lead-assigned board task. Pending Lead work — a queued user prompt OR a
@@ -2868,6 +2889,18 @@ export class TeamOrchestrator extends EventEmitter {
 
   private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
     const state = this.requireState();
+    // Self-recovery: the role's CLI died this turn and was evicted. Track it as a health signal
+    // and surface a visible notice so the user sees the system auto-restarting the agent instead
+    // of it silently stalling. The next turn for this role spawns a fresh CLI automatically.
+    if (result.sessionRestarted) {
+      role.restartCount = (role.restartCount ?? 0) + 1;
+      await this.appendMessage({
+        turnId: turn.id,
+        from: SYSTEM_SENDER,
+        kind: 'system',
+        body: `${role.name}'s CLI session ended unexpectedly and was auto-restarted (restart #${role.restartCount}). A fresh session will pick up its next turn.`,
+      }).catch(() => undefined);
+    }
     // Lead-owned sequencing inputs, captured before this turn's effects are applied.
     const isLeadTurn = role.id === this.leadRoleId();
     // A Lead turn "had work" if it processed a user prompt (drained directives) or was
@@ -3145,7 +3178,10 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   private effectiveMaxWrite(): number {
-    return this.worktreePerTask ? this.maxConcurrentWrite : 1;
+    // Multiple writers may only run concurrently when each lands in its own isolated git
+    // worktree. Without active isolation (feature off OR not a git repo) we clamp to a single
+    // writer so parallel developers never clobber each other on the shared working tree.
+    return this.worktreeActiveCache ? this.maxConcurrentWrite : 1;
   }
 
   private interruptTurn(turn: TeamTurnRecord, reason: string): void {

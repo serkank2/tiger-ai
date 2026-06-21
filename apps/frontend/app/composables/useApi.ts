@@ -254,6 +254,16 @@ export function useApi() {
       ),
     getTeamChanges: (runId: string) =>
       req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/changes`),
+    /**
+     * Translate chat message bodies for display only. The team's agents always work in
+     * English (enforced server-side); this just changes what the human reads. Order of
+     * `translations` mirrors the input `texts`.
+     */
+    translateTeamMessages: (texts: string[], targetLang: 'tr' | 'en') =>
+      req<{ translations: string[] }>('/api/team/translate', {
+        method: 'POST',
+        body: { texts, targetLang },
+      }),
     // Git-write routes: stage all, commit, and open a PR for the run's workspace.
     stageTeamChanges: (runId: string) =>
       req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/git/stage`, { method: 'POST' }),

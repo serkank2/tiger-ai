@@ -93,9 +93,9 @@ const connLabel = computed(() => {
 }
 .topbar.has-limit-panel {
   height: auto;
-  min-height: 108px;
+  min-height: 44px;
   align-items: stretch;
-  padding-block: 8px;
+  padding-block: 6px;
 }
 .section {
   margin: 0;

@@ -36,6 +36,7 @@ import { MysqlQueueRepository } from './queue/MysqlQueueRepository.js';
 import { MySqlTeamTemplateRepository } from './repositories/team-templates.js';
 import { RunTemplateService } from './services/run-templates.js';
 import { TeamTemplateService } from './services/team-templates.js';
+import { TeamTranslationService } from './services/TeamTranslationService.js';
 import { TeamOrchestrator, createTeamTurnRunner } from './team/TeamOrchestrator.js';
 import { createDefaultPromptGenerationService } from './services/PromptGenerationService.js';
 import { LimitService } from './services/LimitService.js';
@@ -94,11 +95,22 @@ const teamOrchestrator = new TeamOrchestrator({
   executionPersistence: new MySqlExecutionPersistence(dbPool),
   runner: createTeamTurnRunner({ manager, config: orchestrator.getConfig() }),
   limitService: limits,
+  // Live runs default to parallel "company" orchestration: the Lead fans independent work out to
+  // multiple developers at once, each isolated in its own git worktree (merged back on completion)
+  // so simultaneous writers never collide. Falls back to a single writer on non-git workspaces.
+  // When the matching KAPLAN_TEAM_* env var is explicitly set we honor it (config already parsed
+  // it); otherwise we apply the parallel live defaults. The raw config defaults stay sequential so
+  // unit tests that construct an orchestrator without options keep their deterministic behavior.
+  orchestrationMode: process.env.KAPLAN_TEAM_ORCHESTRATION_MODE ? config.team.orchestrationMode : 'company',
+  worktreePerTask: process.env.KAPLAN_TEAM_WORKTREE_PER_TASK ? config.team.worktreePerTask : true,
+  maxConcurrentReadOnly: process.env.KAPLAN_TEAM_MAX_CONCURRENT_READ_ONLY ? config.team.maxConcurrentReadOnly : 4,
+  maxConcurrentWrite: process.env.KAPLAN_TEAM_MAX_CONCURRENT_WRITE ? config.team.maxConcurrentWrite : 4,
 });
 const queueScheduler = new Scheduler(queueService, orchestrator, {
   terminalTarget: { state, manager, save },
   teamTarget: teamOrchestrator,
 });
+const teamTranslations = new TeamTranslationService({ manager, getConfig: () => orchestrator.getConfig() });
 
 const ctx: AppCtx = {
   state,
@@ -110,6 +122,7 @@ const ctx: AppCtx = {
   limits,
   teamOrchestrator,
   teamTemplates,
+  teamTranslations,
   save,
 };
 

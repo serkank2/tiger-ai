@@ -243,7 +243,7 @@ async function reset() {
             :display-name="roleDisplayName(i)"
           />
         </div>
-        <div v-else class="roles">
+        <TransitionGroup v-else name="tile" tag="div" class="roles">
           <TeamRoleTile
             v-for="(role, i) in state.roles"
             :key="role.id"
@@ -251,7 +251,7 @@ async function reset() {
             :display-name="roleDisplayName(i)"
             @select="selectedRoleId = role.id"
           />
-        </div>
+        </TransitionGroup>
 
         <TeamMetricsPanel :metrics="team.metrics" />
         <TeamAttemptsPanel @view-diff="showChanges = true" />
@@ -279,8 +279,12 @@ async function reset() {
       @close="selectedRoleId = null"
     />
 
-    <TeamChangesPanel v-if="showChanges" @close="showChanges = false" />
-    <TeamRunHistory v-if="showHistory" @close="showHistory = false" @opened="showHistory = false" />
+    <Transition name="panel">
+      <TeamChangesPanel v-if="showChanges" @close="showChanges = false" />
+    </Transition>
+    <Transition name="panel">
+      <TeamRunHistory v-if="showHistory" @close="showHistory = false" @opened="showHistory = false" />
+    </Transition>
   </div>
 </template>
 
@@ -456,5 +460,40 @@ async function reset() {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+}
+
+/* Role tiles enter/leave with a subtle fade + slide; `tile-move` keeps the remaining
+   tiles sliding smoothly when one is added/removed. Transform/opacity only — covered by
+   the global prefers-reduced-motion safety net. */
+.tile-enter-active,
+.tile-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.tile-enter-from,
+.tile-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.tile-leave-active {
+  position: absolute;
+  width: calc(100% - 2 * var(--space-3));
+}
+.tile-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+/* The Changes / History overlay panels fade + slide in when opened/switched. */
+.panel-enter-active,
+.panel-leave-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-out);
+}
+.panel-enter-from,
+.panel-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 </style>

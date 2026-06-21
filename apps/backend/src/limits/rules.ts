@@ -198,6 +198,51 @@ function thresholdDecision(rule: LimitRule, snapshot: LimitSnapshot, now: Date, 
   };
 }
 
+/** A soft usage warning for a single window, surfaced to the UI ahead of any hard block. */
+export interface LimitWarning {
+  provider: LimitProvider;
+  windowKey: LimitSnapshot['windowKey'];
+  label: string;
+  percentUsed: number;
+  level: 'warn' | 'critical';
+}
+
+/** Percent-used at/above which a window is flagged 'critical' regardless of warnPercent. */
+export const DEFAULT_CRITICAL_PERCENT = 90;
+/** Default percent-used at/above which a window is flagged 'warn'. */
+export const DEFAULT_WARN_PERCENT = 75;
+
+/**
+ * Pure, side-effect-free pass over the latest snapshot per (provider, window) that flags windows
+ * approaching their limit. Returns a 'critical' warning for any OK window whose percentUsed is
+ * >= 90, otherwise a 'warn' for any whose percentUsed is >= `warnPercent` (default 75). Unlike
+ * {@link evaluateLimitRules} this does not block execution — it is purely advisory for the UI.
+ * Failed/unparseable snapshots (ok:false or percentUsed === null) are ignored.
+ */
+export function evaluateLimitWarnings(
+  snapshots: LimitSnapshot[],
+  opts: { warnPercent?: number } = {},
+): LimitWarning[] {
+  const warnPercent = opts.warnPercent ?? DEFAULT_WARN_PERCENT;
+  const warnings: LimitWarning[] = [];
+  for (const snapshot of latestSnapshots(snapshots)) {
+    if (!snapshot.ok || snapshot.percentUsed === null) continue;
+    const percentUsed = snapshot.percentUsed;
+    let level: LimitWarning['level'] | null = null;
+    if (percentUsed >= DEFAULT_CRITICAL_PERCENT) level = 'critical';
+    else if (percentUsed >= warnPercent) level = 'warn';
+    if (!level) continue;
+    warnings.push({
+      provider: snapshot.provider,
+      windowKey: snapshot.windowKey,
+      label: snapshot.label,
+      percentUsed,
+      level,
+    });
+  }
+  return warnings;
+}
+
 export function evaluateLimitRules(
   snapshots: LimitSnapshot[],
   rules: LimitRule[],

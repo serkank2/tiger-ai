@@ -46,6 +46,14 @@ interface ProbeSpec {
   supported?: boolean;
   /** Reason shown when `supported` is false. */
   unsupportedReason?: string;
+  /**
+   * Best-effort providers: we launch the CLI and try `sendKeys`, but the command may not exist in
+   * the installed version. When the captured panel yields no parseable percent figure we return a
+   * clear ok:false snapshot using this message instead of pretending the probe succeeded.
+   */
+  bestEffort?: boolean;
+  /** Human message returned when a best-effort probe captured no parseable usage figure. */
+  bestEffortFailReason?: string;
 }
 
 // Configurable defaults. Edit here (or wire to config.json) to match the actual CLI commands.
@@ -53,16 +61,19 @@ interface ProbeSpec {
 const PROBES: Record<AgentType, ProbeSpec> = {
   claude: { command: 'claude', sendKeys: '/usage', captureMs: 5000 },
   codex: { command: 'codex --no-alt-screen', sendKeys: '/status', captureMs: 6000 },
-  // Antigravity's documented surface (`agy -h`, `agy models`) exposes no usage/limit command,
-  // so we never launch `agy` to guess at one or fabricate percentages — we report an explicit
-  // unsupported probe. If a project-safe limit command is later verified, fill in command/sendKeys
-  // and set supported:true; the existing used/left parser then applies unchanged.
+  // Antigravity (Gemini) is probed best-effort: `agy` is an interactive TUI, so we launch it and
+  // try the most likely usage command (`/usage`) the same way claude/codex are probed. agy's
+  // documented surface doesn't guarantee a usage command, so if the captured panel contains no
+  // parseable "N% used/left" figure we return a clear ok:false snapshot (parseConfidence:'unknown')
+  // explaining that the limit could not be read, rather than fabricating data or hard-failing as
+  // "Unsupported". The same used/left parser applies unchanged when a future agy build does expose it.
   antigravity: {
     command: 'agy',
-    sendKeys: '',
-    captureMs: 0,
-    supported: false,
-    unsupportedReason: 'Antigravity (agy) exposes no usage/limit command; no limit data is available.',
+    sendKeys: '/usage',
+    captureMs: 5000,
+    bestEffort: true,
+    bestEffortFailReason:
+      'Could not read Antigravity usage (agy may not expose a usage command in this version).',
   },
 };
 
@@ -252,6 +263,20 @@ export async function probeUsage(manager: TerminalManager, type: AgentType, cwd?
     const raw = stripAnsi(manager.getBuffer(termId));
     const entries = parseEntries(raw);
     const highlights = extractHighlights(raw);
+    // Best-effort providers (e.g. antigravity/agy) may not expose a usage command. If we captured
+    // no parseable percent figure, return a clear soft-warning snapshot rather than implying the
+    // panel text is real usage data — the UI can show ok:false with a human message.
+    if (spec.bestEffort && entries.length === 0) {
+      return {
+        type,
+        ok: false,
+        entries: [],
+        raw: tail(raw, 4000),
+        highlights,
+        error: spec.bestEffortFailReason ?? `Could not read ${type} usage from its CLI.`,
+        checkedAt,
+      };
+    }
     return {
       type,
       ok: entries.length > 0 || raw.trim().length > 0,
@@ -277,7 +302,7 @@ export async function probeUsage(manager: TerminalManager, type: AgentType, cwd?
   }
 }
 
-/** Probe every CLI concurrently (Antigravity short-circuits to an explicit unsupported probe). */
+/** Probe every CLI concurrently (Antigravity is probed best-effort; a parse miss returns ok:false). */
 export async function probeAllUsage(
   manager: TerminalManager,
   cwd?: string,

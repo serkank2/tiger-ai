@@ -5,12 +5,15 @@ import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseField from '~/components/ui/BaseField.vue';
 import { errText } from '~/lib/apiError';
 import { absoluteLocalPathError, customShellPathError, usesWindowsPathSyntax } from '~/lib/formValidation';
+import type { LocaleCode } from '~/locales';
 
 const emit = defineEmits<{ close: [] }>();
 const settings = useSettingsStore();
 const theme = useThemeStore();
 const notices = useNoticesStore();
 const api = useApi();
+const { t } = useT();
+const { locale, locales, setLocale } = useLocale();
 
 const SHELLS: { value: ShellKind; label: string }[] = [
   { value: 'system-default', label: 'System default' },
@@ -37,6 +40,10 @@ const cwdState = ref<'idle' | 'checking' | 'ok' | 'bad'>('idle');
 const saving = ref(false);
 const error = ref('');
 const showPicker = ref(false);
+
+function onLocaleChange(e: Event) {
+  setLocale((e.target as HTMLSelectElement).value as LocaleCode);
+}
 
 type FieldKey = 'defaultCwd' | 'shellPath';
 const serverErrors = reactive<Partial<Record<FieldKey, string>>>({});
@@ -124,7 +131,7 @@ async function save() {
 
   try {
     await settings.update(patch);
-    notices.push('Settings saved');
+    notices.push(t('settings.saved'));
     emit('close');
   } catch (e) {
     applyServerError(errText(e));
@@ -135,34 +142,60 @@ async function save() {
 </script>
 
 <template>
-  <BaseModal title="Settings" size="md" @close="emit('close')">
+  <BaseModal :title="t('nav.settings')" size="md" @close="emit('close')">
+    <!-- Appearance: theme + language. -->
+    <section class="section">
+      <header class="section-head">
+        <h3 class="section-title">{{ t('settings.appearance') }}</h3>
+        <p class="section-desc">{{ t('settings.appearanceDesc') }}</p>
+      </header>
+
       <div class="field">
-        <span>Theme <i>(applies instantly)</i></span>
+        <span class="field-label">{{ t('settings.theme') }}</span>
         <div class="themes">
           <button
-            v-for="t in theme.themes"
-            :key="t.id"
+            v-for="th in theme.themes"
+            :key="th.id"
             type="button"
             class="swatch"
-            :class="{ on: theme.id === t.id }"
+            :class="{ on: theme.id === th.id }"
             :style="{
-              background: t.vars['--bg'],
-              color: t.vars['--text'],
-              borderColor: theme.id === t.id ? t.vars['--accent'] : t.vars['--border-strong'],
+              background: th.vars['--bg'],
+              color: th.vars['--text'],
+              borderColor: theme.id === th.id ? th.vars['--accent'] : th.vars['--border-strong'],
             }"
-            @click="theme.set(t.id)"
+            @click="theme.set(th.id)"
           >
-            <span class="sdot" :style="{ background: t.vars['--accent'] }" />
-            {{ t.label }}
+            <span class="sdot" :style="{ background: th.vars['--accent'] }" />
+            {{ th.label }}
           </button>
         </div>
+        <p class="field-hint">{{ t('settings.themeHint') }}</p>
       </div>
+
+      <label class="field" for="settings-locale">
+        <span class="field-label">{{ t('settings.language') }}</span>
+        <select id="settings-locale" :value="locale" @change="onLocaleChange">
+          <option v-for="l in locales" :key="l.code" :value="l.code">{{ l.label }}</option>
+        </select>
+        <span class="field-hint">{{ t('settings.languageHint') }}</span>
+      </label>
+    </section>
+
+    <div class="divider" role="presentation" />
+
+    <!-- Workspace: default cwd + shell. -->
+    <section class="section">
+      <header class="section-head">
+        <h3 class="section-title">{{ t('settings.workspace') }}</h3>
+        <p class="section-desc">{{ t('settings.workspaceDesc') }}</p>
+      </header>
 
       <BaseField
         v-slot="{ id, describedby, invalid }"
         id="settings-default-cwd"
-        label="Default working directory"
-        hint="for new terminals"
+        :label="t('settings.defaultCwd')"
+        :hint="t('settings.defaultCwdHint')"
         :error="defaultCwdError || undefined"
       >
         <span class="cwd-row">
@@ -176,7 +209,15 @@ async function save() {
             @input="onCwdInput"
             @blur="checkCwd"
           />
-          <button type="button" class="browse" title="Browse folders" aria-label="Browse folders" @click="showPicker = true">📁</button>
+          <button
+            type="button"
+            class="browse"
+            :title="t('settings.browseFolders')"
+            :aria-label="t('settings.browseFolders')"
+            @click="showPicker = true"
+          >
+            📁
+          </button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -184,7 +225,7 @@ async function save() {
       </BaseField>
 
       <label class="field">
-        <span>Default shell</span>
+        <span class="field-label">{{ t('settings.defaultShell') }}</span>
         <select v-model="form.shellKind" @change="clearServerError('shellPath')">
           <option v-for="o in SHELLS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
@@ -193,7 +234,7 @@ async function save() {
         v-if="form.shellKind === 'custom'"
         v-slot="{ id, describedby, invalid }"
         id="settings-shell-path"
-        label="Default shell path"
+        :label="t('settings.defaultShellPath')"
         :error="shellPathError || undefined"
       >
         <input
@@ -206,58 +247,106 @@ async function save() {
           @input="clearServerError('shellPath')"
         />
       </BaseField>
+    </section>
 
-      <div class="group">
-        <span class="group-title">Command routing</span>
-        <label class="check">
-          <input v-model="form.appendNewlineByDefault" type="checkbox" />
-          <span>Append a newline so sent commands run immediately</span>
-        </label>
-        <label class="check">
-          <input v-model="form.startTerminalOnSend" type="checkbox" />
-          <span>Start a stopped terminal when a command is sent to it</span>
-        </label>
-      </div>
+    <div class="divider" role="presentation" />
 
-      <div class="group">
-        <span class="group-title">Security</span>
-        <label class="field" style="margin: 10px 0 0">
-          <span>API auth token <i>(only if the backend sets KAPLAN_AUTH_TOKEN)</i></span>
-          <input
-            v-model="form.authToken"
-            type="password"
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="leave empty for local (no auth)"
-          />
-        </label>
-      </div>
+    <!-- Command routing. -->
+    <section class="section">
+      <header class="section-head">
+        <h3 class="section-title">{{ t('settings.commandRouting') }}</h3>
+        <p class="section-desc">{{ t('settings.commandRoutingDesc') }}</p>
+      </header>
 
-      <p v-if="error" class="err">{{ error }}</p>
+      <label class="check">
+        <input v-model="form.appendNewlineByDefault" type="checkbox" />
+        <span>{{ t('settings.appendNewline') }}</span>
+      </label>
+      <label class="check">
+        <input v-model="form.startTerminalOnSend" type="checkbox" />
+        <span>{{ t('settings.startTerminalOnSend') }}</span>
+      </label>
+    </section>
 
-      <template #footer>
-        <BaseButton variant="ghost" @click="emit('close')">Cancel</BaseButton>
-        <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">Save</BaseButton>
-      </template>
+    <div class="divider" role="presentation" />
+
+    <!-- Security. -->
+    <section class="section">
+      <header class="section-head">
+        <h3 class="section-title">{{ t('settings.security') }}</h3>
+        <p class="section-desc">{{ t('settings.securityDesc') }}</p>
+      </header>
+
+      <label class="field" for="settings-auth-token">
+        <span class="field-label">{{ t('settings.authToken') }}</span>
+        <input
+          id="settings-auth-token"
+          v-model="form.authToken"
+          type="password"
+          spellcheck="false"
+          autocomplete="off"
+          :placeholder="t('settings.authTokenPlaceholder')"
+        />
+        <span class="field-hint">{{ t('settings.authTokenHint') }}</span>
+      </label>
+    </section>
+
+    <p v-if="error" class="err">{{ error }}</p>
+
+    <template #footer>
+      <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">{{ t('common.save') }}</BaseButton>
+    </template>
   </BaseModal>
 
   <FolderPicker v-if="showPicker" :initial="form.defaultCwd" @select="onPickFolder" @close="showPicker = false" />
 </template>
 
 <style scoped>
+.section {
+  display: block;
+}
+.section-head {
+  margin-bottom: var(--space-3, 12px);
+}
+.section-title {
+  margin: 0;
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+}
+.section-desc {
+  margin: var(--space-1, 4px) 0 0;
+  font-size: var(--text-sm, 13px);
+  line-height: var(--leading-snug, 1.35);
+  color: var(--text-dim);
+}
+.divider {
+  height: 1px;
+  margin: var(--space-5, 20px) 0;
+  background: var(--border);
+}
 .field {
   display: block;
-  margin-bottom: 13px;
+  margin-bottom: var(--space-4, 16px);
 }
-.field > span {
+.field:last-child {
+  margin-bottom: 0;
+}
+.field-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-xs, 12px);
   color: var(--text-dim);
-  margin-bottom: 5px;
+  margin-bottom: var(--space-2, 8px);
 }
-.field i {
+.field-hint {
+  display: block;
+  margin: var(--space-2, 8px) 0 0;
+  font-size: var(--text-xs, 12px);
+  line-height: var(--leading-snug, 1.35);
   color: var(--text-faint);
-  font-style: normal;
 }
 .field input,
 .field select {
@@ -318,18 +407,6 @@ async function save() {
 .flag.bad {
   color: var(--red);
 }
-.group {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px 14px;
-  margin: 6px 0 4px;
-}
-.group-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-faint);
-}
 .check {
   display: flex;
   align-items: center;
@@ -338,11 +415,15 @@ async function save() {
   font-size: 13px;
   color: var(--text-dim);
 }
+.check:first-of-type {
+  margin-top: 0;
+}
 .check input {
   accent-color: var(--accent);
   flex: none;
 }
 .err {
+  margin-top: var(--space-4, 16px);
   color: var(--red);
   font-size: 13px;
 }

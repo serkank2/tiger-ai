@@ -174,9 +174,19 @@ export const config = {
 
   // AI Team execution toggles.
   team: {
+    // The live server (src/index.ts) opts new runs into the parallel "company" orchestration so
+    // the Lead can fan independent work out to multiple developers at once; this raw default stays
+    // 'legacy' so unit tests that construct an orchestrator without options keep the deterministic
+    // single-developer sequencing they assert. Override with KAPLAN_TEAM_ORCHESTRATION_MODE.
     orchestrationMode: envChoice('KAPLAN_TEAM_ORCHESTRATION_MODE', ['legacy', 'company'] as const, 'legacy'),
     maxConcurrentReadOnly: Math.max(1, envInt('KAPLAN_TEAM_MAX_CONCURRENT_READ_ONLY', 2)),
     maxConcurrentWrite: Math.max(1, envInt('KAPLAN_TEAM_MAX_CONCURRENT_WRITE', 1)),
+    // Honor a team role's EXPLICITLY-chosen dangerous/full-permission mode (e.g. Claude
+    // `--dangerously-skip-permissions`). When a user builds a template and deliberately sets a
+    // role to a dangerous permission, that selection IS the opt-in, so we apply it instead of
+    // silently downgrading to the CLI's prompt-for-everything default. Set
+    // KAPLAN_TEAM_HONOR_DANGEROUS_PERMISSIONS=0 for locked-down deployments that must ignore it.
+    honorDangerousPermissions: envBool('KAPLAN_TEAM_HONOR_DANGEROUS_PERMISSIONS', true),
     // Git-worktree-per-task isolation for Team role turns. OFF by default: when enabled
     // (KAPLAN_TEAM_WORKTREE_PER_TASK=1) AND the workspace is a git repo, each role's CLAIMED
     // board task runs in its OWN throwaway git worktree (branch kaplan/<runId>-<taskId>) so a
@@ -185,6 +195,11 @@ export const config = {
     // KEEPS the worktree intact for manual resolution (never auto-resolved); a clean merge prunes
     // it. When disabled, role turns use the shared workspace cwd exactly as today (byte-for-byte
     // unchanged). Extends the Tiger-only worktree feature (config.tiger.worktreePerTask).
+    // The live server (src/index.ts) turns this ON so parallel developers each get an isolated
+    // working copy (merged back on completion) and can safely write at the same time; it only
+    // actually engages on a git workspace, otherwise turns fall back to the shared cwd with
+    // writable concurrency clamped to 1. This raw default stays false so tests are unchanged.
+    // Override with KAPLAN_TEAM_WORKTREE_PER_TASK.
     worktreePerTask: envBool('KAPLAN_TEAM_WORKTREE_PER_TASK', false),
   },
 

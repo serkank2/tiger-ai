@@ -7,6 +7,7 @@ import type { QueueService } from './services/QueueService.js';
 import type { LimitService } from './services/LimitService.js';
 import type { TeamOrchestrator } from './team/TeamOrchestrator.js';
 import type { TeamTemplateService } from './services/team-templates.js';
+import type { TeamTranslationService } from './services/TeamTranslationService.js';
 
 /** Shared application context injected into REST routers and the WS server. */
 export interface AppCtx {
@@ -26,6 +27,8 @@ export interface AppCtx {
   teamOrchestrator: TeamOrchestrator;
   /** DB-backed catalog of reusable team/role templates. */
   teamTemplates: TeamTemplateService;
+  /** On-demand TR/EN translation of team-chat messages (agents still run in English). */
+  teamTranslations: TeamTranslationService;
   /** Persist the current in-memory state atomically. */
   save: () => Promise<void>;
 }

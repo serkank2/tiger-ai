@@ -44,6 +44,14 @@ export interface RunRoleTurnOptions {
   model?: string;
   effort?: string;
   permission?: string;
+  /**
+   * Whether a blanket dangerous/full-permission mode (e.g. `--dangerously-skip-permissions`)
+   * the role explicitly selected may actually be applied to the launch command. When omitted,
+   * {@link buildLaunchCommand} falls back to its own config-derived default. The TeamOrchestrator
+   * passes `true` (gated by `config.team.honorDangerousPermissions`) so a user's deliberate
+   * template choice is honored instead of being silently downgraded.
+   */
+  allowDangerousPermissions?: boolean;
   signal?: AbortSignal;
   /** Caller-supplied turn id; makes the live terminal id deterministic for the UI. */
   turnId?: string;
@@ -100,7 +108,14 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
   // role's agent/model/effort/permission. roleLaunchParams must see the un-normalized role so
   // roleAgentString can read those per-role CLI settings; it re-normalizes internally to resolve agentType.
   const launchParams = roleLaunchParams(opts);
-  const command = buildLaunchCommand(runOpts.config, role.agentType, launchParams);
+  const command = buildLaunchCommand(
+    runOpts.config,
+    role.agentType,
+    launchParams,
+    runOpts.allowDangerousPermissions !== undefined
+      ? { allowDangerous: runOpts.allowDangerousPermissions }
+      : undefined,
+  );
   const startedAt = new Date().toISOString();
 
   await fs.mkdir(runtimeDir, { recursive: true });

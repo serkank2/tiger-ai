@@ -89,6 +89,7 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
     limits: {} as AppCtx['limits'],
     teamOrchestrator: {} as AppCtx['teamOrchestrator'],
     teamTemplates: {} as AppCtx['teamTemplates'],
+    teamTranslations: {} as AppCtx['teamTranslations'],
     save: async () => {},
   };
 

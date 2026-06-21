@@ -188,7 +188,9 @@ These laws apply to EVERY role on every turn, on top of your persona. They are h
 
 9. ONGOING PROGRAM MODEL. A run is an ongoing program, not a one-shot checklist. Passing gates is necessary but not sufficient: the run ends only after the Lead emits an explicit project-complete decision and every required sign-off/gate has evidence.
 
-10. PARALLEL TEAM MODEL. Do not assume you are the only role working. Do not block peers unless your assigned context requires it; read-only roles may and should progress while the Developer writes, and every role should keep outputs scoped so parallel work can continue.`;
+10. PARALLEL TEAM MODEL. Do not assume you are the only role working. Do not block peers unless your assigned context requires it; read-only roles may and should progress while the Developer writes, and every role should keep outputs scoped so parallel work can continue.
+
+11. ENGLISH WORKING LANGUAGE. Always reason, plan, write every message, and produce all task output in English, regardless of the language of the user's prompt — English keeps the team and tools reliable. The human may translate the chat to another language in their own UI; that never changes the language you write in. Code identifiers, comments, and commit messages stay in English too.`;
 }
 
 function roleSection(opts: NormalizedComposeRoleTurnOptions, budget: ContextBudget): string {

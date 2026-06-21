@@ -386,6 +386,28 @@ export function createTeamRouter(ctx: AppCtx): Router {
     res.json({ state: toTeamRunStateDto(orch.getState()) });
   });
 
+  // Translate team-chat message bodies to a target UI language on demand. The team's agents are
+  // always driven in English for reliability; this only changes what the human reads in the panel.
+  router.post('/translate', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const targetLang = asString(body.targetLang).trim();
+    if (targetLang !== 'tr' && targetLang !== 'en') {
+      throw badRequest('targetLang must be "tr" or "en"');
+    }
+    const rawTexts = Array.isArray(body.texts) ? body.texts : null;
+    if (!rawTexts) throw badRequest('texts must be an array of strings');
+    const texts = rawTexts.map((t) => (typeof t === 'string' ? t : String(t ?? '')));
+    try {
+      const translations = await ctx.teamTranslations.translate(texts, targetLang);
+      res.json({ translations });
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      const status = (err as { status?: number }).status;
+      if (status && status < 500) throw badRequest(err instanceof Error ? err.message : 'translation failed');
+      throw err;
+    }
+  });
+
   router.get('/runs/:id/messages', async (req, res) => {
     const id = req.params.id;
     const state = orch.tryGetState();

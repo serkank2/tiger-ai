@@ -78,7 +78,11 @@ function onTileKeydown(ev: KeyboardEvent): void {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  transition: border-color var(--dur-base) var(--ease-standard);
+  /* Smoothly animate status changes (idle→thinking→working→…): the border + background
+     shift colour, and the status dot (below) cross-fades its colour with the same token. */
+  transition:
+    border-color var(--dur-base) var(--ease-standard),
+    background-color var(--dur-base) var(--ease-standard);
 }
 .role-tile.clickable {
   cursor: pointer;
@@ -106,6 +110,7 @@ function onTileKeydown(ev: KeyboardEvent): void {
   border-radius: var(--radius-pill);
   background: var(--slate);
   flex: none;
+  transition: background-color var(--dur-base) var(--ease-standard);
 }
 .s-working .dot, .s-thinking .dot { background: var(--accent); }
 .s-blocked .dot { background: var(--amber); }
