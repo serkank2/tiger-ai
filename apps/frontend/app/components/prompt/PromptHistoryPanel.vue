@@ -3,7 +3,10 @@ import { computed, ref, watch } from 'vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
 import Skeleton from '~/components/ui/Skeleton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
+import { useT } from '~/composables/useT';
 import type { PromptHistoryEvent } from '~/types';
+
+const { t } = useT();
 
 const props = defineProps<{
   items: PromptHistoryEvent[];
@@ -101,7 +104,7 @@ function fmtDate(value: string): string {
 <template>
   <section class="history-panel">
     <div class="filters" aria-label="Prompt history filters">
-      <input v-model="q" placeholder="Search text, project, generation id" spellcheck="false" />
+      <input v-model="q" :placeholder="t('prompts.history.searchPlaceholder')" spellcheck="false" />
       <select v-model="kind">
         <option value="">All kinds</option>
         <option v-for="value in kinds" :key="value" :value="value">{{ value.replaceAll('_', ' ') }}</option>
