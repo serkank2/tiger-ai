@@ -56,7 +56,7 @@ const inputLimit = computed(() => strictestLimit(targetTerminals.value.map((t) =
 const lengthWarning = computed(() => {
   const len = cmd.value.length;
   if (Number.isFinite(inputLimit.value) && len > inputLimit.value) {
-    return `${len} characters - the target shell may truncate the command near the ${inputLimit.value} character limit. For very long content, write it to a file and run it from there.`;
+    return t('terminals.commandLengthWarning', { len, limit: inputLimit.value });
   }
   return null;
 });
@@ -67,12 +67,12 @@ function broadcastFailureMessage(result: BroadcastOutcome): string | null {
       return null;
     case 'not_sent':
       return result.reason === 'server_error'
-        ? `Command not sent: ${result.message ?? 'the backend rejected the request.'}`
-        : 'Command not sent: the socket is not connected.';
+        ? t('terminals.commandNotSentServer', { message: result.message ?? t('terminals.commandNotSentServerDefault') })
+        : t('terminals.commandNotSentDisconnected');
     case 'timeout':
-      return 'Command status unknown: no broadcast confirmation was received within 5 seconds.';
+      return t('terminals.commandStatusTimeout');
     case 'disconnected':
-      return 'Command status unknown: the socket disconnected before confirming delivery.';
+      return t('terminals.commandStatusDisconnected');
   }
 }
 
@@ -88,7 +88,7 @@ async function send() {
   // keep the input for retry if nothing actually ran (all targets failed, or not sent)
   if (result.kind === 'ok' && result.written > 0) {
     cmd.value = '';
-    sendStatus.value = `Sent to ${result.written} terminal(s).`;
+    sendStatus.value = t('terminals.sentToCount', { n: result.written });
   } else if (failureMessage) {
     sendStatus.value = failureMessage;
   }
@@ -113,11 +113,11 @@ function onSegKeydown(e: KeyboardEvent) {
 }
 
 // one-click control keys sent to the current target (raw byte, no trailing newline)
-const QUICK_KEYS = [
-  { label: '^C', char: '\x03', title: 'Ctrl+C (interrupt)' },
-  { label: '^D', char: '\x04', title: 'Ctrl+D (EOF)' },
-  { label: 'Esc', char: '\x1b', title: 'Escape' },
-];
+const QUICK_KEYS = computed(() => [
+  { label: '^C', char: '\x03', title: t('terminals.quickKeys.ctrlC') },
+  { label: '^D', char: '\x04', title: t('terminals.quickKeys.ctrlD') },
+  { label: 'Esc', char: '\x1b', title: t('terminals.quickKeys.esc') },
+]);
 function sendKey(ch: string) {
   if (!canSend.value) return;
   void socket.broadcast(terminals.buildTarget(), ch, false);
@@ -187,7 +187,7 @@ function sendKey(ch: string) {
         type="button"
         class="key"
         :disabled="!canSend"
-        :title="`Send ${k.title} to ${terminals.commandMode}`"
+        :title="t('terminals.quickKeyTitle', { key: k.title, mode: terminals.commandMode })"
         @click="sendKey(k.char)"
       >
         {{ k.label }}
@@ -199,7 +199,7 @@ function sendKey(ch: string) {
         :class="{ on: terminals.layoutMode === 'focus' }"
         :aria-pressed="terminals.layoutMode === 'focus'"
         :tabindex="terminals.layoutMode === 'focus' ? 0 : -1"
-        title="Single focused terminal"
+        :title="t('terminals.focusViewTitle')"
         :aria-label="t('terminals.focusView')"
         @click="terminals.layoutMode = 'focus'"
       >▭</button>
@@ -207,7 +207,7 @@ function sendKey(ch: string) {
         :class="{ on: terminals.layoutMode === 'grid' }"
         :aria-pressed="terminals.layoutMode === 'grid'"
         :tabindex="terminals.layoutMode === 'grid' ? 0 : -1"
-        title="Tiled grid view"
+        :title="t('terminals.gridViewTitle')"
         :aria-label="t('terminals.gridView')"
         @click="terminals.layoutMode = 'grid'"
       >▦</button>

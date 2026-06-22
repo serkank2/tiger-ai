@@ -15,7 +15,7 @@ const { t } = useT();
 </script>
 
 <template>
-  <nav class="rail" aria-label="Primary">
+  <nav class="rail" :aria-label="t('nav.primary')">
     <NuxtLink to="/terminals" class="brand" :aria-label="t('nav.home')">
       <span class="logo">🐅</span>
       <span class="word">Kaplan</span>

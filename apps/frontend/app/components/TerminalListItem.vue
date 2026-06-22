@@ -3,6 +3,7 @@ import type { TerminalDto } from '~/types';
 import IconTrash from '~/components/IconTrash.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
+const { t } = useT();
 const props = defineProps<{ terminal: TerminalDto; active: boolean; selected: boolean }>();
 const emit = defineEmits<{
   select: [];
@@ -52,31 +53,31 @@ onBeforeUnmount(() => {
       type="checkbox"
       :checked="selected"
       :disabled="terminal.protected"
-      :title="terminal.protected ? 'Protected — excluded from bulk select/send' : ''"
-      :aria-label="terminal.protected ? `${terminal.name} (protected, not bulk-selectable)` : `Select ${terminal.name}`"
+      :title="terminal.protected ? t('terminals.listItem.protectedCheckbox') : ''"
+      :aria-label="terminal.protected ? t('terminals.listItem.protectedAria', { name: terminal.name }) : t('terminals.listItem.selectAria', { name: terminal.name })"
       @click.stop
       @change="emit('toggle')"
     />
     <StatusDot :state="terminal.status.state" />
     <div class="meta">
-      <div class="name"><span v-if="terminal.protected" class="lock" title="Protected — excluded from bulk/fan-out commands">🔒</span>{{ terminal.name }}</div>
+      <div class="name"><span v-if="terminal.protected" class="lock" :title="t('terminals.listItem.protectedLock')">🔒</span>{{ terminal.name }}</div>
       <div class="cwd" :title="terminal.cwd">{{ terminal.cwd }}</div>
       <div v-if="terminal.lastOutput" class="out">{{ terminal.lastOutput }}</div>
     </div>
     <div class="actions" @click.stop>
-      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" icon-only aria-label="Start terminal" title="Start" @click="emit('start')">▶</BaseButton>
-      <BaseButton v-else class="ic" size="sm" variant="ghost" icon-only aria-label="Stop terminal" title="Stop" @click="emit('stop')">■</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Restart terminal" title="Restart" @click="emit('restart')">⟳</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Duplicate terminal" title="Duplicate" @click="emit('duplicate')">⧉</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Edit terminal" title="Edit" @click="emit('edit')">✎</BaseButton>
+      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.startTerminal')" :title="t('terminals.actions.start')" @click="emit('start')">▶</BaseButton>
+      <BaseButton v-else class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.stopTerminal')" :title="t('terminals.actions.stop')" @click="emit('stop')">■</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.restartTerminal')" :title="t('terminals.actions.restart')" @click="emit('restart')">⟳</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.duplicateTerminal')" :title="t('terminals.actions.duplicate')" @click="emit('duplicate')">⧉</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.editTerminal')" :title="t('terminals.actions.edit')" @click="emit('edit')">✎</BaseButton>
       <BaseButton
         class="ic danger"
         :class="{ confirm: confirming }"
         size="sm"
         variant="ghost"
         icon-only
-        :aria-label="confirming ? 'Confirm delete terminal' : 'Delete terminal'"
-        :title="confirming ? 'Click again to delete' : 'Delete'"
+        :aria-label="confirming ? t('terminals.actions.confirmDeleteTerminal') : t('terminals.actions.deleteTerminal')"
+        :title="confirming ? t('terminals.actions.clickAgainToDelete') : t('terminals.actions.delete')"
         @click="onDelete"
       >
         <template v-if="confirming">✓?</template>

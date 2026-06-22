@@ -8,6 +8,7 @@ import StateView from '~/components/state/StateView.vue';
 import SettingsModal from '~/components/SettingsModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
+const { t } = useT();
 const api = useApi();
 const settings = useSettingsStore();
 const theme = useThemeStore();
@@ -48,80 +49,72 @@ onMounted(loadStatus);
 <template>
   <section class="page">
     <header class="page-head">
-      <h2>Settings</h2>
-      <p class="lead">
-        System status and application preferences. Kaplan persists everything to MySQL, so work
-        resumes from where it left off even after a backend restart.
-      </p>
+      <h2>{{ t('settings.title') }}</h2>
+      <p class="lead">{{ t('settings.page.lead') }}</p>
     </header>
 
-    <StateView v-if="loading && !health" kind="loading" title="Checking system status…" />
+    <StateView v-if="loading && !health" kind="loading" :title="t('settings.page.checking')" />
     <StateView
       v-else-if="error && !health"
       kind="error"
-      title="Couldn't load system status"
+      :title="t('settings.page.loadError')"
       :description="error"
     >
-      <BaseButton @click="loadStatus">Retry</BaseButton>
+      <BaseButton @click="loadStatus">{{ t('common.retry') }}</BaseButton>
     </StateView>
 
     <template v-else>
       <!-- System status -->
       <section class="card">
         <header class="card-head">
-          <h3>System status</h3>
+          <h3>{{ t('settings.page.systemStatus') }}</h3>
           <BaseButton size="sm" :loading="loading" @click="loadStatus">
-            {{ loading ? 'Refreshing…' : 'Refresh' }}
+            {{ loading ? t('settings.page.refreshing') : t('common.refresh') }}
           </BaseButton>
         </header>
         <dl class="grid">
           <div class="row">
-            <dt>Database (MySQL)</dt>
+            <dt>{{ t('settings.page.database') }}</dt>
             <dd>
               <span class="pill" :class="dbReady ? 'ok' : 'bad'" role="status">
-                <span class="dot" aria-hidden="true" />{{ dbReady ? 'Ready' : 'Unavailable' }}
+                <span class="dot" aria-hidden="true" />{{ dbReady ? t('common.status.ready') : t('settings.page.unavailable') }}
               </span>
               <span v-if="health?.db.name" class="muted">{{ health.db.name }}</span>
             </dd>
           </div>
           <div class="row">
-            <dt>Backend</dt>
+            <dt>{{ t('settings.page.backend') }}</dt>
             <dd>
               <span class="pill" :class="health?.ok ? 'ok' : 'bad'" role="status">
-                <span class="dot" aria-hidden="true" />{{ health?.status ?? 'unknown' }}
+                <span class="dot" aria-hidden="true" />{{ health?.status ?? t('common.status.unknown') }}
               </span>
             </dd>
           </div>
           <div class="row">
-            <dt>Terminals tracked</dt>
+            <dt>{{ t('settings.page.terminalsTracked') }}</dt>
             <dd>{{ health?.terminals ?? '—' }}</dd>
           </div>
           <div class="row">
-            <dt>Data directory</dt>
+            <dt>{{ t('settings.page.dataDirectory') }}</dt>
             <dd class="mono">{{ health?.dataDir ?? '—' }}</dd>
           </div>
         </dl>
-        <p v-if="!dbReady" class="warn">
-          MySQL is the durable system of record. While it is unavailable, persistence and resume are degraded.
-        </p>
+        <p v-if="!dbReady" class="warn">{{ t('settings.page.dbWarn') }}</p>
       </section>
 
       <!-- Legacy import -->
       <section class="card">
         <header class="card-head">
-          <h3>Legacy import</h3>
+          <h3>{{ t('settings.page.legacyImport') }}</h3>
         </header>
-        <p class="card-lead">
-          On startup, Kaplan imports legacy file-based state (projects and run templates) into MySQL.
-          These counts reflect what is now available, including anything imported.
-        </p>
+        <p class="card-lead">{{ t('settings.page.legacyLead') }}</p>
         <dl class="grid">
           <div class="row">
-            <dt>Projects available</dt>
+            <dt>{{ t('settings.page.projectsAvailable') }}</dt>
             <dd>{{ projectCount }}</dd>
           </div>
           <div class="row">
-            <dt>Run templates</dt>
+            <dt>{{ t('settings.page.runTemplates') }}</dt>
             <dd>{{ templateCount ?? '—' }}</dd>
           </div>
         </dl>
@@ -130,20 +123,20 @@ onMounted(loadStatus);
       <!-- Preferences -->
       <section class="card">
         <header class="card-head">
-          <h3>Preferences</h3>
-          <BaseButton size="sm" @click="showPreferences = true">Edit preferences</BaseButton>
+          <h3>{{ t('settings.page.preferences') }}</h3>
+          <BaseButton size="sm" @click="showPreferences = true">{{ t('settings.page.editPreferences') }}</BaseButton>
         </header>
         <dl class="grid">
           <div class="row">
-            <dt>Theme</dt>
+            <dt>{{ t('settings.theme') }}</dt>
             <dd>{{ theme.current.label }}</dd>
           </div>
           <div class="row">
-            <dt>Default working directory</dt>
+            <dt>{{ t('settings.defaultCwd') }}</dt>
             <dd class="mono">{{ settings.settings?.defaultCwd || '—' }}</dd>
           </div>
           <div class="row">
-            <dt>Default shell</dt>
+            <dt>{{ t('settings.defaultShell') }}</dt>
             <dd>{{ settings.settings?.defaultShell.kind ?? '—' }}</dd>
           </div>
         </dl>

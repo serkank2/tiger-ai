@@ -5,6 +5,7 @@ import Skeleton from '~/components/ui/Skeleton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 
 const emit = defineEmits<{ create: [] }>();
+const { t } = useT();
 const terminals = useTerminalsStore();
 
 // Tile every terminal (decoupled from command-target selection to avoid confusion).
@@ -14,23 +15,23 @@ const tiles = computed(() => terminals.items);
 <template>
   <section class="grid-pane">
     <div v-if="tiles.length" class="grid-bar">
-      <span class="hint">Tiling all {{ tiles.length }} terminal(s) · click a tile to focus it, ⛶ to expand to single view</span>
+      <span class="hint">{{ t('terminals.gridHint', { n: tiles.length }) }}</span>
     </div>
 
     <div v-if="terminals.loading && !terminals.loaded" class="grid loading-grid">
       <div v-for="i in 4" :key="i" class="loading-tile">
-        <Spinner v-if="i === 1" :size="14" label="Loading terminals" />
+        <Spinner v-if="i === 1" :size="14" :label="t('terminals.loadingTerminals')" />
         <Skeleton :lines="5" />
       </div>
     </div>
 
     <div v-else-if="tiles.length" class="grid">
-      <TerminalTile v-for="t in tiles" :key="t.id" :terminal="t" />
+      <TerminalTile v-for="term in tiles" :key="term.id" :terminal="term" />
     </div>
 
-    <EmptyState v-else title="No terminals yet." class="empty">
+    <EmptyState v-else :title="t('terminals.none')" class="empty">
       <template #actions>
-        <BaseButton variant="primary" @click="emit('create')">+ Create one</BaseButton>
+        <BaseButton variant="primary" @click="emit('create')">{{ t('terminals.createOne') }}</BaseButton>
       </template>
     </EmptyState>
   </section>

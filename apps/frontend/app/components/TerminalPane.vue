@@ -2,6 +2,7 @@
 import BaseButton from '~/components/ui/BaseButton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 
+const { t } = useT();
 const terminals = useTerminalsStore();
 
 const host = ref<HTMLElement | null>(null);
@@ -39,10 +40,10 @@ async function runLifecycle(action: () => unknown | Promise<unknown>) {
         class="pexit"
         :class="{ bad: active.status.exitCode !== 0 }"
       >
-        exit {{ active.status.exitCode }}
+        {{ t('terminals.pane.exit', { code: active.status.exitCode }) }}
       </span>
       <span v-else-if="active.status.state === 'failed'" class="pexit bad" :title="active.status.error?.message">
-        failed{{ active.status.error?.message ? ': ' + active.status.error.message : '' }}
+        {{ t('terminals.pane.failed') }}{{ active.status.error?.message ? ': ' + active.status.error.message : '' }}
       </span>
       <span class="spacer" />
       <BaseButton
@@ -51,25 +52,25 @@ async function runLifecycle(action: () => unknown | Promise<unknown>) {
         variant="primary"
         :loading="pending"
         @click="runLifecycle(() => terminals.start(active!.id))"
-        >▶ Start</BaseButton
+        >{{ t('terminals.pane.start') }}</BaseButton
       >
-      <BaseButton v-else size="sm" :loading="pending" @click="runLifecycle(() => terminals.stop(active!.id))">■ Stop</BaseButton>
-      <BaseButton size="sm" :loading="pending" @click="runLifecycle(() => terminals.restart(active!.id))">⟳ Restart</BaseButton>
+      <BaseButton v-else size="sm" :loading="pending" @click="runLifecycle(() => terminals.stop(active!.id))">{{ t('terminals.pane.stop') }}</BaseButton>
+      <BaseButton size="sm" :loading="pending" @click="runLifecycle(() => terminals.restart(active!.id))">{{ t('terminals.pane.restart') }}</BaseButton>
     </div>
 
     <div class="term-wrap">
       <div ref="host" class="term" />
       <div v-if="active && !running" class="stopped-hint">
-        {{ active.status.state }} — press <b>▶ Start</b> to interact
+        {{ active.status.state }} — {{ t('terminals.pane.pressPrefix') }} <b>{{ t('terminals.pane.start') }}</b> {{ t('terminals.pane.pressSuffix') }}
       </div>
     </div>
 
     <div v-if="terminals.loading && !terminals.loaded" class="noactive">
-      <Spinner label="Loading terminals" />
+      <Spinner :label="t('terminals.loadingTerminals')" />
     </div>
 
     <div v-else-if="!active" class="noactive">
-      <p>Select a terminal on the left,<br />or create one to begin.</p>
+      <p>{{ t('terminals.pane.noActiveLine1') }}<br />{{ t('terminals.pane.noActiveLine2') }}</p>
     </div>
   </section>
 </template>

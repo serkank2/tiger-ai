@@ -5,6 +5,7 @@
 import type { TerminalDto } from '~/types';
 import StateView from '~/components/state/StateView.vue';
 
+const { t } = useT();
 const terminals = useTerminalsStore();
 const config = useRuntimeConfig();
 const apiBase = computed(() => String(config.public.apiBase));
@@ -21,8 +22,8 @@ function openCreate() {
   editing.value = null;
   showEditor.value = true;
 }
-function openEdit(t: TerminalDto) {
-  editing.value = t;
+function openEdit(term: TerminalDto) {
+  editing.value = term;
   showEditor.value = true;
 }
 
@@ -96,11 +97,11 @@ watch(shouldPollPreviews, syncPreviewPoll);
     <div v-if="terminals.loadError && !terminals.loaded" class="error-shell">
       <StateView
         kind="error"
-        title="Can't reach the backend"
+        :title="t('terminals.cantReachBackend')"
         :description="`${apiBase} — ${terminals.loadError}`"
       >
-        <p class="dim">Is <code>npm run dev</code> running?</p>
-        <button class="retry" @click="loadTerminals">Retry</button>
+        <p class="dim">{{ t('terminals.backendHintPrefix') }} <code>npm run dev</code> {{ t('terminals.backendHintSuffix') }}</p>
+        <button class="retry" @click="loadTerminals">{{ t('common.retry') }}</button>
       </StateView>
     </div>
 

@@ -99,9 +99,9 @@ const dialog = useDialog();
 
 async function removeRule(rule: LimitRule) {
   const ok = await dialog.confirm({
-    title: 'Delete rule',
-    message: `Delete the ${rule.provider} / ${rule.windowKey} gate rule? This cannot be undone.`,
-    confirmText: 'Delete',
+    title: t('limits.view.deleteRuleTitle'),
+    message: t('limits.view.deleteRuleMessage', { provider: rule.provider, window: rule.windowKey }),
+    confirmText: t('common.delete'),
     danger: true,
   });
   if (!ok) return;
@@ -132,9 +132,9 @@ function refresh() {
 }
 
 function fmtDate(iso?: string | null): string {
-  if (!iso) return 'Unknown';
+  if (!iso) return t('common.status.unknown');
   const time = Date.parse(iso);
-  if (!Number.isFinite(time)) return 'Unknown';
+  if (!Number.isFinite(time)) return t('common.status.unknown');
   return new Date(time).toLocaleString();
 }
 
@@ -156,7 +156,7 @@ function widthFor(snapshot: LimitSnapshot): string {
 }
 
 function rawPanel(snapshot: LimitSnapshot): string {
-  return snapshot.rawPanel?.trim() || 'No raw panel recorded.';
+  return snapshot.rawPanel?.trim() || t('limits.view.noRawPanel');
 }
 
 onMounted(() => {
@@ -167,25 +167,25 @@ onMounted(() => {
 <template>
   <section class="limits-view">
     <header class="limits-head">
-      <BaseButton variant="secondary" @click="emit('back')">Back</BaseButton>
+      <BaseButton variant="secondary" @click="emit('back')">{{ t('common.back') }}</BaseButton>
       <div class="head-copy">
-        <h1>Limits</h1>
+        <h1>{{ t('nav.limits') }}</h1>
         <p>
-          Updated {{ fmtDate(limits.updatedAt) }}
+          {{ t('limits.view.updated', { date: fmtDate(limits.updatedAt) }) }}
           <span class="dotsep">/</span>
           {{ conn.status }}
         </p>
       </div>
       <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">
-        {{ limits.refreshing ? 'Refreshing' : 'Refresh' }}
+        {{ limits.refreshing ? t('limits.panel.refreshing') : t('common.refresh') }}
       </BaseButton>
     </header>
 
     <div class="state-row">
-      <p v-if="conn.status === 'disconnected'" class="notice danger">Live connection is disconnected.</p>
+      <p v-if="conn.status === 'disconnected'" class="notice danger">{{ t('limits.view.disconnected') }}</p>
       <p v-if="limits.loadError" class="notice danger">{{ limits.loadError }}</p>
       <p v-if="limits.refreshError" class="notice danger">{{ limits.refreshError }}</p>
-      <p v-if="limits.stale" class="notice warn">One or more latest snapshots are stale.</p>
+      <p v-if="limits.stale" class="notice warn">{{ t('limits.view.staleNotice') }}</p>
     </div>
 
     <div v-if="limits.loading && !limits.loaded" class="loading-grid">
@@ -195,32 +195,32 @@ onMounted(() => {
 
     <EmptyState
       v-else-if="limits.loaded && !limits.hasData"
-      title="No limit snapshots"
-      description="Refresh after a provider's usage data is available."
+      :title="t('limits.view.noSnapshotsTitle')"
+      :description="t('limits.view.noSnapshotsDesc')"
     >
       <template #actions>
-        <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">Refresh</BaseButton>
+        <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">{{ t('common.refresh') }}</BaseButton>
       </template>
     </EmptyState>
 
     <template v-else>
       <section class="gate-panel" :class="{ blocked: decision?.action === 'block' }">
         <div>
-          <p class="eyebrow">Current gate</p>
+          <p class="eyebrow">{{ t('limits.view.currentGate') }}</p>
           <h2>{{ gateLabel(decision) }}</h2>
-          <p class="gate-reason">{{ decision?.reason ?? 'No gate decision has been loaded.' }}</p>
+          <p class="gate-reason">{{ decision?.reason ?? t('limits.view.noDecisionLoaded') }}</p>
         </div>
         <dl class="gate-meta">
           <div>
-            <dt>Checked</dt>
+            <dt>{{ t('limits.view.checked') }}</dt>
             <dd>{{ fmtDate(decision?.checkedAt) }}</dd>
           </div>
           <div>
-            <dt>Resume after</dt>
+            <dt>{{ t('limits.view.resumeAfter') }}</dt>
             <dd>{{ fmtDate(decision?.resumeAfter) }}</dd>
           </div>
           <div v-if="decision?.selectedWindow">
-            <dt>Selected window</dt>
+            <dt>{{ t('limits.view.selectedWindow') }}</dt>
             <dd>{{ decision.selectedWindow.provider }} / {{ decision.selectedWindow.label }}</dd>
           </div>
         </dl>
@@ -231,13 +231,13 @@ onMounted(() => {
           <header class="provider-head">
             <div>
               <p class="eyebrow">{{ provider.provider }}</p>
-              <h2>{{ provider.latest.length }} window{{ provider.latest.length === 1 ? '' : 's' }}</h2>
+              <h2>{{ t('limits.view.windowCount', { n: provider.latest.length }) }}</h2>
             </div>
             <span class="status-pill" :class="{ bad: !provider.ok }">
               {{ provider.ok ? t('common.ok').toLowerCase() : provider.error ? t('common.status.error').toLowerCase() : t('common.status.empty').toLowerCase() }}
             </span>
           </header>
-          <p class="provider-time">Checked {{ fmtDate(provider.latestCheckedAt) }}</p>
+          <p class="provider-time">{{ t('limits.view.checkedAt', { date: fmtDate(provider.latestCheckedAt) }) }}</p>
           <p v-if="provider.error" class="inline-error">{{ provider.error }}</p>
 
           <div v-if="provider.latest.length" class="window-list">
@@ -263,35 +263,35 @@ onMounted(() => {
               </div>
               <dl class="snapshot-meta">
                 <div>
-                  <dt>Checked</dt>
+                  <dt>{{ t('limits.view.checked') }}</dt>
                   <dd>{{ fmtDate(snapshot.checkedAt) }}</dd>
                 </div>
                 <div>
-                  <dt>Reset</dt>
+                  <dt>{{ t('limits.view.reset') }}</dt>
                   <dd>{{ fmtDate(snapshot.resetAt) }}</dd>
                 </div>
                 <div>
-                  <dt>Reset text</dt>
-                  <dd>{{ snapshot.resetText || 'Unknown' }}</dd>
+                  <dt>{{ t('limits.view.resetText') }}</dt>
+                  <dd>{{ snapshot.resetText || t('common.status.unknown') }}</dd>
                 </div>
                 <div>
-                  <dt>Metric</dt>
+                  <dt>{{ t('limits.view.metric') }}</dt>
                   <dd>
                     <template v-if="snapshot.metricRaw">
                       {{ snapshot.metricRaw.percent }}% {{ snapshot.metricRaw.metric }}
                     </template>
-                    <template v-else>Unknown</template>
+                    <template v-else>{{ t('common.status.unknown') }}</template>
                   </dd>
                 </div>
                 <div>
-                  <dt>Parse</dt>
+                  <dt>{{ t('limits.view.parse') }}</dt>
                   <dd>{{ snapshot.parseConfidence }}</dd>
                 </div>
                 <div>
-                  <dt>Status</dt>
+                  <dt>{{ t('limits.view.status') }}</dt>
                   <dd>
                     <span class="status-pill compact" :class="{ bad: statusText(snapshot) === 'error', warn: statusText(snapshot) === 'stale' }">
-                      {{ statusText(snapshot) }}
+                      {{ statusText(snapshot) === 'error' ? t('common.status.error') : t('limits.freshness.' + statusText(snapshot)) }}
                     </span>
                   </dd>
                 </div>
@@ -304,22 +304,22 @@ onMounted(() => {
                 :aria-expanded="!!rawOpen[snapshot.id]"
                 @click="toggleRaw(snapshot)"
               >
-                {{ rawOpen[snapshot.id] ? 'Hide raw panel' : 'Show raw panel' }}
+                {{ rawOpen[snapshot.id] ? t('limits.view.hideRaw') : t('limits.view.showRaw') }}
               </BaseButton>
               <pre v-if="rawOpen[snapshot.id]" class="raw-panel">{{ rawPanel(snapshot) }}</pre>
             </article>
           </div>
-          <p v-else class="provider-empty">No latest snapshot for this provider.</p>
+          <p v-else class="provider-empty">{{ t('limits.view.noLatest') }}</p>
         </article>
       </section>
 
       <section class="rules-panel">
         <header class="section-head">
           <div>
-            <p class="eyebrow">Rules</p>
-            <h2>Gate rules</h2>
+            <p class="eyebrow">{{ t('limits.view.rules') }}</p>
+            <h2>{{ t('limits.view.gateRules') }}</h2>
           </div>
-          <span class="status-pill">editable</span>
+          <span class="status-pill">{{ t('limits.view.editable') }}</span>
         </header>
 
         <p v-if="limits.ruleError" class="notice danger rule-notice">{{ limits.ruleError }}</p>
@@ -327,19 +327,19 @@ onMounted(() => {
         <div v-if="limits.rules.length" class="rules-list">
           <article v-for="rule in limits.rules" :key="rule.id" class="rule-row editable">
             <label>
-              <span>Provider</span>
+              <span>{{ t('limits.view.provider') }}</span>
               <select v-model="draftFor(rule).provider" :disabled="limits.savingRule">
                 <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
               </select>
             </label>
             <label>
-              <span>Window</span>
+              <span>{{ t('limits.view.window') }}</span>
               <select v-model="draftFor(rule).windowKey" :disabled="limits.savingRule">
                 <option v-for="w in WINDOW_OPTIONS" :key="w" :value="w">{{ w }}</option>
               </select>
             </label>
             <label>
-              <span>Threshold %</span>
+              <span>{{ t('limits.view.threshold') }}</span>
               <input
                 v-model.number="draftFor(rule).thresholdPercent"
                 type="number"
@@ -348,36 +348,36 @@ onMounted(() => {
                 :disabled="limits.savingRule"
               />
             </label>
-            <BaseCheckbox v-model="draftFor(rule).enabled" label="Enabled" :disabled="limits.savingRule" class="checkline" />
+            <BaseCheckbox v-model="draftFor(rule).enabled" :label="t('limits.view.enabled')" :disabled="limits.savingRule" class="checkline" />
             <div class="rule-actions">
-              <BaseButton size="sm" :loading="limits.savingRule" :disabled="!isDirty(rule)" @click="saveRule(rule)">Save</BaseButton>
-              <BaseButton size="sm" variant="danger" :disabled="limits.savingRule" @click="removeRule(rule)">Delete</BaseButton>
+              <BaseButton size="sm" :loading="limits.savingRule" :disabled="!isDirty(rule)" @click="saveRule(rule)">{{ t('common.save') }}</BaseButton>
+              <BaseButton size="sm" variant="danger" :disabled="limits.savingRule" @click="removeRule(rule)">{{ t('common.delete') }}</BaseButton>
             </div>
           </article>
         </div>
-        <p v-else class="provider-empty">No persisted rules.</p>
+        <p v-else class="provider-empty">{{ t('limits.view.noRules') }}</p>
 
         <article class="rule-row editable new-rule">
           <label>
-            <span>Provider</span>
+            <span>{{ t('limits.view.provider') }}</span>
             <select v-model="newRule.provider" :disabled="limits.savingRule">
               <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
             </select>
           </label>
           <label>
-            <span>Window</span>
+            <span>{{ t('limits.view.window') }}</span>
             <select v-model="newRule.windowKey" :disabled="limits.savingRule">
               <option v-for="w in WINDOW_OPTIONS" :key="w" :value="w">{{ w }}</option>
             </select>
           </label>
           <label>
-            <span>Threshold %</span>
+            <span>{{ t('limits.view.threshold') }}</span>
             <input v-model.number="newRule.thresholdPercent" type="number" min="0" max="100" :disabled="limits.savingRule" />
           </label>
-          <BaseCheckbox v-model="newRule.enabled" label="Enabled" :disabled="limits.savingRule" class="checkline" />
+          <BaseCheckbox v-model="newRule.enabled" :label="t('limits.view.enabled')" :disabled="limits.savingRule" class="checkline" />
 
           <div class="rule-actions">
-            <BaseButton size="sm" variant="primary" :loading="limits.savingRule" @click="addRule">Add rule</BaseButton>
+            <BaseButton size="sm" variant="primary" :loading="limits.savingRule" @click="addRule">{{ t('limits.view.addRule') }}</BaseButton>
           </div>
         </article>
       </section>
@@ -385,19 +385,19 @@ onMounted(() => {
       <section class="history-panel">
         <header class="section-head">
           <div>
-            <p class="eyebrow">History</p>
-            <h2>Recent snapshots</h2>
+            <p class="eyebrow">{{ t('limits.view.history') }}</p>
+            <h2>{{ t('limits.view.recentSnapshots') }}</h2>
           </div>
           <span class="status-pill">{{ history.length }}</span>
         </header>
         <div v-if="history.length" class="history-table">
           <div class="history-head">
-            <span>Provider</span>
-            <span>Window</span>
-            <span>Used</span>
-            <span>Checked</span>
-            <span>Reset</span>
-            <span>Status</span>
+            <span>{{ t('limits.view.provider') }}</span>
+            <span>{{ t('limits.view.window') }}</span>
+            <span>{{ t('limits.view.used') }}</span>
+            <span>{{ t('limits.view.checked') }}</span>
+            <span>{{ t('limits.view.reset') }}</span>
+            <span>{{ t('limits.view.status') }}</span>
           </div>
           <div v-for="snapshot in history" :key="snapshot.id" class="history-row">
             <span>{{ snapshot.provider }}</span>
@@ -408,7 +408,7 @@ onMounted(() => {
             <span>{{ snapshot.ok ? t('limits.freshness.' + freshness(snapshot)) : t('common.status.error') }}</span>
           </div>
         </div>
-        <p v-else class="provider-empty">No snapshot history.</p>
+        <p v-else class="provider-empty">{{ t('limits.view.noSnapshotHistory') }}</p>
       </section>
     </template>
   </section>

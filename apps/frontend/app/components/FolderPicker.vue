@@ -28,7 +28,7 @@ async function load(p?: string) {
     typedPath.value = res.path; // keep the editable field in sync with the resolved location
   } catch (e) {
     const err = e as { data?: { error?: { message?: string } }; message?: string };
-    error.value = err?.data?.error?.message ?? err?.message ?? 'Cannot read this folder';
+    error.value = err?.data?.error?.message ?? err?.message ?? t('settings.folderPicker.cannotRead');
   } finally {
     loading.value = false;
   }
@@ -52,7 +52,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <BaseModal title="Choose a folder" size="md" @close="emit('close')">
+  <BaseModal :title="t('settings.folderPicker.title')" size="md" @close="emit('close')">
     <div class="cur"><code>{{ path || '…' }}</code></div>
 
     <form class="go-row" @submit.prevent="loadTyped">
@@ -61,10 +61,10 @@ onMounted(async () => {
         class="go-input"
         spellcheck="false"
         :placeholder="t('settings.folderPickerPlaceholder')"
-        aria-label="Absolute folder path"
+        :aria-label="t('settings.folderPicker.pathLabel')"
         :disabled="loading"
       />
-      <BaseButton type="submit" variant="secondary" :loading="loading" :disabled="!typedPath.trim()">Go</BaseButton>
+      <BaseButton type="submit" variant="secondary" :loading="loading" :disabled="!typedPath.trim()">{{ t('settings.folderPicker.go') }}</BaseButton>
     </form>
 
     <div class="list" :aria-busy="loading || undefined">
@@ -72,15 +72,15 @@ onMounted(async () => {
       <button v-for="d in dirs" :key="d.path" type="button" class="row" :disabled="loading" @click="load(d.path)">
         <span class="ic">📁</span>{{ d.name }}
       </button>
-      <div v-if="loading" class="loading-row"><Spinner :size="16" label="" /> Loading…</div>
-      <div v-else-if="!dirs.length" class="empty">No subfolders here</div>
+      <div v-if="loading" class="loading-row"><Spinner :size="16" label="" /> {{ t('settings.folderPicker.loading') }}</div>
+      <div v-else-if="!dirs.length" class="empty">{{ t('settings.folderPicker.noSubfolders') }}</div>
     </div>
 
     <p v-if="error" class="err">{{ error }}</p>
 
     <template #footer>
-      <BaseButton variant="ghost" :disabled="loading" @click="emit('close')">Cancel</BaseButton>
-      <BaseButton variant="primary" :disabled="!path || loading" @click="emit('select', path)">Use this folder</BaseButton>
+      <BaseButton variant="ghost" :disabled="loading" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton variant="primary" :disabled="!path || loading" @click="emit('select', path)">{{ t('settings.folderPicker.useFolder') }}</BaseButton>
     </template>
   </BaseModal>
 </template>

@@ -2,7 +2,9 @@
 import type { TerminalDto } from '~/types';
 import { lastOutputLine } from '~/lib/terminalPreview';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import { useT } from '~/composables/useT';
 
+const { t } = useT();
 const props = defineProps<{ terminal: TerminalDto }>();
 const terminals = useTerminalsStore();
 
@@ -89,7 +91,7 @@ function expand() {
     :class="[`st-${terminal.status.state}`, { active: isActive, suspended: !live, live }]"
     tabindex="0"
     role="group"
-    :aria-label="`Terminal ${terminal.name}`"
+    :aria-label="t('terminals.tile.terminalAria', { name: terminal.name })"
     @mousedown="activate"
     @focusin="activate"
     @keydown="onTileKeydown"
@@ -105,8 +107,8 @@ function expand() {
         size="sm"
         variant="ghost"
         icon-only
-        aria-label="Start terminal"
-        title="Start"
+        :aria-label="t('terminals.actions.startTerminal')"
+        :title="t('terminals.actions.start')"
         :loading="pending"
         @click="runLifecycle(() => terminals.start(terminal.id))"
         >▶</BaseButton
@@ -117,8 +119,8 @@ function expand() {
         size="sm"
         variant="ghost"
         icon-only
-        aria-label="Stop terminal"
-        title="Stop"
+        :aria-label="t('terminals.actions.stopTerminal')"
+        :title="t('terminals.actions.stop')"
         :loading="pending"
         @click="runLifecycle(() => terminals.stop(terminal.id))"
         >■</BaseButton
@@ -128,8 +130,8 @@ function expand() {
         size="sm"
         variant="ghost"
         icon-only
-        aria-label="Restart terminal"
-        title="Restart"
+        :aria-label="t('terminals.actions.restartTerminal')"
+        :title="t('terminals.actions.restart')"
         :loading="pending"
         @click="runLifecycle(() => terminals.restart(terminal.id))"
         >⟳</BaseButton
@@ -139,8 +141,8 @@ function expand() {
         size="sm"
         variant="ghost"
         icon-only
-        aria-label="Expand to single view"
-        title="Expand to single view"
+        :aria-label="t('terminals.actions.expandToSingle')"
+        :title="t('terminals.actions.expandToSingle')"
         @click="expand"
         >⛶</BaseButton
       >

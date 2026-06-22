@@ -41,7 +41,7 @@ const sections = computed(() => {
   return entries;
 });
 function groupName(id: string | null) {
-  return id ? groups.byId[id]?.name ?? 'Ungrouped' : 'Ungrouped';
+  return id ? groups.byId[id]?.name ?? t('terminals.ungrouped') : t('terminals.ungrouped');
 }
 function groupColor(id: string | null) {
   return (id && groups.byId[id]?.color) || 'var(--text-faint)';
@@ -61,9 +61,9 @@ function groupSomeSelected(list: TerminalDto[]) {
 <template>
   <aside class="sidebar">
     <div class="head">
-      <span class="title">Terminals<span class="count">{{ terminals.items.length }}</span></span>
-      <Spinner v-if="terminals.loading && !terminals.loaded" :size="14" label="Loading" />
-      <BaseButton v-else size="sm" variant="ghost" class="new" @click="emit('create')">+ New</BaseButton>
+      <span class="title">{{ t('terminals.title') }}<span class="count">{{ terminals.items.length }}</span></span>
+      <Spinner v-if="terminals.loading && !terminals.loaded" :size="14" :label="t('common.loading')" />
+      <BaseButton v-else size="sm" variant="ghost" class="new" @click="emit('create')">{{ t('terminals.newShort') }}</BaseButton>
     </div>
 
     <div v-if="terminals.items.length" class="selbar" :class="{ active: terminals.someSelected }">
@@ -77,16 +77,16 @@ function groupSomeSelected(list: TerminalDto[]) {
         <span>{{ terminals.someSelected ? t('terminals.selected', { n: terminals.selectedIds.length }) : t('terminals.selectAll') }}</span>
       </label>
       <span v-if="terminals.someSelected" class="acts">
-        <BaseButton class="act" size="sm" variant="ghost" icon-only aria-label="Start selected" title="Start selected" @click="terminals.startSelected()">▶</BaseButton>
-        <BaseButton class="act" size="sm" variant="ghost" icon-only aria-label="Stop selected" title="Stop selected" @click="terminals.stopSelected()">■</BaseButton>
+        <BaseButton class="act" size="sm" variant="ghost" icon-only :aria-label="t('terminals.sidebar.startSelected')" :title="t('terminals.sidebar.startSelected')" @click="terminals.startSelected()">▶</BaseButton>
+        <BaseButton class="act" size="sm" variant="ghost" icon-only :aria-label="t('terminals.sidebar.stopSelected')" :title="t('terminals.sidebar.stopSelected')" @click="terminals.stopSelected()">■</BaseButton>
         <BaseButton
           class="act danger"
           :class="{ confirm: confirmBulk }"
           size="sm"
           variant="ghost"
           icon-only
-          :aria-label="confirmBulk ? 'Confirm delete all selected' : 'Delete selected'"
-          :title="confirmBulk ? 'Click again to delete all selected' : 'Delete selected'"
+          :aria-label="confirmBulk ? t('terminals.sidebar.confirmDeleteAll') : t('terminals.sidebar.deleteSelected')"
+          :title="confirmBulk ? t('terminals.sidebar.clickAgainDeleteAll') : t('terminals.sidebar.deleteSelected')"
           @click="onBulkDelete"
         >
           <template v-if="confirmBulk">✓?</template>
@@ -109,16 +109,16 @@ function groupSomeSelected(list: TerminalDto[]) {
             type="checkbox"
             :checked="groupAllSelected(list)"
             :indeterminate.prop="groupSomeSelected(list) && !groupAllSelected(list)"
-            :title="`Select all in ${groupName(gid)}`"
-            :aria-label="`Select all in ${groupName(gid)}`"
+            :title="t('terminals.sidebar.selectAllIn', { group: groupName(gid) })"
+            :aria-label="t('terminals.sidebar.selectAllIn', { group: groupName(gid) })"
             @change="terminals.toggleGroup(groupIds(list))"
           />
           <span class="gdot" :style="{ background: groupColor(gid) }" />
           <span class="gname">{{ groupName(gid) }}</span>
           <span class="count">{{ list.length }}</span>
           <span class="gacts">
-            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="`Start all in ${groupName(gid)}`" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</BaseButton>
-            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="`Stop all in ${groupName(gid)}`" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</BaseButton>
+            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="t('terminals.sidebar.startAllIn', { group: groupName(gid) })" :title="t('terminals.sidebar.startAllIn', { group: groupName(gid) })" @click="terminals.startMany(groupIds(list))">▶</BaseButton>
+            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="t('terminals.sidebar.stopAllIn', { group: groupName(gid) })" :title="t('terminals.sidebar.stopAllIn', { group: groupName(gid) })" @click="terminals.stopMany(groupIds(list))">■</BaseButton>
           </span>
         </div>
         <TerminalListItem
@@ -139,9 +139,9 @@ function groupSomeSelected(list: TerminalDto[]) {
         </template>
       </template>
 
-      <EmptyState v-if="!terminals.loading && !terminals.items.length" title="No terminals yet.">
+      <EmptyState v-if="!terminals.loading && !terminals.items.length" :title="t('terminals.none')">
         <template #actions>
-          <BaseButton variant="primary" @click="emit('create')">+ Create your first terminal</BaseButton>
+          <BaseButton variant="primary" @click="emit('create')">{{ t('terminals.createFirst') }}</BaseButton>
         </template>
       </EmptyState>
     </div>

@@ -125,7 +125,7 @@ taskBoard = taskBoard.replace(
   'defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean; error?: string | null }>();\nconst emit = defineEmits<{ retry: [] }>();\n\nconst { t } = useT();'
 );
 taskBoard = taskBoard.replace(/label: '[^']+'/g, '');
-taskBoard = taskBoard.replace(/,  },/g, ' },');
+taskBoard = taskBoard.replace(/, {2}},/g, ' },');
 taskBoard = taskBoard.replace(
   '<Spinner :size="14" label="Loading tasks" />',
   '<Spinner :size="14" :label="t(\'tiger.taskBoard.loading\')" />'
