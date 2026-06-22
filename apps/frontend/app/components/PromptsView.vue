@@ -9,7 +9,6 @@ import PromptGenerationPanel from '~/components/prompt/PromptGenerationPanel.vue
 import PromptHistoryPanel from '~/components/prompt/PromptHistoryPanel.vue';
 import PromptLibrary from '~/components/prompt/PromptLibrary.vue';
 import PromptTargetPicker from '~/components/prompt/PromptTargetPicker.vue';
-import { useT } from '~/composables/useT';
 import { serializePrompt } from '~/lib/frontmatter';
 import { hasPerTerminalVars, render } from '~/lib/promptTemplate';
 import type { BroadcastOutcome } from '~/composables/useSocket';
