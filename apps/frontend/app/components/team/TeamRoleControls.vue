@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { deriveTeamRoleKind, displayRoleName, isLeadRole, nextRoleName } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
 import { useTigerStore } from '~/stores/tiger';
+import { useT } from '~/composables/useT';
 import type { RoleConfigInput, RoleSnapshot, TeamAgentType } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
@@ -10,6 +11,7 @@ import BaseButton from '~/components/ui/BaseButton.vue';
 const props = defineProps<{ role: RoleSnapshot; roles: RoleSnapshot[]; displayName?: string }>();
 const team = useTeamStore();
 const tiger = useTigerStore();
+const { t } = useT();
 
 const TOOLS: TeamAgentType[] = ['claude', 'codex', 'antigravity'];
 const EFFORTS_BY_TOOL: Record<TeamAgentType, string[]> = {
@@ -107,11 +109,11 @@ async function saveEdit(): Promise<void> {
   const candidateIsLead = deriveTeamRoleKind(candidate) === 'lead';
   const otherLeadExists = props.roles.some((role) => role.id !== props.role.id && isLeadRole(role));
   if (candidateIsLead && otherLeadExists) {
-    controlError.value = 'Exactly one Lead role is required.';
+    controlError.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   if (leadRole.value && !candidateIsLead && !otherLeadExists) {
-    controlError.value = 'Exactly one Lead role is required.';
+    controlError.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   try {
@@ -133,7 +135,7 @@ async function saveEdit(): Promise<void> {
 async function addInstance(): Promise<void> {
   controlError.value = '';
   if (!canDuplicate.value) {
-    controlError.value = 'Exactly one Lead role is required.';
+    controlError.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   const role: RoleConfigInput = {
@@ -157,7 +159,7 @@ async function addInstance(): Promise<void> {
 async function remove(): Promise<void> {
   controlError.value = '';
   if (!canRemove.value) {
-    controlError.value = 'Exactly one Lead role is required.';
+    controlError.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   try {
@@ -167,8 +169,8 @@ async function remove(): Promise<void> {
   }
 }
 
-const TOOL_LABEL: Record<TeamAgentType, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
-const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
+const TOOL_KEY: Record<TeamAgentType, string> = { claude: 'common.providers.claude', codex: 'common.providers.codex', antigravity: 'common.providers.antigravity' };
+const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
 </script>
 
 <template>
@@ -183,70 +185,70 @@ const toolLabel = (t: TeamAgentType) => TOOL_LABEL[t] ?? t;
         size="sm"
         variant="ghost"
         :loading="team.isBusy(`role-pause:${role.id}`)"
-        title="Pause this role (no further turns until resumed)"
+        :title="t('team.roleControls.pauseTitle')"
         @click="team.pauseRole(role.id)"
-      >Pause</BaseButton>
+      >{{ t('team.controls.pause') }}</BaseButton>
       <BaseButton
         size="sm"
         variant="ghost"
         :loading="team.isBusy(`role-resume:${role.id}`)"
         @click="team.resumeRole(role.id)"
-      >Resume</BaseButton>
-      <BaseButton size="sm" variant="ghost" @click="steerOpen = !steerOpen">Steer</BaseButton>
-      <BaseButton size="sm" variant="ghost" @click="openEdit">Edit</BaseButton>
+      >{{ t('team.controls.resume') }}</BaseButton>
+      <BaseButton size="sm" variant="ghost" @click="steerOpen = !steerOpen">{{ t('team.roleControls.steer') }}</BaseButton>
+      <BaseButton size="sm" variant="ghost" @click="openEdit">{{ t('common.edit') }}</BaseButton>
       <BaseButton
         v-if="canDuplicate"
         size="sm"
         variant="ghost"
         :loading="team.isBusy('role-add')"
-        title="Add another instance of this role kind"
+        :title="t('team.roleControls.addAnotherTitle')"
         @click="addInstance"
-      >Add another</BaseButton>
+      >{{ t('team.roleControls.addAnother') }}</BaseButton>
       <BaseButton
         size="sm"
         variant="danger"
         :disabled="!canRemove"
         :loading="team.isBusy(`role-remove:${role.id}`)"
-        :title="canRemove ? 'Remove this role from the run' : 'The team must keep exactly one Lead'"
+        :title="canRemove ? t('team.roleControls.removeTitle') : t('team.roleControls.keepOneLead')"
         @click="remove"
-      >Remove</BaseButton>
+      >{{ t('team.roleControls.remove') }}</BaseButton>
     </div>
 
     <div v-if="steerOpen" class="rc-form">
-      <textarea v-model="steerText" rows="2" class="rc-input" placeholder="Direct this role…" aria-label="Steer role" />
+      <textarea v-model="steerText" rows="2" class="rc-input" :placeholder="t('team.roleControls.steerPlaceholder')" :aria-label="t('team.roleControls.steerAria')" />
       <div class="rc-form-btns">
-        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-steer:${role.id}`)" @click="sendSteer">Send</BaseButton>
-        <BaseButton size="sm" variant="ghost" @click="steerOpen = false">Cancel</BaseButton>
+        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-steer:${role.id}`)" @click="sendSteer">{{ t('common.submit') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="steerOpen = false">{{ t('common.cancel') }}</BaseButton>
       </div>
     </div>
 
     <div v-if="editOpen" class="rc-form">
-      <label class="fld"><span>Name</span><input v-model="edit.name" type="text" /></label>
-      <label class="fld"><span>Tool</span>
+      <label class="fld"><span>{{ t('team.roleControls.name') }}</span><input v-model="edit.name" type="text" /></label>
+      <label class="fld"><span>{{ t('team.roleControls.tool') }}</span>
         <select v-model="edit.tool" @change="onToolChange">
-          <option v-for="t in TOOLS" :key="t" :value="t">{{ toolLabel(t) }}</option>
+          <option v-for="tool in TOOLS" :key="tool" :value="tool">{{ toolLabel(tool) }}</option>
         </select>
       </label>
-      <label class="fld"><span>Model</span>
+      <label class="fld"><span>{{ t('team.roleControls.model') }}</span>
         <select v-model="edit.model">
-          <option v-for="m in models(edit.tool, edit.model)" :key="m" :value="m">{{ m || '(default)' }}</option>
+          <option v-for="m in models(edit.tool, edit.model)" :key="m" :value="m">{{ m || t('team.roleControls.default') }}</option>
         </select>
       </label>
-      <label class="fld"><span>Effort</span>
+      <label class="fld"><span>{{ t('team.roleControls.effort') }}</span>
         <select v-model="edit.effort">
-          <option v-for="e in efforts(edit.tool, edit.effort)" :key="e" :value="e">{{ e || '(default)' }}</option>
+          <option v-for="e in efforts(edit.tool, edit.effort)" :key="e" :value="e">{{ e || t('team.roleControls.default') }}</option>
         </select>
       </label>
-      <label class="fld"><span>Permission</span>
+      <label class="fld"><span>{{ t('team.roleControls.permission') }}</span>
         <select v-model="edit.permission">
           <option v-for="p in permissions(edit.tool, edit.permission)" :key="p" :value="p">{{ p }}</option>
         </select>
       </label>
-      <label class="chk"><input v-model="edit.canWriteCode" type="checkbox" /> May write code</label>
-      <label class="chk"><input v-model="edit.requiredForSignoff" type="checkbox" /> Required for sign-off</label>
+      <label class="chk"><input v-model="edit.canWriteCode" type="checkbox" /> {{ t('team.roleControls.mayWriteCode') }}</label>
+      <label class="chk"><input v-model="edit.requiredForSignoff" type="checkbox" /> {{ t('team.roleControls.requiredForSignoff') }}</label>
       <div class="rc-form-btns">
-        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-edit:${role.id}`)" @click="saveEdit">Save</BaseButton>
-        <BaseButton size="sm" variant="ghost" @click="editOpen = false">Cancel</BaseButton>
+        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-edit:${role.id}`)" @click="saveEdit">{{ t('common.save') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="editOpen = false">{{ t('common.cancel') }}</BaseButton>
       </div>
     </div>
     <p v-if="controlError" class="rc-error">{{ controlError }}</p>

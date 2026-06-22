@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watchEffect } from 'vue';
 import { useDialog } from '~/composables/useDialog';
+import { useT } from '~/composables/useT';
 import { useTeamStore } from '~/stores/team';
 import type { TeamOrchestrationMode, TeamRunStartInput, TeamTemplate } from '~/types';
 import BaseButton from '../ui/BaseButton.vue';
@@ -9,6 +10,7 @@ import TeamAgentBadge from './TeamAgentBadge.vue';
 import TeamTemplateEditor from './TeamTemplateEditor.vue';
 
 const team = useTeamStore();
+const { t } = useT();
 
 const goal = ref('');
 const selectedId = ref<string | null>(null);
@@ -72,9 +74,9 @@ async function duplicate(tpl: TeamTemplate) {
 async function remove(tpl: TeamTemplate) {
   if (!tpl.id || tpl.builtin) return;
   const ok = await useDialog().confirm({
-    title: 'Delete team template',
-    message: `Delete team template "${tpl.name}"? This cannot be undone.`,
-    confirmText: 'Delete',
+    title: t('team.launcher.deleteTemplateTitle'),
+    message: t('team.launcher.deleteTemplateMessage', { name: tpl.name }),
+    confirmText: t('common.delete'),
     danger: true,
   });
   if (!ok) return;
@@ -91,11 +93,8 @@ function onSaved(tpl: TeamTemplate) {
   <section class="launcher">
     <div class="intro">
       <div class="intro-copy">
-        <h1>Assemble an AI Team</h1>
-        <p>
-          Pick the project folder, choose a team template, describe the goal, and the role agents will
-          plan, build, review, and only stop once every required role signs off. Steer them anytime.
-        </p>
+        <h1>{{ t('team.launcher.title') }}</h1>
+        <p>{{ t('team.launcher.description') }}</p>
       </div>
       <div class="assembly-viz" aria-hidden="true">
         <span class="assembly-ring ring-a"></span>
@@ -105,21 +104,21 @@ function onSaved(tpl: TeamTemplate) {
         <span class="link link-review"></span>
         <span class="link link-qa"></span>
         <span class="goal-node">
-          <span class="goal-label">Goal</span>
+          <span class="goal-label">{{ t('team.launcher.goal') }}</span>
           <span class="goal-mark"></span>
         </span>
-        <span class="agent-node lead">Lead</span>
-        <span class="agent-node build">Build</span>
-        <span class="agent-node review">Review</span>
-        <span class="agent-node qa">QA</span>
+        <span class="agent-node lead">{{ t('team.launcher.lead') }}</span>
+        <span class="agent-node build">{{ t('team.launcher.build') }}</span>
+        <span class="agent-node review">{{ t('team.launcher.review') }}</span>
+        <span class="agent-node qa">{{ t('team.launcher.qa') }}</span>
       </div>
     </div>
 
     <div class="grid">
       <div class="templates">
         <div class="col-head">
-          <h3>Team template</h3>
-          <BaseButton size="sm" variant="ghost" @click="openNew">+ New</BaseButton>
+          <h3>{{ t('team.launcher.teamTemplate') }}</h3>
+          <BaseButton size="sm" variant="ghost" @click="openNew">{{ t('common.new') }}</BaseButton>
         </div>
         <div
           v-for="tpl in templates"
@@ -131,12 +130,12 @@ function onSaved(tpl: TeamTemplate) {
             type="button"
             class="tpl-select"
             :aria-pressed="tpl.id === selectedId"
-            :aria-label="`Select team template ${tpl.name}`"
+            :aria-label="t('team.launcher.selectTemplate', { name: tpl.name })"
             @click="selectedId = tpl.id ?? null"
           >
             <div class="tpl-head">
               <span class="tpl-name">{{ tpl.name }}</span>
-              <span v-if="tpl.builtin" class="tpl-tag">built-in</span>
+              <span v-if="tpl.builtin" class="tpl-tag">{{ t('team.launcher.builtIn') }}</span>
             </div>
             <p class="tpl-desc">{{ tpl.description }}</p>
             <div class="tpl-roles">
@@ -147,51 +146,51 @@ function onSaved(tpl: TeamTemplate) {
             </div>
           </button>
           <div class="tpl-actions">
-            <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{ tpl.builtin ? 'Customize' : 'Edit' }}</BaseButton>
-            <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">Duplicate</BaseButton>
-            <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">Delete</BaseButton>
+            <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{ tpl.builtin ? t('team.launcher.customize') : t('common.edit') }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">{{ t('team.launcher.duplicate') }}</BaseButton>
+            <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">{{ t('common.delete') }}</BaseButton>
           </div>
         </div>
-        <p v-if="!templates.length" class="empty">No team templates available.</p>
+        <p v-if="!templates.length" class="empty">{{ t('team.launcher.noTemplates') }}</p>
       </div>
 
       <div class="compose">
-        <h3>Project folder</h3>
+        <h3>{{ t('team.launcher.projectFolder') }}</h3>
         <div class="ws-row">
-          <select v-model="workspace" class="ws-select" aria-label="Project folder">
-            <option value="" disabled>Select or browse a project folder…</option>
+          <select v-model="workspace" class="ws-select" :aria-label="t('team.launcher.projectFolder')">
+            <option value="" disabled>{{ t('team.launcher.selectProject') }}</option>
             <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
           </select>
-          <BaseButton size="md" variant="secondary" @click="showPicker = true">Browse…</BaseButton>
+          <BaseButton size="md" variant="secondary" @click="showPicker = true">{{ t('team.launcher.browse') }}</BaseButton>
         </div>
         <code v-if="workspace" class="ws-path">📁 {{ workspace }}</code>
-        <code v-else class="ws-path empty-path">No folder selected</code>
+        <code v-else class="ws-path empty-path">{{ t('team.launcher.noFolder') }}</code>
 
-        <h3 class="mt">Project goal</h3>
+        <h3 class="mt">{{ t('team.launcher.projectGoal') }}</h3>
         <textarea
           v-model="goal"
           class="goal"
           data-testid="team-goal"
           rows="6"
-          placeholder="Describe what the team should accomplish. Be specific about the outcome and any constraints…"
+          :placeholder="t('team.launcher.goalPlaceholder')"
         />
 
-        <h3 class="mt">Orchestration mode</h3>
-        <select v-model="orchestrationMode" class="mode-select" data-testid="team-orchestration-mode" aria-label="Orchestration mode">
-          <option value="">Server default</option>
-          <option value="legacy">Legacy</option>
-          <option value="company">Company</option>
+        <h3 class="mt">{{ t('team.launcher.orchestrationMode') }}</h3>
+        <select v-model="orchestrationMode" class="mode-select" data-testid="team-orchestration-mode" :aria-label="t('team.launcher.orchestrationMode')">
+          <option value="">{{ t('team.launcher.serverDefault') }}</option>
+          <option value="legacy">{{ t('team.launcher.legacy') }}</option>
+          <option value="company">{{ t('team.launcher.company') }}</option>
         </select>
 
         <div v-if="selected" class="selected-roles">
-          <span class="label">{{ selected.name }} · {{ selected.roles.length }} roles</span>
+          <span class="label">{{ t('team.launcher.selectedRoles', { name: selected.name, n: selected.roles.length }) }}</span>
           <ul>
             <li v-for="r in selected.roles" :key="r.id">
               <TeamAgentBadge :tool="r.agent.tool" />
               <strong>{{ r.name }}</strong>
               <span class="tags">
-                <span v-if="r.canWriteCode" class="tag write">writes code</span>
-                <span v-if="r.requiredForSignoff" class="tag sign">sign-off</span>
+                <span v-if="r.canWriteCode" class="tag write">{{ t('team.launcher.writesCode') }}</span>
+                <span v-if="r.requiredForSignoff" class="tag sign">{{ t('team.launcher.signoff') }}</span>
               </span>
             </li>
           </ul>
@@ -205,7 +204,7 @@ function onSaved(tpl: TeamTemplate) {
           :disabled="!canStart"
           @click="start"
         >
-          Start team run
+          {{ t('team.launcher.startRun') }}
         </BaseButton>
       </div>
     </div>

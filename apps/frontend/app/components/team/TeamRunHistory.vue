@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useT } from '~/composables/useT';
 import type { TeamRunStatus } from '~/types';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 
 const emit = defineEmits<{ close: []; opened: [] }>();
 const team = useTeamStore();
+const { t } = useT();
 
 // This is a hand-rolled side drawer (BaseModal's centered layout doesn't fit), so it
 // reproduces the accessible-dialog basics inline: focus-trap, initial focus, and
@@ -65,15 +67,18 @@ const runs = computed(() => team.runHistory);
 const loading = computed(() => team.runHistoryLoading);
 const activeRunId = computed(() => team.activeRunId);
 
-const STATUS_LABEL: Record<TeamRunStatus, string> = {
-  running: 'Running',
-  paused: 'Paused',
-  blocked: 'Blocked',
-  completed: 'Completed',
-  failed: 'Failed',
-  stopped: 'Stopped',
-  interrupted: 'Interrupted',
+const STATUS_KEY: Record<TeamRunStatus, string> = {
+  running: 'team.status.running',
+  paused: 'team.status.paused',
+  blocked: 'team.status.blocked',
+  completed: 'team.status.completed',
+  failed: 'team.status.failed',
+  stopped: 'team.status.stopped',
+  interrupted: 'team.status.interrupted',
 };
+function statusLabel(status: TeamRunStatus): string {
+  return t(STATUS_KEY[status]) || status;
+}
 
 function when(iso?: string): string {
   if (!iso) return '';
@@ -100,23 +105,23 @@ onMounted(() => void team.loadRuns());
       class="hist-drawer"
       role="dialog"
       aria-modal="true"
-      aria-label="Team run history"
+      :aria-label="t('team.history.title')"
       tabindex="-1"
       @keydown="onKeydown"
     >
       <header class="h-head">
-        <strong>Run history</strong>
+        <strong>{{ t('team.history.title') }}</strong>
         <div class="h-actions">
-          <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">Refresh</BaseButton>
-          <BaseButton size="sm" variant="ghost" icon-only aria-label="Close history" @click="emit('close')">✕</BaseButton>
+          <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">{{ t('common.refresh') }}</BaseButton>
+          <BaseButton size="sm" variant="ghost" icon-only :aria-label="t('team.history.close')" @click="emit('close')">✕</BaseButton>
         </div>
       </header>
 
       <section v-if="loading && !runs.length" class="h-state">
-        <Spinner :size="20" /><span>Loading runs…</span>
+        <Spinner :size="20" /><span>{{ t('team.history.loading') }}</span>
       </section>
       <section v-else-if="!runs.length" class="h-state empty">
-        <p>No past runs for this workspace yet.</p>
+        <p>{{ t('team.history.empty') }}</p>
       </section>
 
       <ul v-else class="run-list">
@@ -124,13 +129,13 @@ onMounted(() => void team.loadRuns());
           <div class="r-main">
             <div class="r-line">
               <span class="r-name" :title="r.goal">{{ r.name }}</span>
-              <span class="r-status" :class="`st-${r.status}`">{{ STATUS_LABEL[r.status] ?? r.status }}</span>
-              <span v-if="r.runId === activeRunId" class="r-live">live</span>
+              <span class="r-status" :class="`st-${r.status}`">{{ statusLabel(r.status) }}</span>
+              <span v-if="r.runId === activeRunId" class="r-live">{{ t('common.status.live') }}</span>
             </div>
             <div class="r-meta">
-              <span>{{ r.roleCount }} roles</span>
-              <span>{{ r.turnCount }} turns</span>
-              <span>{{ r.messageCount }} msgs</span>
+              <span>{{ t('team.history.roles', { n: r.roleCount }) }}</span>
+              <span>{{ t('team.history.turns', { n: r.turnCount }) }}</span>
+              <span>{{ t('team.history.messages', { n: r.messageCount }) }}</span>
               <span class="r-when">{{ when(r.startedAt ?? r.createdAt) }}</span>
             </div>
           </div>
@@ -141,9 +146,9 @@ onMounted(() => void team.loadRuns());
               :loading="team.isBusy(`open:${r.runId}`)"
               :disabled="r.runId === activeRunId && !team.readOnly"
               @click="open(r.runId)"
-            >Open</BaseButton>
-            <BaseButton size="sm" variant="ghost" title="Download transcript as JSON" @click="team.exportRun('json', r.runId)">JSON</BaseButton>
-            <BaseButton size="sm" variant="ghost" title="Download transcript as Markdown" @click="team.exportRun('markdown', r.runId)">MD</BaseButton>
+            >{{ t('common.open') }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json', r.runId)">JSON</BaseButton>
+            <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown', r.runId)">MD</BaseButton>
           </div>
         </li>
       </ul>
@@ -155,7 +160,7 @@ onMounted(() => void team.loadRuns());
 .hist-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-backdrop);
   display: flex;
   justify-content: flex-end;
   z-index: 60;
@@ -168,7 +173,7 @@ onMounted(() => void team.loadRuns());
   display: flex;
   flex-direction: column;
   min-height: 0;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
 }
 .h-head {
   display: flex;

@@ -8,12 +8,14 @@ import CueSubscriptionEditor from '~/components/cue/CueSubscriptionEditor.vue';
 import { useCueStore } from '~/stores/cue';
 import { useApi } from '~/composables/useApi';
 import { useDialog } from '~/composables/useDialog';
+import { useT } from '~/composables/useT';
 import { errText } from '~/lib/apiError';
 import type { CueSubscriptionInput } from '~/types';
 
 const cue = useCueStore();
 const api = useApi();
 const dialog = useDialog();
+const { t } = useT();
 
 const editorOpen = ref(false);
 const editing = ref<CueSubscriptionInput | null>(null);
@@ -69,9 +71,9 @@ async function onSave(sub: CueSubscriptionInput, originalId: string | null): Pro
 
 async function onRemove(id: string): Promise<void> {
   const ok = await dialog.confirm({
-    title: 'Delete subscription',
-    message: `Delete subscription "${id}" from .kaplan/cue.json? This cannot be undone.`,
-    confirmText: 'Delete',
+    title: t('cue.delete.title'),
+    message: t('cue.delete.message', { id }),
+    confirmText: t('common.delete'),
     danger: true,
   });
   if (!ok) return;
@@ -87,59 +89,59 @@ async function onRemove(id: string): Promise<void> {
   <section class="cue">
     <header class="bar">
       <div class="heading">
-        <h1>Cue</h1>
-        <p class="sub">Event-driven orchestration — wake agents into self-running pipelines.</p>
+        <h1>{{ t('cue.title') }}</h1>
+        <p class="sub">{{ t('cue.subtitle') }}</p>
       </div>
       <div class="actions">
-        <span v-if="cue.running" class="status on">● running</span>
-        <span v-else-if="cue.loaded && !cue.disabled" class="status off">● stopped</span>
+        <span v-if="cue.running" class="status on">? {{ t('cue.status.running') }}</span>
+        <span v-else-if="cue.loaded && !cue.disabled" class="status off">? {{ t('cue.status.stopped') }}</span>
         <BaseButton
           :loading="cue.isBusy('reload')"
           :disabled="cue.disabled"
           variant="ghost"
           @click="onReload"
         >
-          Reload config
+          {{ t('cue.actions.reloadConfig') }}
         </BaseButton>
-        <BaseButton :disabled="cue.disabled" @click="onNew">+ New subscription</BaseButton>
+        <BaseButton :disabled="cue.disabled" @click="onNew">{{ t('cue.actions.newSubscription') }}</BaseButton>
       </div>
     </header>
 
     <div v-if="!cue.loaded" class="loading">
-      <Spinner label="Loading Cue…" />
+      <Spinner :label="t('cue.states.loading')" />
     </div>
 
     <EmptyState
       v-else-if="cue.disabled"
-      title="Cue is disabled"
-      description="The Cue engine is off. Start the backend with KAPLAN_CUE_ENABLED=1 to load .kaplan/cue.json and enable event-driven pipelines."
+      :title="t('cue.states.disabledTitle')"
+      :description="t('cue.states.disabledDescription')"
     />
 
     <EmptyState
       v-else-if="cue.loadError"
-      title="Could not load Cue"
+      :title="t('cue.states.loadErrorTitle')"
       :description="cue.loadError"
       tone="danger"
     >
       <template #actions>
-        <BaseButton @click="onReload">Retry</BaseButton>
+        <BaseButton @click="onReload">{{ t('cue.actions.retry') }}</BaseButton>
       </template>
     </EmptyState>
 
     <template v-else>
       <p class="ctx">
-        <span v-if="cue.workspace">Workspace: <code>{{ cue.workspace }}</code></span>
-        <span v-else>No active workspace.</span>
-        <span v-if="cue.configPath"> · Config: <code>{{ cue.configPath }}</code></span>
+        <span v-if="cue.workspace">{{ t('cue.context.workspace') }}: <code>{{ cue.workspace }}</code></span>
+        <span v-else>{{ t('cue.context.noWorkspace') }}</span>
+        <span v-if="cue.configPath"> ? {{ t('cue.context.config') }}: <code>{{ cue.configPath }}</code></span>
       </p>
 
       <EmptyState
         v-if="cue.subscriptions.length === 0"
-        title="No subscriptions"
-        description="Create your first subscription to wake agents on file changes, schedules, or agent completions."
+        :title="t('cue.states.emptyTitle')"
+        :description="t('cue.states.emptyDescription')"
       >
         <template #actions>
-          <BaseButton @click="onNew">+ New subscription</BaseButton>
+          <BaseButton @click="onNew">{{ t('cue.actions.newSubscription') }}</BaseButton>
         </template>
       </EmptyState>
 
@@ -202,7 +204,7 @@ async function onRemove(id: string): Promise<void> {
   font-weight: 600;
 }
 .status.on {
-  color: var(--green, #3fb950);
+  color: var(--green);
 }
 .status.off {
   color: var(--text-faint);

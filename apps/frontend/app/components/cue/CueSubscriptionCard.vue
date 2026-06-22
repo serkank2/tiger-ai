@@ -1,22 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import { useT } from '~/composables/useT';
 import type { CueSubscriptionStatus } from '~/types';
 
 const props = defineProps<{ sub: CueSubscriptionStatus; busy?: boolean; deleting?: boolean }>();
 const emit = defineEmits<{ trigger: [id: string]; edit: [id: string]; remove: [id: string] }>();
+const { t } = useT();
 
-const eventLabel: Record<CueSubscriptionStatus['event'], string> = {
-  'file.changed': 'File changed',
-  'time.scheduled': 'Scheduled',
-  'time.once': 'Once',
-  'agent.completed': 'Agent completed',
-  'cli.trigger': 'Manual',
-};
+const eventLabel = computed<Record<CueSubscriptionStatus['event'], string>>(() => ({
+  'file.changed': t('cue.subscription.events.fileChanged'),
+  'time.scheduled': t('cue.subscription.events.scheduled'),
+  'time.once': t('cue.subscription.events.once'),
+  'agent.completed': t('cue.subscription.events.agentCompleted'),
+  'cli.trigger': t('cue.subscription.events.manual'),
+}));
 
 const isManual = computed(() => props.sub.event === 'cli.trigger');
 const lastFired = computed(() =>
-  props.sub.lastFiredAt ? new Date(props.sub.lastFiredAt).toLocaleString() : 'never',
+  props.sub.lastFiredAt ? new Date(props.sub.lastFiredAt).toLocaleString() : t('cue.subscription.never'),
 );
 </script>
 
@@ -27,7 +29,7 @@ const lastFired = computed(() =>
         <span class="name">{{ sub.name ?? sub.id }}</span>
         <span class="badge event">{{ eventLabel[sub.event] }}</span>
         <span class="badge target">→ {{ sub.target }}</span>
-        <span v-if="!sub.enabled" class="badge off">disabled</span>
+        <span v-if="!sub.enabled" class="badge off">{{ t('cue.subscription.disabled') }}</span>
       </div>
       <div class="card-actions">
         <BaseButton
@@ -37,18 +39,18 @@ const lastFired = computed(() =>
           :disabled="!sub.enabled"
           @click="emit('trigger', sub.id)"
         >
-          Trigger
+          {{ t('cue.subscription.trigger') }}
         </BaseButton>
-        <BaseButton size="sm" variant="ghost" @click="emit('edit', sub.id)">Edit</BaseButton>
-        <BaseButton size="sm" variant="ghost" :loading="deleting" @click="emit('remove', sub.id)">Delete</BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="emit('edit', sub.id)">{{ t('common.edit') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" :loading="deleting" @click="emit('remove', sub.id)">{{ t('common.delete') }}</BaseButton>
       </div>
     </div>
 
     <dl class="meta">
-      <div><dt>Last fired</dt><dd>{{ lastFired }}</dd></div>
-      <div><dt>Fires</dt><dd>{{ sub.fireCount }}</dd></div>
+      <div><dt>{{ t('cue.subscription.lastFired') }}</dt><dd>{{ lastFired }}</dd></div>
+      <div><dt>{{ t('cue.subscription.fires') }}</dt><dd>{{ sub.fireCount }}</dd></div>
       <div v-if="sub.pendingSources?.length">
-        <dt>Waiting on</dt>
+        <dt>{{ t('cue.subscription.waitingOn') }}</dt>
         <dd>{{ sub.pendingSources.join(', ') }}</dd>
       </div>
     </dl>

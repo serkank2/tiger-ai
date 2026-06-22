@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useT } from '~/composables/useT';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
 const team = useTeamStore();
+const { t } = useT();
 
 const handoffs = computed(() => team.handoffs);
 const pendingHandoffs = computed(() => handoffs.value.filter((h) => h.pending));
@@ -33,9 +35,9 @@ async function merge(taskId: string): Promise<void> {
 }
 async function discard(taskId: string): Promise<void> {
   const ok = await useDialog().confirm({
-    title: 'Discard worktree',
-    message: `Discard the worktree for ${taskId}? Its un-merged changes will be lost. This cannot be undone.`,
-    confirmText: 'Discard',
+    title: t('team.coordination.discardTitle'),
+    message: t('team.coordination.discardMessage', { taskId }),
+    confirmText: t('team.coordination.discard'),
     danger: true,
   });
   if (!ok) return;
@@ -44,25 +46,25 @@ async function discard(taskId: string): Promise<void> {
 </script>
 
 <template>
-  <section class="coord" aria-label="Team coordination">
-    <h3 class="coord-title">Coordination</h3>
+  <section class="coord" :aria-label="t('team.coordination.ariaLabel')">
+    <h3 class="coord-title">{{ t('team.coordination.title') }}</h3>
 
     <p v-if="!hasAnything" class="coord-empty">
-      No handoffs, inbox messages, or per-task worktrees yet.
+      {{ t('team.coordination.empty') }}
     </p>
 
     <!-- Handoff dependencies (CAO handoff verb) -->
     <div v-if="handoffs.length" class="coord-block" data-testid="handoffs">
-      <h4>Handoff dependencies</h4>
+      <h4>{{ t('team.coordination.handoffs') }}</h4>
       <ul class="coord-list">
         <li v-for="h in pendingHandoffs" :key="h.id" class="coord-row pending" data-testid="handoff-pending">
-          <span class="badge b-pending">blocking</span>
+          <span class="badge b-pending">{{ t('team.coordination.blocking') }}</span>
           <span class="flow">{{ roleName(h.fromRoleId) }} → {{ roleName(h.toRoleId) }}</span>
           <span class="task">{{ h.taskId }}</span>
           <span class="ttl">{{ h.title }}</span>
         </li>
         <li v-for="h in resolvedHandoffs" :key="h.id" class="coord-row done" data-testid="handoff-done">
-          <span class="badge b-done">done</span>
+          <span class="badge b-done">{{ t('team.coordination.done') }}</span>
           <span class="flow">{{ roleName(h.fromRoleId) }} → {{ roleName(h.toRoleId) }}</span>
           <span class="task">{{ h.taskId }}</span>
           <span class="ttl">{{ h.title }}</span>
@@ -72,19 +74,19 @@ async function discard(taskId: string): Promise<void> {
 
     <!-- Per-role inboxes (sendMessage verb) -->
     <div v-if="inboxes.length" class="coord-block" data-testid="inboxes">
-      <h4>Inboxes</h4>
+      <h4>{{ t('team.coordination.inboxes') }}</h4>
       <ul class="coord-list">
         <li v-for="r in inboxes" :key="r.id" class="coord-row" data-testid="inbox-row">
           <span class="badge b-inbox">{{ r.count }}</span>
           <span class="flow">{{ r.name }}</span>
-          <span class="ttl">message(s) waiting for the next turn</span>
+          <span class="ttl">{{ t('team.coordination.messagesWaiting') }}</span>
         </li>
       </ul>
     </div>
 
     <!-- Per-task git worktrees (Part B) -->
     <div v-if="worktrees.length" class="coord-block" data-testid="worktrees">
-      <h4>Task worktrees</h4>
+      <h4>{{ t('team.coordination.worktrees') }}</h4>
       <ul class="coord-list">
         <li v-for="w in worktrees" :key="w.branch" class="coord-row" data-testid="worktree-row">
           <span class="badge" :class="`wt-${w.status}`">{{ w.status }}</span>
@@ -99,14 +101,14 @@ async function discard(taskId: string): Promise<void> {
               :loading="team.isBusy(`worktree:${w.taskId}`)"
               data-testid="worktree-merge"
               @click="merge(w.taskId)"
-            >Merge back</BaseButton>
+            >{{ t('team.coordination.mergeBack') }}</BaseButton>
             <BaseButton
               size="sm"
               variant="ghost"
               :disabled="team.isBusy(`worktree:${w.taskId}`)"
               data-testid="worktree-discard"
               @click="discard(w.taskId)"
-            >Discard</BaseButton>
+            >{{ t('team.coordination.discard') }}</BaseButton>
           </template>
         </li>
       </ul>

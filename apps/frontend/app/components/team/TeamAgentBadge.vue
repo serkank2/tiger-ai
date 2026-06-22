@@ -25,15 +25,15 @@ const glyph = computed(() => GLYPH[props.tool] ?? '◆');
   flex: none;
 }
 .t-claude {
-  color: #d97757;
-  background: rgba(217, 119, 87, 0.16);
+  color: var(--agent-claude-color);
+  background: var(--agent-claude-bg);
 }
 .t-codex {
-  color: var(--text-dim);
-  background: var(--bg-elev-2);
+  color: var(--agent-codex-color);
+  background: var(--agent-codex-bg);
 }
 .t-antigravity {
-  color: #4285f4;
-  background: rgba(66, 133, 244, 0.16);
+  color: var(--agent-antigravity-color);
+  background: var(--agent-antigravity-bg);
 }
 </style>

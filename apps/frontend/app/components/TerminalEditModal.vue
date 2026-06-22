@@ -3,6 +3,7 @@ import type { ShellKind, TerminalDto, TerminalInput } from '~/types';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseField from '~/components/ui/BaseField.vue';
+import { useT } from '~/composables/useT';
 import { errText } from '~/lib/apiError';
 import {
   absoluteLocalPathError,
@@ -19,6 +20,7 @@ const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 const settings = useSettingsStore();
 const api = useApi();
+const { t } = useT();
 
 const SHELLS: { value: ShellKind; label: string }[] = [
   { value: 'system-default', label: 'System default' },

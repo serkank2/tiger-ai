@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useT } from '~/composables/useT';
 import type { TeamMetrics } from '~/types';
 
 const props = defineProps<{ metrics: TeamMetrics | null }>();
+const { t } = useT();
 
 const m = computed(() => props.metrics);
 
@@ -25,17 +27,17 @@ const naTip = 'Token/cost totals need a usage-reporting runner — the CLIs run 
 
 <template>
   <details class="metrics" open>
-    <summary>Metrics</summary>
+    <summary>{{ t('team.metrics.title') }}</summary>
     <div v-if="m" class="m-body">
       <div class="totals">
-        <span class="kv"><span class="k">Duration</span><span class="v">{{ fmtDuration(m.durationMs) }}</span></span>
-        <span class="kv"><span class="k">Turns</span><span class="v">{{ m.turnCount }}</span></span>
-        <span class="kv" :title="naTip"><span class="k">Tokens</span><span class="v na">{{ tokensLabel }}</span></span>
-        <span class="kv" :title="naTip"><span class="k">Cost</span><span class="v na">{{ costLabel }}</span></span>
+        <span class="kv"><span class="k">{{ t('team.metrics.duration') }}</span><span class="v">{{ fmtDuration(m.durationMs) }}</span></span>
+        <span class="kv"><span class="k">{{ t('team.metrics.turns') }}</span><span class="v">{{ m.turnCount }}</span></span>
+        <span class="kv" :title="naTip"><span class="k">{{ t('team.metrics.tokens') }}</span><span class="v na">{{ tokensLabel }}</span></span>
+        <span class="kv" :title="naTip"><span class="k">{{ t('team.metrics.cost') }}</span><span class="v na">{{ costLabel }}</span></span>
       </div>
       <table v-if="m.perRole.length" class="per-role">
         <thead>
-          <tr><th>Role</th><th>Provider</th><th class="num">Turns</th><th class="num">Duration</th></tr>
+          <tr><th>{{ t('team.metrics.role') }}</th><th>{{ t('team.metrics.provider') }}</th><th class="num">{{ t('team.metrics.turns') }}</th><th class="num">{{ t('team.metrics.duration') }}</th></tr>
         </thead>
         <tbody>
           <tr v-for="r in m.perRole" :key="r.roleId">
@@ -47,7 +49,7 @@ const naTip = 'Token/cost totals need a usage-reporting runner — the CLIs run 
         </tbody>
       </table>
     </div>
-    <p v-else class="empty">No metrics yet.</p>
+    <p v-else class="empty">{{ t('team.metrics.empty') }}</p>
   </details>
 </template>
 

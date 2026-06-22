@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useSlots } from 'vue';
 // Accessible dialog primitive. Mount it with v-if (the parent owns open/close state);
 // it handles everything an accessible modal must do so individual screens never have to:
 //   • role="dialog" + aria-modal + aria-labelledby (or aria-label) wiring
@@ -18,6 +19,8 @@ const props = withDefaults(
     size?: 'sm' | 'md' | 'lg' | 'xl';
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
+    panelClass?: string;
+    teleportDisabled?: boolean;
   }>(),
   { size: 'md', closeOnBackdrop: true, closeOnEscape: true },
 );
@@ -29,6 +32,7 @@ const titleId = useId();
 const dialogRef = ref<HTMLElement | null>(null);
 let opener: HTMLElement | null = null;
 let prevOverflow = '';
+let backdropPointerClosed = false;
 
 const labelledBy = computed(() =>
   props.labelledby ?? (props.title && !slots.header ? titleId : undefined),
@@ -86,8 +90,17 @@ function onKeydown(e: KeyboardEvent) {
 function onBackdrop(e: MouseEvent) {
   // mousedown (not click) so a text selection that ends on the backdrop doesn't close.
   if (props.closeOnBackdrop && e.target === e.currentTarget) {
+    backdropPointerClosed = true;
     emit('close');
+    window.setTimeout(() => {
+      backdropPointerClosed = false;
+    }, 0);
   }
+}
+
+function onBackdropClick(e: MouseEvent) {
+  if (backdropPointerClosed) return;
+  if (props.closeOnBackdrop && e.target === e.currentTarget) emit('close');
 }
 
 onMounted(async () => {
@@ -108,12 +121,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div class="backdrop" @mousedown="onBackdrop">
+  <Teleport to="body" :disabled="teleportDisabled">
+    <div class="backdrop modal-backdrop" @mousedown="onBackdrop" @click="onBackdropClick">
       <div
         ref="dialogRef"
-        class="modal"
-        :class="`size-${size}`"
+        class="modal modal-panel"
+        :class="[`size-${size}`, panelClass]"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="labelledBy"
@@ -121,7 +134,7 @@ onBeforeUnmount(() => {
         tabindex="-1"
         @keydown="onKeydown"
       >
-        <header v-if="title || $slots.header" class="head">
+        <header v-if="title || $slots.header" class="head modal-head">
           <slot name="header">
             <h2 :id="titleId" class="title">{{ title }}</h2>
           </slot>

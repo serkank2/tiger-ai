@@ -68,22 +68,22 @@ const roleById = computed(() => {
 });
 
 function senderInfo(from: string): SenderInfo {
-  if (from === 'user') return { label: 'You', tool: null, kind: 'user' };
-  if (from === 'system') return { label: 'System', tool: null, kind: 'system' };
+  if (from === 'user') return { label: t('team.chat.you'), tool: null, kind: 'user' };
+  if (from === 'system') return { label: t('team.chat.system'), tool: null, kind: 'system' };
   const role = roleById.value.get(from);
   return { label: role?.name ?? from, tool: role?.tool ?? null, kind: 'role' };
 }
 
-const KIND_LABEL: Partial<Record<TeamMessageKind, string>> = {
-  decision: 'decision',
-  task: 'task',
-  handoff: 'handoff',
-  verification: 'verification',
-  finding: 'finding',
-  steering: 'steering',
-  signoff: 'sign-off',
-  blocker: 'blocker',
-  tool: 'tool',
+const KIND_KEY: Partial<Record<TeamMessageKind, string>> = {
+  decision: 'team.chat.kinds.decision',
+  task: 'team.chat.kinds.task',
+  handoff: 'team.chat.kinds.handoff',
+  verification: 'team.chat.kinds.verification',
+  finding: 'team.chat.kinds.finding',
+  steering: 'team.chat.kinds.steering',
+  signoff: 'team.chat.kinds.signoff',
+  blocker: 'team.chat.kinds.blocker',
+  tool: 'team.chat.kinds.tool',
 };
 
 function time(iso: string): string {
@@ -151,11 +151,11 @@ function loadOlder() {
     <div ref="scroller" class="stream" @scroll="onScroll">
       <div v-if="team.hasMoreMessages" class="load-more">
         <button type="button" :disabled="team.transcriptLoading" @click="loadOlder">
-          {{ team.transcriptLoading ? 'Loading…' : 'Load earlier messages' }}
+          {{ team.transcriptLoading ? t('team.chat.loadingEarlier') : t('team.chat.loadEarlier') }}
         </button>
       </div>
 
-      <p v-if="!messages.length" class="empty">No messages yet — the team is getting started.</p>
+      <p v-if="!messages.length" class="empty">{{ t('team.chat.empty') }}</p>
 
       <TransitionGroup name="msg" tag="div" class="msg-list">
         <article
@@ -172,7 +172,7 @@ function loadOlder() {
             <div class="head">
               <span class="author">{{ senderInfo(m.from).label }}</span>
               <span v-if="m.to && m.to !== 'all'" class="to">→ {{ roleById.get(m.to)?.name ?? m.to }}</span>
-              <span v-if="KIND_LABEL[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ KIND_LABEL[m.kind] }}</span>
+              <span v-if="KIND_KEY[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ t(KIND_KEY[m.kind]!) }}</span>
               <span
                 v-if="chatLang !== 'original' && !hasTranslation(m.id)"
                 class="pending-tag"
