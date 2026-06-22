@@ -1,25 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useT } from '~/composables/useT';
 import type { RoleSnapshot } from '~/types';
 import TeamAgentBadge from './TeamAgentBadge.vue';
 
 const props = defineProps<{ role: RoleSnapshot; displayName?: string }>();
 const emit = defineEmits<{ select: [] }>();
+const { t } = useT();
 
 const hasTerminal = computed(() => !!props.role.terminalId);
 const label = computed(() => props.displayName ?? props.role.name);
 
-const STATUS_LABEL: Record<string, string> = {
-  idle: 'Idle',
-  thinking: 'Thinking',
-  working: 'Working',
-  waiting: 'Waiting',
-  blocked: 'Blocked',
-  done: 'Done',
-  failed: 'Failed',
+const STATUS_KEY: Record<string, string> = {
+  idle: 'team.roleTile.status.idle',
+  thinking: 'team.roleTile.status.thinking',
+  working: 'team.roleTile.status.working',
+  waiting: 'team.roleTile.status.waiting',
+  blocked: 'team.status.blocked',
+  done: 'team.controls.done',
+  failed: 'team.status.failed',
 };
 
-const statusLabel = computed(() => STATUS_LABEL[props.role.status] ?? props.role.status);
+const statusLabel = computed(() => t(STATUS_KEY[props.role.status] ?? props.role.status));
 const isActive = computed(() => props.role.status === 'working' || props.role.status === 'thinking');
 const root = ref<HTMLElement | null>(null);
 
@@ -42,7 +44,7 @@ function onTileKeydown(ev: KeyboardEvent): void {
     :class="[`s-${role.status}`, { signed: role.signedOff, clickable: hasTerminal }]"
     :role="hasTerminal ? 'button' : undefined"
     :tabindex="hasTerminal ? 0 : undefined"
-    :title="hasTerminal ? 'Open the agent terminal' : undefined"
+    :title="hasTerminal ? t('team.roleTile.openAgentTerminal') : undefined"
     @click="select"
     @keydown="onTileKeydown"
   >
@@ -51,19 +53,19 @@ function onTileKeydown(ev: KeyboardEvent): void {
       <div class="line">
         <TeamAgentBadge :tool="role.tool" />
         <span class="name" :title="label">{{ label }}</span>
-        <span v-if="hasTerminal" class="term-ic" title="Open terminal">🖥</span>
-        <span v-if="role.signedOff" class="check" title="Signed off">✓</span>
+        <span v-if="hasTerminal" class="term-ic" :title="t('team.roleTile.openTerminal')">🖥</span>
+        <span v-if="role.signedOff" class="check" :title="t('team.roleTile.signedOff')">✓</span>
       </div>
       <div class="meta">
         <span class="status">{{ statusLabel }}</span>
-        <span v-if="role.turnCount" class="turns" :title="`${role.turnCount} turn(s) taken`">×{{ role.turnCount }}</span>
-        <span v-if="role.canWriteCode" class="flag write" title="May edit project source">code</span>
-        <span v-if="role.requiredForSignoff" class="flag sign" title="Required for sign-off">sign-off</span>
+        <span v-if="role.turnCount" class="turns" :title="t('team.roleTile.turnsTaken', { n: role.turnCount })">×{{ role.turnCount }}</span>
+        <span v-if="role.canWriteCode" class="flag write" :title="t('team.roleTile.mayEditSource')">{{ t('team.roleTile.code') }}</span>
+        <span v-if="role.requiredForSignoff" class="flag sign" :title="t('team.roleTile.requiredSignoff')">{{ t('team.roleTile.signoff') }}</span>
       </div>
       <div v-if="role.tasks && (role.tasks.todo || role.tasks.inProgress || role.tasks.done)" class="tasks">
-        <span v-if="role.tasks.todo" class="tq todo" title="Queued tasks">▤ {{ role.tasks.todo }}</span>
-        <span v-if="role.tasks.inProgress" class="tq prog" title="In progress">▸ {{ role.tasks.inProgress }}</span>
-        <span v-if="role.tasks.done" class="tq done" title="Completed tasks">✓ {{ role.tasks.done }}</span>
+        <span v-if="role.tasks.todo" class="tq todo" :title="t('team.roleTile.queuedTasks')">▤ {{ role.tasks.todo }}</span>
+        <span v-if="role.tasks.inProgress" class="tq prog" :title="t('team.roleTile.inProgress')">▸ {{ role.tasks.inProgress }}</span>
+        <span v-if="role.tasks.done" class="tq done" :title="t('team.roleTile.completedTasks')">✓ {{ role.tasks.done }}</span>
       </div>
       <p v-if="role.statusNote" class="note">{{ role.statusNote }}</p>
     </div>

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
 import { useApi } from '~/composables/useApi';
 import { useNoticesStore } from '~/stores/notices';
+import { useT } from '~/composables/useT';
 import type { TeamChangeStatus } from '~/types';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseModal from '~/components/ui/BaseModal.vue';
@@ -12,6 +13,7 @@ const emit = defineEmits<{ close: [] }>();
 const team = useTeamStore();
 const api = useApi();
 const notices = useNoticesStore();
+const { t } = useT();
 
 const changes = computed(() => team.changes);
 const loading = computed(() => team.changesLoading);
@@ -220,7 +222,7 @@ function errCode(e: unknown): string | undefined {
 }
 function errMessage(e: unknown): string {
   const err = e as { data?: { error?: { message?: string } }; message?: string };
-  return err?.data?.error?.message ?? err?.message ?? 'Request failed';
+  return err?.data?.error?.message ?? err?.message ?? t('team.changes.requestFailed');
 }
 
 const staging = ref(false);
@@ -230,9 +232,9 @@ async function stageAll(): Promise<void> {
   staging.value = true;
   try {
     team.changes = await api.stageTeamChanges(runId);
-    notices.push('Staged all changes', 'info');
+    notices.push(t('team.changes.stagedNotice'), 'info');
   } catch (e) {
-    notices.push(`Stage failed: ${errMessage(e)}`, 'error');
+    notices.push(t('team.changes.stageFailed', { message: errMessage(e) }), 'error');
   } finally {
     staging.value = false;
   }
@@ -253,7 +255,7 @@ async function doCommit(): Promise<void> {
   if (!runId || committing.value) return;
   const message = commitMessage.value.trim();
   if (!message) {
-    commitError.value = 'A commit message is required.';
+    commitError.value = t('team.changes.commitRequired');
     return;
   }
   committing.value = true;
@@ -262,15 +264,15 @@ async function doCommit(): Promise<void> {
     const result = await api.commitTeamChanges(runId, message);
     team.changes = result.changes;
     if (result.committed) {
-      notices.push(`Committed ${result.sha?.slice(0, 7) ?? ''} — ${result.summary}`.trim(), 'info');
+      notices.push(t('team.changes.committedNotice', { sha: result.sha?.slice(0, 7) ?? '', summary: result.summary }).trim(), 'info');
       commitOpen.value = false;
     } else {
       // "nothing to commit" is a non-error outcome: keep the modal open with the note.
-      commitError.value = result.summary || 'Nothing to commit.';
+      commitError.value = result.summary || t('team.changes.nothingToCommit');
     }
   } catch (e) {
     if (errCode(e) === 'validation_failed') commitError.value = errMessage(e);
-    else notices.push(`Commit failed: ${errMessage(e)}`, 'error');
+    else notices.push(t('team.changes.commitFailed', { message: errMessage(e) }), 'error');
   } finally {
     committing.value = false;
   }
@@ -297,7 +299,7 @@ async function doCreatePr(): Promise<void> {
   if (!runId || creatingPr.value) return;
   const title = prTitle.value.trim();
   if (!title) {
-    prError.value = 'A PR title is required.';
+    prError.value = t('team.changes.prTitleRequired');
     return;
   }
   creatingPr.value = true;
@@ -309,12 +311,12 @@ async function doCreatePr(): Promise<void> {
       base: prBase.value.trim() || undefined,
     });
     prUrl.value = result.url;
-    notices.push('Pull request created', 'info');
+    notices.push(t('team.changes.pullRequestCreatedNotice'), 'info');
   } catch (e) {
     // `conflict` (missing/unauth gh, detached HEAD) carries an actionable message
     // from the backend (install gh / gh auth login / checkout a branch) — show it inline.
     if (errCode(e) === 'conflict' || errCode(e) === 'validation_failed') prError.value = errMessage(e);
-    else notices.push(`Create PR failed: ${errMessage(e)}`, 'error');
+    else notices.push(t('team.changes.createPrFailed', { message: errMessage(e) }), 'error');
   } finally {
     creatingPr.value = false;
   }
@@ -326,9 +328,9 @@ async function copyPrUrl(): Promise<void> {
   if (!prUrl.value) return;
   try {
     await navigator.clipboard?.writeText(prUrl.value);
-    notices.push('PR URL copied', 'info');
+    notices.push(t('team.changes.prUrlCopied'), 'info');
   } catch {
-    notices.push('Could not copy — select the URL manually.', 'error');
+    notices.push(t('team.changes.copyFailed'), 'error');
   }
 }
 </script>
@@ -340,23 +342,23 @@ async function copyPrUrl(): Promise<void> {
       class="changes-drawer"
       role="dialog"
       aria-modal="true"
-      aria-label="Team changes"
+      :aria-label="t('team.changes.reviewTitle')"
       tabindex="-1"
       @keydown="onDrawerKeydown"
     >
       <header class="ch-head">
         <div class="ch-title">
-          <strong>Changes</strong>
+          <strong>{{ t('team.changes.title') }}</strong>
           <span v-if="changes?.branch" class="branch" :title="changes.head ?? ''">⎇ {{ changes.branch }}</span>
           <span v-if="changes" class="stat">
-            <span class="files">{{ changes.summary.files }} files</span>
+            <span class="files">{{ t('team.changes.files', { n: changes.summary.files }) }}</span>
             <span class="ins">+{{ changes.summary.insertions }}</span>
             <span class="del">−{{ changes.summary.deletions }}</span>
           </span>
         </div>
         <div class="ch-actions">
-          <BaseButton size="sm" variant="ghost" :loading="loading" @click="refresh">Refresh</BaseButton>
-          <BaseButton size="sm" variant="ghost" icon-only aria-label="Close changes" @click="emit('close')">✕</BaseButton>
+          <BaseButton size="sm" variant="ghost" :loading="loading" @click="refresh">{{ t('team.changes.refresh') }}</BaseButton>
+          <BaseButton size="sm" variant="ghost" icon-only :aria-label="t('team.changes.close')" @click="emit('close')">✕</BaseButton>
         </div>
       </header>
 
@@ -367,38 +369,38 @@ async function copyPrUrl(): Promise<void> {
           variant="ghost"
           :loading="staging"
           :disabled="!writeRoutesAvailable || !hasChanges"
-          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'git add -A'"
+          :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.stageAllTitle')"
           @click="stageAll"
-        >Stage all</BaseButton>
+        >{{ t('team.changes.stageAll') }}</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
           :disabled="!writeRoutesAvailable || !hasChanges"
-          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'Commit the staged changes'"
+          :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.commitTitle')"
           @click="openCommit"
-        >Commit…</BaseButton>
+        >{{ t('team.changes.commit') }}</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
           :disabled="!writeRoutesAvailable"
-          :title="readOnly ? 'Past run — git writes only apply to the live run' : 'Open a pull request via gh'"
+          :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.createPrTitle')"
           @click="openPr"
-        >Create PR</BaseButton>
+        >{{ t('team.changes.createPr') }}</BaseButton>
         <span v-if="!writeRoutesAvailable" class="pr-note">
-          {{ readOnly ? 'Past run — git writes only apply to the live run.' : 'The workspace is not a git repository.' }}
+          {{ readOnly ? t('team.changes.liveRunOnly') : t('team.changes.notGitRepo') }}
         </span>
       </div>
 
       <section v-if="loading && !changes" class="ch-state">
-        <Spinner :size="20" /><span>Computing changes…</span>
+        <Spinner :size="20" /><span>{{ t('team.changes.computing') }}</span>
       </section>
 
       <section v-else-if="changes && !changes.isGitRepo" class="ch-state empty">
-        <p>{{ changes.note ?? 'The workspace is not a git repository.' }}</p>
+        <p>{{ changes.note ?? t('team.changes.notGitRepo') }}</p>
       </section>
 
       <section v-else-if="changes && changes.files.length === 0" class="ch-state empty">
-        <p>No changes yet — the team has not modified any tracked files.</p>
+        <p>{{ t('team.changes.noChanges') }}</p>
         <p v-if="changes.note" class="note">{{ changes.note }}</p>
       </section>
 
@@ -419,7 +421,7 @@ async function copyPrUrl(): Promise<void> {
               type="button"
               class="file-head"
               :aria-expanded="!collapsed[file.path]"
-              :aria-label="`${collapsed[file.path] ? 'Expand' : 'Collapse'} diff for ${file.path}`"
+              :aria-label="t('team.changes.diffToggleAria', { action: collapsed[file.path] ? t('team.changes.expand') : t('team.changes.collapse'), path: file.path })"
               @click="toggle(file.path)"
             >
               <span class="chev" aria-hidden="true">{{ collapsed[file.path] ? '▸' : '▾' }}</span>
@@ -433,8 +435,8 @@ async function copyPrUrl(): Promise<void> {
                     v-if="!readOnly"
                     type="button"
                     class="add-comment"
-                    title="Comment on this line"
-                    aria-label="Comment on this line"
+                    :title="t('team.changes.commentOnLine')"
+                    :aria-label="t('team.changes.commentOnLine')"
                     @click="startComment(file, line)"
                   >＋</button>
                   <span class="dl" :class="`d-${line.kind}`">{{ line.text }}</span>
@@ -444,19 +446,19 @@ async function copyPrUrl(): Promise<void> {
                     v-model="draftBody"
                     class="comment-input"
                     rows="2"
-                    placeholder="Add a review comment for this line…"
-                    aria-label="Review comment"
+                    :placeholder="t('team.changes.commentPlaceholder')"
+                    :aria-label="t('team.changes.reviewComment')"
                   />
                   <div class="comment-actions">
-                    <BaseButton size="sm" variant="primary" @click="saveComment(file, line)">Add comment</BaseButton>
-                    <BaseButton size="sm" variant="ghost" @click="draftKey = null">Cancel</BaseButton>
+                    <BaseButton size="sm" variant="primary" @click="saveComment(file, line)">{{ t('team.changes.addComment') }}</BaseButton>
+                    <BaseButton size="sm" variant="ghost" @click="draftKey = null">{{ t('common.cancel') }}</BaseButton>
                   </div>
                 </div>
               </template>
             </div>
           </section>
 
-          <p v-if="changes.diffTruncated" class="truncated">Diff truncated — open the workspace to see the full diff.</p>
+          <p v-if="changes.diffTruncated" class="truncated">{{ t('team.changes.diffTruncated') }}</p>
         </div>
 
         <!-- Bundled review → steering directive (the review→follow-up loop). -->
@@ -465,73 +467,73 @@ async function copyPrUrl(): Promise<void> {
             <li v-for="(c, i) in comments" :key="i" class="rc">
               <span class="rc-anchor">{{ c.path }}:{{ c.line }}</span>
               <span class="rc-body">{{ c.body }}</span>
-              <button type="button" class="rc-rm" aria-label="Remove comment" @click="removeComment(i)">✕</button>
+              <button type="button" class="rc-rm" :aria-label="t('team.changes.removeComment')" @click="removeComment(i)">✕</button>
             </li>
           </ul>
           <div class="review-send">
-            <span class="rc-count">{{ comments.length }} comment(s)</span>
+            <span class="rc-count">{{ t('team.changes.commentCount', { n: comments.length }) }}</span>
             <BaseButton
               size="sm"
               variant="primary"
               :loading="sending"
               :disabled="!canSend"
-              :title="readOnly ? 'This is a past run — review feedback can only be sent to the live run' : 'Send these comments to the team as steering'"
+              :title="readOnly ? t('team.changes.readOnlyReviewTitle') : t('team.changes.sendReviewTitle')"
               @click="sendReview"
-            >Send review to team</BaseButton>
+            >{{ t('team.changes.sendReview') }}</BaseButton>
           </div>
         </footer>
       </template>
     </div>
 
     <!-- Commit message prompt (app modal pattern; no window.prompt). -->
-    <BaseModal v-if="commitOpen" title="Commit changes" size="sm" @close="commitOpen = false">
+    <BaseModal v-if="commitOpen" :title="t('team.changes.commitChanges')" size="sm" @close="commitOpen = false">
       <label class="modal-field">
-        <span>Commit message</span>
+        <span>{{ t('team.changes.commitMessage') }}</span>
         <textarea
           v-model="commitMessage"
           rows="3"
-          placeholder="Describe the change…"
-          aria-label="Commit message"
+          :placeholder="t('team.changes.commitMessagePlaceholder')"
+          :aria-label="t('team.changes.commitMessage')"
           @input="commitError = ''"
         />
       </label>
       <p v-if="commitError" class="modal-err" role="alert" aria-live="polite">{{ commitError }}</p>
       <template #footer>
-        <BaseButton variant="ghost" @click="commitOpen = false">Cancel</BaseButton>
-        <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">Commit</BaseButton>
+        <BaseButton variant="ghost" @click="commitOpen = false">{{ t('common.cancel') }}</BaseButton>
+        <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">{{ t('team.changes.commitAction') }}</BaseButton>
       </template>
     </BaseModal>
 
     <!-- Create-PR prompt. -->
-    <BaseModal v-if="prOpen" title="Create pull request" size="sm" @close="prOpen = false">
+    <BaseModal v-if="prOpen" :title="t('team.changes.createPullRequest')" size="sm" @close="prOpen = false">
       <template v-if="!prUrl">
         <label class="modal-field">
-          <span>Title</span>
-          <input v-model="prTitle" placeholder="PR title" aria-label="PR title" @input="prError = ''" />
+          <span>{{ t('team.changes.prTitle') }}</span>
+          <input v-model="prTitle" :placeholder="t('team.changes.prTitlePlaceholder')" :aria-label="t('team.changes.prTitle')" @input="prError = ''" />
         </label>
         <label class="modal-field">
-          <span>Body <i>(optional)</i></span>
-          <textarea v-model="prBody" rows="3" placeholder="PR description…" aria-label="PR body" />
+          <span>{{ t('team.changes.prBody') }} <i>({{ t('team.changes.optional') }})</i></span>
+          <textarea v-model="prBody" rows="3" :placeholder="t('team.changes.prBodyPlaceholder')" :aria-label="t('team.changes.prBody')" />
         </label>
         <label class="modal-field">
-          <span>Base branch <i>(optional)</i></span>
-          <input v-model="prBase" placeholder="e.g. main" aria-label="Base branch" />
+          <span>{{ t('team.changes.baseBranch') }} <i>({{ t('team.changes.optional') }})</i></span>
+          <input v-model="prBase" :placeholder="t('team.changes.baseBranchPlaceholder')" :aria-label="t('team.changes.baseBranch')" />
         </label>
         <p v-if="prError" class="modal-err" role="alert" aria-live="polite">{{ prError }}</p>
       </template>
       <template v-else>
-        <p class="modal-ok">Pull request created:</p>
+        <p class="modal-ok">{{ t('team.changes.pullRequestCreated') }}</p>
         <a class="pr-url" :href="prUrl" target="_blank" rel="noopener">{{ prUrl }}</a>
       </template>
       <template #footer>
         <template v-if="!prUrl">
-          <BaseButton variant="ghost" @click="prOpen = false">Cancel</BaseButton>
-          <BaseButton variant="primary" :loading="creatingPr" :disabled="!prTitle.trim()" @click="doCreatePr">Create PR</BaseButton>
+          <BaseButton variant="ghost" @click="prOpen = false">{{ t('common.cancel') }}</BaseButton>
+          <BaseButton variant="primary" :loading="creatingPr" :disabled="!prTitle.trim()" @click="doCreatePr">{{ t('team.changes.createPr') }}</BaseButton>
         </template>
         <template v-else>
-          <BaseButton variant="ghost" @click="copyPrUrl">Copy URL</BaseButton>
-          <BaseButton variant="ghost" @click="openPrUrl">Open</BaseButton>
-          <BaseButton variant="primary" @click="prOpen = false">Done</BaseButton>
+          <BaseButton variant="ghost" @click="copyPrUrl">{{ t('team.changes.copyUrl') }}</BaseButton>
+          <BaseButton variant="ghost" @click="openPrUrl">{{ t('team.changes.open') }}</BaseButton>
+          <BaseButton variant="primary" @click="prOpen = false">{{ t('team.changes.done') }}</BaseButton>
         </template>
       </template>
     </BaseModal>
@@ -542,7 +544,7 @@ async function copyPrUrl(): Promise<void> {
 .changes-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-backdrop);
   display: flex;
   justify-content: flex-end;
   z-index: 60;
@@ -555,7 +557,7 @@ async function copyPrUrl(): Promise<void> {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
 }
 .ch-head {
   display: flex;
@@ -655,8 +657,8 @@ async function copyPrUrl(): Promise<void> {
   line-height: 1.45;
   padding-right: var(--space-3);
 }
-.d-add { background: rgba(108, 197, 108, 0.14); color: var(--green); }
-.d-del { background: rgba(220, 100, 100, 0.14); color: var(--red); }
+.d-add { background: var(--green-soft); color: var(--green); }
+.d-del { background: var(--red-soft); color: var(--red); }
 .d-hunk { color: var(--accent); }
 .d-meta { color: var(--text-dim); }
 .comment-draft { padding: var(--space-2) var(--space-3) var(--space-2) 22px; }

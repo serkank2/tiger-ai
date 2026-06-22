@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useT } from '~/composables/useT';
 import type { TeamSignoffSnapshot, TeamVerificationSnapshot } from '~/types';
+
+const { t } = useT();
 
 const props = defineProps<{
   verifications: TeamVerificationSnapshot[];
@@ -13,23 +16,23 @@ const signOffs = computed(() => props.signOffs);
 
 <template>
   <details v-if="verifications.length" class="vlist">
-    <summary>Verifications · {{ verifications.length }}</summary>
+    <summary>{{ t('team.verifications.title') }} ? {{ verifications.length }}</summary>
     <ul>
       <li v-for="v in verifications" :key="v.id" class="v" :class="`vs-${v.status}`">
         <span class="vstatus">{{ v.status }}</span>
         <span v-if="v.command" class="vcmd" :title="v.command">{{ v.command }}</span>
-        <span v-if="v.exitCode != null" class="vexit" :class="{ bad: v.exitCode !== 0 }">exit {{ v.exitCode }}</span>
+        <span v-if="v.exitCode != null" class="vexit" :class="{ bad: v.exitCode !== 0 }">{{ t('team.verifications.exitCode', { code: v.exitCode }) }}</span>
         <span v-if="v.summary" class="vsum">{{ v.summary }}</span>
       </li>
     </ul>
   </details>
 
   <details v-if="signOffs.length" class="vlist">
-    <summary>Sign-offs · {{ signOffs.length }}</summary>
+    <summary>{{ t('team.verifications.signOffs') }} ? {{ signOffs.length }}</summary>
     <ul>
       <li v-for="s in signOffs" :key="s.id" class="s" :class="{ stale: s.stale }">
         <span class="sname">{{ s.roleName }}</span>
-        <span v-if="s.stale" class="sstale" :title="s.staleReason ?? 'Sign-off is stale'">stale</span>
+        <span v-if="s.stale" class="sstale" :title="s.staleReason ?? t('team.verifications.signoffStale')">{{ t('team.verifications.stale') }}</span>
         <span v-else class="sok">✓</span>
       </li>
     </ul>

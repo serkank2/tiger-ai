@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useT } from '~/composables/useT';
 import type { DoneGateState } from '~/types';
+
+const { t } = useT();
 
 const props = defineProps<{
   gate: DoneGateState;
@@ -15,28 +18,28 @@ const done = computed(() => props.status === 'completed');
 
 // Why the run is not done yet — the full gate, not just sign-offs.
 const blockers = computed(() => props.gate.openBlockers ?? []);
-const BLOCKER_LABEL: Record<string, string> = {
-  tasks_blocked: 'Tasks blocked',
-  tasks_incomplete: 'Tasks incomplete',
-  findings_open: 'Open findings',
-  verification_missing: 'Verification missing',
-  verification_failed: 'Verification failed',
-  steering_pending: 'Steering pending',
-  no_signoff_roles: 'No sign-off roles',
-  signoff_missing: 'Sign-off missing',
-  signoff_stale: 'Sign-off stale',
-  board_pending: 'Task board pending',
+const BLOCKER_KEY: Record<string, string> = {
+  tasks_blocked: 'team.doneGate.blockers.tasksBlocked',
+  tasks_incomplete: 'team.doneGate.blockers.tasksIncomplete',
+  findings_open: 'team.doneGate.blockers.findingsOpen',
+  verification_missing: 'team.doneGate.blockers.verificationMissing',
+  verification_failed: 'team.doneGate.blockers.verificationFailed',
+  steering_pending: 'team.doneGate.blockers.steeringPending',
+  no_signoff_roles: 'team.doneGate.blockers.noSignoffRoles',
+  signoff_missing: 'team.doneGate.blockers.signoffMissing',
+  signoff_stale: 'team.doneGate.blockers.signoffStale',
+  board_pending: 'team.doneGate.blockers.boardPending',
 };
 function blockerLabel(code: string): string {
-  return BLOCKER_LABEL[code] ?? code;
+  return t(BLOCKER_KEY[code] ?? code);
 }
 </script>
 
 <template>
   <div class="done-gate" :class="{ satisfied: gate.satisfied, completed: done }">
     <div class="head">
-      <span class="title">Completion gate</span>
-      <span class="frac">{{ signed }}/{{ total }} signed off</span>
+      <span class="title">{{ t('team.doneGate.title') }}</span>
+      <span class="frac">{{ t('team.doneGate.signedOff', { signed, total }) }}</span>
     </div>
     <div
       class="bar"
@@ -44,19 +47,19 @@ function blockerLabel(code: string): string {
       :aria-valuenow="signed"
       aria-valuemin="0"
       :aria-valuemax="total"
-      :aria-label="`${signed} of ${total} roles signed off`"
+      :aria-label="t('team.doneGate.progressLabel', { signed, total })"
     >
       <div class="fill" :style="{ width: `${pct}%` }" />
     </div>
-    <p v-if="done" class="state ok">✓ Every required role signed off — the work is complete.</p>
-    <p v-else-if="status === 'blocked'" class="state warn">⚠ Blocked — the team needs steering to proceed.</p>
-    <p v-else-if="status === 'failed'" class="state err">✕ Run failed.</p>
+    <p v-if="done" class="state ok">? {{ t('team.doneGate.complete') }}</p>
+    <p v-else-if="status === 'blocked'" class="state warn">? {{ t('team.doneGate.blocked') }}</p>
+    <p v-else-if="status === 'failed'" class="state err">? {{ t('team.doneGate.failed') }}</p>
     <p v-else-if="gate.pendingRoleIds.length" class="state">
-      Waiting on {{ gate.pendingRoleIds.length }} role(s) to confirm the work is done.
+      {{ t('team.doneGate.waiting', { n: gate.pendingRoleIds.length }) }}
     </p>
-    <p v-else class="state">Tracking progress…</p>
+    <p v-else class="state">{{ t('team.doneGate.tracking') }}</p>
 
-    <ul v-if="blockers.length" class="blockers" aria-label="Open completion blockers">
+    <ul v-if="blockers.length" class="blockers" :aria-label="t('team.doneGate.openBlockers')">
       <li v-for="b in blockers" :key="b.code" class="blocker" :title="b.message">
         <span class="bcode" :class="`bc-${b.code}`">{{ blockerLabel(b.code) }}</span>
         <span class="bmsg">{{ b.message }}</span>

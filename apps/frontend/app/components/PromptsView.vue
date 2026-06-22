@@ -8,6 +8,7 @@ import PromptGenerationPanel from '~/components/prompt/PromptGenerationPanel.vue
 import PromptHistoryPanel from '~/components/prompt/PromptHistoryPanel.vue';
 import PromptLibrary from '~/components/prompt/PromptLibrary.vue';
 import PromptTargetPicker from '~/components/prompt/PromptTargetPicker.vue';
+import { useT } from '~/composables/useT';
 import { serializePrompt } from '~/lib/frontmatter';
 import { hasPerTerminalVars, render } from '~/lib/promptTemplate';
 import type { BroadcastOutcome } from '~/composables/useSocket';
@@ -36,6 +37,7 @@ const conn = useConnectionStore();
 const notices = useNoticesStore();
 const socket = useSocket();
 const api = useApi();
+const { t } = useT();
 
 const activeTab = ref('library');
 const draft = reactive<PromptDraft>({ title: '', description: '', tagsText: '', target: '', run: false, body: '' });

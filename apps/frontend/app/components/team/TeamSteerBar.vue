@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useT } from '~/composables/useT';
 import BaseButton from '../ui/BaseButton.vue';
 
 const team = useTeamStore();
+const { t } = useT();
 
 const text = ref('');
 const runId = computed(() => team.activeRunId);
@@ -19,15 +21,15 @@ const hint = computed(() => {
   if (waiting.value) {
     return (
       team.state?.message ||
-      'The Lead is waiting. Your next message is queued for the Lead and resumes the run.'
+      t('team.steer.waitingDefault')
     );
   }
   if (pendingCount.value > 0) {
-    return `${pendingCount.value} message${pendingCount.value === 1 ? '' : 's'} queued for the Lead.`;
+    return t(pendingCount.value === 1 ? 'team.steer.queuedForLeadOne' : 'team.steer.queuedForLeadMany', { n: pendingCount.value });
   }
   return '';
 });
-const sendLabel = computed(() => (waiting.value ? 'Reply to Lead' : 'Send to Lead'));
+const sendLabel = computed(() => (waiting.value ? t('team.steer.replyToLead') : t('team.steer.sendToLead')));
 
 async function send() {
   if (!canSend.value) return;
@@ -56,8 +58,8 @@ function onKeydown(e: KeyboardEvent) {
         v-model="text"
         class="input"
         rows="1"
-        placeholder="Message the Lead — every prompt goes to the Lead, who splits the work and assigns the agents…"
-        aria-label="Message the Lead"
+        :placeholder="t('team.steer.placeholder')"
+        :aria-label="t('team.steer.ariaLabel')"
         @keydown="onKeydown"
       />
       <BaseButton variant="primary" size="md" :loading="busy" :disabled="!canSend" @click="send">{{ sendLabel }}</BaseButton>

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import { useT } from '~/composables/useT';
 
 // Live view of one role agent's CLI terminal. Reuses the shared xterm view, so it
 // replays the full scrollback on attach and then streams live output — exactly the
 // same terminal the agent is driving, viewable mid-turn or after it finishes.
 const props = defineProps<{ termId: string; title: string }>();
 const emit = defineEmits<{ close: [] }>();
+const { t } = useT();
 
 const host = ref<HTMLElement | null>(null);
 const idRef = computed<string | null>(() => props.termId || null);
@@ -37,7 +39,7 @@ onBeforeUnmount(() => {
       class="drawer"
       role="dialog"
       aria-modal="true"
-      :aria-label="`Terminal — ${title}`"
+      :aria-label="t('team.terminal.ariaLabel', { title })"
       @keydown="onKeydown"
     >
       <div class="head">
@@ -49,7 +51,7 @@ onBeforeUnmount(() => {
           size="sm"
           variant="ghost"
           icon-only
-          aria-label="Close terminal"
+          :aria-label="t('team.terminal.close')"
           @click="emit('close')"
         >✕</BaseButton>
       </div>

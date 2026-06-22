@@ -5,6 +5,7 @@ import { TIGER_STAGES } from '~/lib/tigerStages';
 import { cloneStageConfigs, fullStageConfigs } from '~/lib/tigerTemplateConfig';
 import { useTeamStore } from '~/stores/team';
 import { usePromptsStore } from '~/stores/prompts';
+import { useT } from '~/composables/useT';
 import { useCueStore } from '~/stores/cue';
 import { templateRef, useTemplatesStore } from '~/stores/templates';
 import { useTigerStore } from '~/stores/tiger';
@@ -15,6 +16,7 @@ import CueSubscriptionCard from '~/components/cue/CueSubscriptionCard.vue';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 
 const emit = defineEmits<{ back: []; openTiger: [] }>();
+const { t } = useT();
 
 type TemplateCategory = 'team-structure' | 'prompt-library' | 'cue-config' | 'tiger-run-templates';
 type RunTemplateEditorMode = 'new' | 'edit';

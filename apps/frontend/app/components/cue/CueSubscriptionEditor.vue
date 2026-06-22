@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import BaseModal from '~/components/BaseModal.vue';
+import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import { useT } from '~/composables/useT';
 import type { CueEventType, CueSubscriptionInput } from '~/types';
 
 const props = defineProps<{
@@ -14,13 +15,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: []; save: [sub: CueSubscriptionInput, originalId: string | null] }>();
 
-const EVENTS: { value: CueEventType; label: string; hint: string }[] = [
-  { value: 'file.changed', label: 'File changed', hint: 'Fire when a file under the watched directory changes.' },
-  { value: 'time.scheduled', label: 'Scheduled (interval)', hint: 'Fire repeatedly on an interval.' },
-  { value: 'time.once', label: 'Once (at a time)', hint: 'Fire one time at a specific timestamp.' },
-  { value: 'agent.completed', label: 'Agent completed', hint: 'Fire when a team/Tiger agent finishes.' },
-  { value: 'cli.trigger', label: 'Manual trigger', hint: 'Only fires when you press Trigger.' },
-];
+const { t } = useT();
+const EVENTS = computed<{ value: CueEventType; label: string; hint: string }[]>(() => [
+  { value: 'file.changed', label: t('cue.editor.events.fileChanged'), hint: t('cue.editor.eventHints.fileChanged') },
+  { value: 'time.scheduled', label: t('cue.editor.events.scheduled'), hint: t('cue.editor.eventHints.scheduled') },
+  { value: 'time.once', label: t('cue.editor.events.once'), hint: t('cue.editor.eventHints.once') },
+  { value: 'agent.completed', label: t('cue.editor.events.agentCompleted'), hint: t('cue.editor.eventHints.agentCompleted') },
+  { value: 'cli.trigger', label: t('cue.editor.events.manual'), hint: t('cue.editor.eventHints.manual') },
+]);
 
 // Flat editable form state. Numeric/interval fields are kept as strings for clean inputs and
 // coerced on submit.
@@ -33,7 +35,7 @@ const form = reactive({
   prompt: '',
   promptFile: '',
   watch: '',
-  intervalSpec: '', // e.g. "30s", "5m", "1h" — converted to intervalMs
+  intervalSpec: '', // e.g. "30s", "5m", "1h" - converted to intervalMs
   at: '', // datetime-local value
   filterChangeType: 'any' as 'any' | 'created' | 'modified' | 'deleted',
   filterPathIncludes: '',
@@ -49,11 +51,9 @@ const form = reactive({
 
 const localError = ref<string | null>(null);
 const isEdit = computed(() => !!props.initial);
-// Kept as a plain string (not template literals) so the double-brace var names are NOT parsed as
-// Vue interpolation — a data value is rendered verbatim, never re-interpolated.
-const promptVarsHint = 'Template vars: {{CUE_FILE_PATH}}, {{CUE_SOURCE}}, {{CUE_SOURCE_OUTPUT}}, {{CUE_EVENT}}.';
-const promptPlaceholder = 'Run the test suite. The file {{CUE_FILE_PATH}} changed.';
-const eventHint = computed(() => EVENTS.find((e) => e.value === form.event)?.hint ?? '');
+const promptVarsHint = computed(() => t('cue.editor.promptVarsHint'));
+const promptPlaceholder = computed(() => t('cue.editor.placeholders.prompt'));
+const eventHint = computed(() => EVENTS.value.find((e) => e.value === form.event)?.hint ?? '');
 
 /** Parse a "30s"/"5m"/"1h"/"500ms" spec (or a raw ms number) into milliseconds, or null. */
 function specToMs(spec: string): number | null {
@@ -130,15 +130,15 @@ watch(
 function build(): CueSubscriptionInput | null {
   localError.value = null;
   const id = form.id.trim();
-  if (!id) { localError.value = 'An id is required.'; return null; }
+  if (!id) { localError.value = t('cue.editor.validation.idRequired'); return null; }
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) {
-    localError.value = 'id may only contain letters, numbers, "-" and "_".';
+    localError.value = t('cue.editor.validation.idFormat');
     return null;
   }
   const prompt = form.prompt.trim();
   const promptFile = form.promptFile.trim();
-  if (form.promptSource === 'inline' && !prompt) { localError.value = 'A prompt is required.'; return null; }
-  if (form.promptSource === 'file' && !promptFile) { localError.value = 'A prompt file path is required.'; return null; }
+  if (form.promptSource === 'inline' && !prompt) { localError.value = t('cue.editor.validation.promptRequired'); return null; }
+  if (form.promptSource === 'file' && !promptFile) { localError.value = t('cue.editor.validation.promptFileRequired'); return null; }
 
   const sub: CueSubscriptionInput = {
     id,
@@ -154,13 +154,13 @@ function build(): CueSubscriptionInput | null {
   if (form.event === 'file.changed' && form.watch.trim()) sub.watch = form.watch.trim();
   if (form.event === 'time.scheduled') {
     const ms = specToMs(form.intervalSpec);
-    if (ms == null) { localError.value = 'Enter a valid interval like 30s, 5m, or 1h.'; return null; }
+    if (ms == null) { localError.value = t('cue.editor.validation.intervalFormat'); return null; }
     sub.intervalMs = ms;
   }
   if (form.event === 'time.once') {
-    if (!form.at) { localError.value = 'Pick a date/time for the one-shot.'; return null; }
+    if (!form.at) { localError.value = t('cue.editor.validation.dateRequired'); return null; }
     const d = new Date(form.at);
-    if (Number.isNaN(d.getTime())) { localError.value = 'Invalid date/time.'; return null; }
+    if (Number.isNaN(d.getTime())) { localError.value = t('cue.editor.validation.invalidDate'); return null; }
     sub.at = d.toISOString();
   }
 
@@ -196,87 +196,87 @@ function onSubmit(): void {
 </script>
 
 <template>
-  <BaseModal :open="open" :title="isEdit ? 'Edit subscription' : 'New subscription'" dismissible panel-class="cue-editor" @close="emit('close')">
+  <BaseModal
+    v-if="open"
+    :title="isEdit ? t('cue.editor.editTitle') : t('cue.editor.newTitle')"
+    size="lg"
+    @close="emit('close')"
+  >
     <form class="form" @submit.prevent="onSubmit">
       <div class="row two">
         <label class="field">
-          <span>ID <em>*</em></span>
-          <input v-model="form.id" :disabled="saving" placeholder="run-tests-on-change" autocomplete="off" />
+          <span>{{ t('cue.editor.labels.id') }} <em>*</em></span>
+          <input v-model="form.id" :disabled="saving" :placeholder="t('cue.editor.placeholders.id')" autocomplete="off" />
         </label>
         <label class="field">
-          <span>Name</span>
-          <input v-model="form.name" :disabled="saving" placeholder="Run tests on change" autocomplete="off" />
+          <span>{{ t('cue.editor.labels.name') }}</span>
+          <input v-model="form.name" :disabled="saving" :placeholder="t('cue.editor.placeholders.name')" autocomplete="off" />
         </label>
       </div>
 
       <label class="field">
-        <span>Event</span>
+        <span>{{ t('cue.editor.labels.event') }}</span>
         <select v-model="form.event" :disabled="saving">
           <option v-for="e in EVENTS" :key="e.value" :value="e.value">{{ e.label }}</option>
         </select>
         <small class="hint">{{ eventHint }}</small>
       </label>
 
-      <!-- file.changed -->
       <template v-if="form.event === 'file.changed'">
         <div class="row two">
           <label class="field">
-            <span>Watch directory</span>
-            <input v-model="form.watch" :disabled="saving" placeholder="src (relative to workspace, default .)" autocomplete="off" />
+            <span>{{ t('cue.editor.labels.watchDirectory') }}</span>
+            <input v-model="form.watch" :disabled="saving" :placeholder="t('cue.editor.placeholders.watch')" autocomplete="off" />
           </label>
           <label class="field">
-            <span>Change type</span>
+            <span>{{ t('cue.editor.labels.changeType') }}</span>
             <select v-model="form.filterChangeType" :disabled="saving">
-              <option value="any">Any</option>
-              <option value="created">Created</option>
-              <option value="modified">Modified</option>
-              <option value="deleted">Deleted</option>
+              <option value="any">{{ t('cue.editor.changeTypes.any') }}</option>
+              <option value="created">{{ t('cue.editor.changeTypes.created') }}</option>
+              <option value="modified">{{ t('cue.editor.changeTypes.modified') }}</option>
+              <option value="deleted">{{ t('cue.editor.changeTypes.deleted') }}</option>
             </select>
           </label>
         </div>
         <label class="field">
-          <span>Path includes (filter)</span>
-          <input v-model="form.filterPathIncludes" :disabled="saving" placeholder=".ts (only fire when the path contains this)" autocomplete="off" />
+          <span>{{ t('cue.editor.labels.pathIncludes') }}</span>
+          <input v-model="form.filterPathIncludes" :disabled="saving" :placeholder="t('cue.editor.placeholders.pathIncludes')" autocomplete="off" />
         </label>
       </template>
 
-      <!-- time.scheduled -->
       <label v-else-if="form.event === 'time.scheduled'" class="field">
-        <span>Interval</span>
-        <input v-model="form.intervalSpec" :disabled="saving" placeholder="30s, 5m, or 1h" autocomplete="off" />
-        <small class="hint">How often to fire. Use s / m / h.</small>
+        <span>{{ t('cue.editor.labels.interval') }}</span>
+        <input v-model="form.intervalSpec" :disabled="saving" :placeholder="t('cue.editor.placeholders.interval')" autocomplete="off" />
+        <small class="hint">{{ t('cue.editor.intervalHint') }}</small>
       </label>
 
-      <!-- time.once -->
       <label v-else-if="form.event === 'time.once'" class="field">
-        <span>Fire at</span>
+        <span>{{ t('cue.editor.labels.fireAt') }}</span>
         <input v-model="form.at" type="datetime-local" :disabled="saving" />
       </label>
 
-      <!-- agent.completed -->
       <template v-else-if="form.event === 'agent.completed'">
         <div class="row two">
           <label class="field">
-            <span>Triggered by</span>
+            <span>{{ t('cue.editor.labels.triggeredBy') }}</span>
             <select v-model="form.filterTriggeredBy" :disabled="saving">
-              <option value="any">Any</option>
-              <option value="team">Team</option>
-              <option value="tiger">Tiger</option>
+              <option value="any">{{ t('cue.editor.triggeredBy.any') }}</option>
+              <option value="team">{{ t('cue.editor.triggeredBy.team') }}</option>
+              <option value="tiger">{{ t('cue.editor.triggeredBy.tiger') }}</option>
             </select>
           </label>
           <label class="field">
-            <span>Wait for all of (fan-in)</span>
-            <input v-model="form.filterAllOf" :disabled="saving" placeholder="runId-a, stage-b (comma-separated)" autocomplete="off" />
+            <span>{{ t('cue.editor.labels.waitForAll') }}</span>
+            <input v-model="form.filterAllOf" :disabled="saving" :placeholder="t('cue.editor.placeholders.waitForAll')" autocomplete="off" />
           </label>
         </div>
       </template>
 
-      <!-- Prompt source -->
       <div class="field">
-        <span>Prompt</span>
+        <span>{{ t('cue.editor.labels.prompt') }}</span>
         <div class="seg">
-          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="inline" :disabled="saving" /> Inline</label>
-          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="file" :disabled="saving" /> From file</label>
+          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="inline" :disabled="saving" /> {{ t('cue.editor.promptSources.inline') }}</label>
+          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="file" :disabled="saving" /> {{ t('cue.editor.promptSources.file') }}</label>
         </div>
         <textarea
           v-if="form.promptSource === 'inline'"
@@ -289,66 +289,65 @@ function onSubmit(): void {
           v-else
           v-model="form.promptFile"
           :disabled="saving"
-          placeholder="prompts/run-tests.md (relative to workspace)"
+          :placeholder="t('cue.editor.placeholders.promptFile')"
           autocomplete="off"
         />
         <small class="hint">{{ promptVarsHint }}</small>
       </div>
 
-      <!-- Target -->
       <label class="field">
-        <span>Target</span>
+        <span>{{ t('cue.editor.labels.target') }}</span>
         <select v-model="form.targetKind" :disabled="saving">
-          <option value="queue">Queue a job</option>
-          <option value="team">Steer the running team</option>
+          <option value="queue">{{ t('cue.editor.targets.queue') }}</option>
+          <option value="team">{{ t('cue.editor.targets.team') }}</option>
         </select>
       </label>
 
       <template v-if="form.targetKind === 'queue'">
         <div class="row two">
           <label class="field">
-            <span>Provider</span>
+            <span>{{ t('cue.editor.labels.provider') }}</span>
             <select v-model="form.provider" :disabled="saving">
-              <option value="">Default</option>
-              <option value="claude">Claude</option>
-              <option value="codex">Codex</option>
-              <option value="antigravity">Antigravity</option>
-              <option value="mixed">Mixed</option>
+              <option value="">{{ t('cue.editor.default') }}</option>
+              <option value="claude">{{ t('common.providers.claude') }}</option>
+              <option value="codex">{{ t('common.providers.codex') }}</option>
+              <option value="antigravity">{{ t('common.providers.antigravity') }}</option>
+              <option value="mixed">{{ t('common.providers.mixed') }}</option>
             </select>
           </label>
           <label class="field">
-            <span>Priority</span>
+            <span>{{ t('cue.editor.labels.priority') }}</span>
             <input v-model="form.priority" :disabled="saving" type="number" inputmode="numeric" placeholder="0" />
           </label>
         </div>
         <div class="row two">
           <label class="field">
-            <span>Max attempts</span>
+            <span>{{ t('cue.editor.labels.maxAttempts') }}</span>
             <input v-model="form.maxAttempts" :disabled="saving" type="number" inputmode="numeric" placeholder="1" />
           </label>
           <label class="field">
-            <span>Project name</span>
-            <input v-model="form.projectName" :disabled="saving" placeholder="(optional)" autocomplete="off" />
+            <span>{{ t('cue.editor.labels.projectName') }}</span>
+            <input v-model="form.projectName" :disabled="saving" :placeholder="t('cue.editor.placeholders.optional')" autocomplete="off" />
           </label>
         </div>
         <label class="field">
-          <span>Workspace path</span>
-          <input v-model="form.workspacePath" :disabled="saving" placeholder="(optional — defaults to the active workspace)" autocomplete="off" />
+          <span>{{ t('cue.editor.labels.workspacePath') }}</span>
+          <input v-model="form.workspacePath" :disabled="saving" :placeholder="t('cue.editor.placeholders.workspacePath')" autocomplete="off" />
         </label>
       </template>
 
       <label class="check">
         <input v-model="form.enabled" type="checkbox" :disabled="saving" />
-        <span>Enabled</span>
+        <span>{{ t('cue.editor.labels.enabled') }}</span>
       </label>
 
-      <p v-if="localError || error" class="err" role="alert">⚠ {{ localError || error }}</p>
-
-      <div class="actions">
-        <BaseButton type="button" variant="ghost" :disabled="saving" @click="emit('close')">Cancel</BaseButton>
-        <BaseButton type="submit" :loading="saving">{{ isEdit ? 'Save changes' : 'Create' }}</BaseButton>
-      </div>
+      <p v-if="localError || error" class="err" role="alert">{{ localError || error }}</p>
     </form>
+
+    <template #footer>
+      <BaseButton type="button" variant="ghost" :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton type="button" variant="primary" :loading="saving" @click="onSubmit">{{ isEdit ? t('cue.editor.saveChanges') : t('common.create') }}</BaseButton>
+    </template>
   </BaseModal>
 </template>
 
@@ -356,9 +355,6 @@ function onSubmit(): void {
 .form {
   display: grid;
   gap: 12px;
-  width: min(620px, 92vw);
-  max-height: 78vh;
-  overflow-y: auto;
   padding: 2px;
 }
 .row.two {
@@ -426,12 +422,6 @@ textarea {
   margin: 0;
   color: var(--red);
   font-size: 12px;
-}
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
 }
 @media (max-width: 520px) {
   .row.two {

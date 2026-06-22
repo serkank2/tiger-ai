@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useTeamStore } from '~/stores/team';
+import { useT } from '~/composables/useT';
 import type { TeamAttemptSnapshot, TeamAttemptStatus } from '~/types';
 import BaseButton from '~/components/ui/BaseButton.vue';
 
@@ -8,6 +9,7 @@ import BaseButton from '~/components/ui/BaseButton.vue';
 const emit = defineEmits<{ 'view-diff': [attemptId: string] }>();
 
 const team = useTeamStore();
+const { t } = useT();
 
 const attempts = computed<TeamAttemptSnapshot[]>(() => team.attempts);
 const readOnly = computed(() => team.readOnly);
@@ -15,12 +17,12 @@ const promotedId = computed(() => team.promotedAttemptId);
 // One promotion per run — once any attempt is promoted, hide the others' Promote buttons.
 const hasPromotion = computed(() => promotedId.value != null);
 
-const STATUS_LABEL: Record<TeamAttemptStatus, string> = {
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  promoted: 'Promoted',
-  superseded: 'Superseded',
+const STATUS_KEY: Record<TeamAttemptStatus, string> = {
+  running: 'team.status.running',
+  completed: 'team.status.completed',
+  failed: 'team.status.failed',
+  promoted: 'team.attempts.promotedStatus',
+  superseded: 'team.attempts.supersededStatus',
 };
 
 /** Only a finished, non-promoted attempt with a branch can be promoted. */
@@ -35,7 +37,7 @@ function canPromote(a: TeamAttemptSnapshot): boolean {
 }
 
 function summaryLabel(a: TeamAttemptSnapshot): string {
-  if (!a.summary) return 'no diff yet';
+  if (!a.summary) return t('team.attempts.noDiff');
   const { files, insertions, deletions } = a.summary;
   return `${files} file${files === 1 ? '' : 's'} · +${insertions} −${deletions}`;
 }
@@ -56,7 +58,7 @@ function viewDiff(a: TeamAttemptSnapshot): void {
 
 <template>
   <details class="attempts" open>
-    <summary>Attempts <span v-if="attempts.length" class="n">{{ attempts.length }}</span></summary>
+    <summary>{{ t('team.attempts.title') }} <span v-if="attempts.length" class="n">{{ attempts.length }}</span></summary>
 
     <div class="a-body">
       <ul v-if="attempts.length" class="a-list">
@@ -68,30 +70,29 @@ function viewDiff(a: TeamAttemptSnapshot): void {
         >
           <div class="a-row">
             <span class="a-num">#{{ a.attemptNumber }}</span>
-            <span class="a-status" :class="`st-${a.status}`">{{ STATUS_LABEL[a.status] }}</span>
-            <span v-if="a.current" class="a-tag cur">current</span>
-            <span v-if="a.promoted" class="a-tag prom">promoted</span>
+            <span class="a-status" :class="`st-${a.status}`">{{ t(STATUS_KEY[a.status]) }}</span>
+            <span v-if="a.current" class="a-tag cur">{{ t('team.attempts.current') }}</span>
+            <span v-if="a.promoted" class="a-tag prom">{{ t('team.attempts.promoted') }}</span>
           </div>
           <div class="a-meta">
             <span class="a-sum">{{ summaryLabel(a) }}</span>
             <span v-if="a.branch" class="a-branch" :title="a.branch">⎇ {{ a.branch }}</span>
           </div>
           <div class="a-actions">
-            <BaseButton size="sm" variant="ghost" title="View this attempt's diff" @click="viewDiff(a)">Diff</BaseButton>
+            <BaseButton size="sm" variant="ghost" :title="t('team.attempts.viewDiffTitle')" @click="viewDiff(a)">{{ t('team.attempts.diff') }}</BaseButton>
             <BaseButton
               v-if="canPromote(a)"
               size="sm"
               variant="primary"
               :loading="team.isBusy(`attempt-promote:${a.id}`)"
-              title="Merge this attempt's branch into the workspace base branch"
+              :title="t('team.attempts.promoteTitle')"
               @click="promote(a)"
-            >Promote</BaseButton>
+            >{{ t('team.attempts.promote') }}</BaseButton>
           </div>
         </li>
       </ul>
       <p v-else class="empty">
-        No attempts recorded yet — this run behaves as a single implicit attempt.
-        Start a new attempt to sample another solution.
+        {{ t('team.attempts.empty') }}
       </p>
 
       <BaseButton
@@ -100,9 +101,9 @@ function viewDiff(a: TeamAttemptSnapshot): void {
         variant="secondary"
         class="new-attempt"
         :loading="team.isBusy('attempt-new')"
-        title="Re-run the same goal as a new attempt (its work is isolated on its own branch)"
+        :title="t('team.attempts.newTitle')"
         @click="startNewAttempt"
-      >+ New attempt</BaseButton>
+      >{{ t('team.attempts.newAttempt') }}</BaseButton>
     </div>
   </details>
 </template>

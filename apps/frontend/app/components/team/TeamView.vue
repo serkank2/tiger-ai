@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useDialog } from '~/composables/useDialog';
+import { useT } from '~/composables/useT';
 import { displayRoleName } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
 import { useConnectionStore } from '~/stores/connection';
@@ -24,6 +25,7 @@ const emit = defineEmits<{ back: [] }>();
 
 const team = useTeamStore();
 const connection = useConnectionStore();
+const { t } = useT();
 
 let unbind: (() => void) | null = null;
 
@@ -45,7 +47,7 @@ const status = computed(() => state.value?.status ?? null);
 const roleTurns = computed(() => state.value?.turnCount ?? null);
 const turnsLabel = computed(() => {
   const n = roleTurns.value ?? 0;
-  return `${n} role ${n === 1 ? 'turn' : 'turns'}`;
+  return t(n === 1 ? 'team.run.turnSingular' : 'team.run.turnPlural', { n });
 });
 
 // The role whose live terminal is open. Tracked by id so the pane follows the role's
@@ -74,9 +76,9 @@ const terminalRoleTitle = computed(() => {
 const dialog = useDialog();
 async function closeRun(id: string) {
   const ok = await dialog.confirm({
-    title: 'Close run',
-    message: 'End the run and kill the agent terminals? This cannot be resumed.',
-    confirmText: 'Close run',
+    title: t('team.run.closeConfirmTitle'),
+    message: t('team.run.closeConfirmMessage'),
+    confirmText: t('team.run.closeConfirmText'),
     danger: true,
   });
   if (ok) void team.close(id);
@@ -117,18 +119,18 @@ async function returnToLive() {
   await team.returnToLive().catch(() => {});
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  running: 'Running',
-  paused: 'Paused',
-  blocked: 'Blocked',
-  completed: 'Completed',
-  failed: 'Failed',
-  stopped: 'Stopped',
-  interrupted: 'Interrupted',
+const STATUS_KEY: Record<string, string> = {
+  running: 'team.status.running',
+  paused: 'team.status.paused',
+  blocked: 'team.status.blocked',
+  completed: 'team.status.completed',
+  failed: 'team.status.failed',
+  stopped: 'team.status.stopped',
+  interrupted: 'team.status.interrupted',
 };
 
 function statusLabel(s: string | null): string {
-  return s ? STATUS_LABEL[s] ?? s : 'No run';
+  return s ? t(STATUS_KEY[s] ?? s) : t('team.status.noRun');
 }
 
 async function reset() {
@@ -143,9 +145,9 @@ async function reset() {
   <div class="team" :class="status ? `run-${status}` : 'run-empty'">
     <header class="team-header">
       <div class="title-group">
-        <BaseButton variant="ghost" size="sm" aria-label="Back to terminals" icon-only @click="emit('back')">‹</BaseButton>
-        <span class="brand">👥 AI Team</span>
-        <span class="conn" :class="{ ok: connected }" :title="connected ? 'Live' : 'Disconnected'" />
+        <BaseButton variant="ghost" size="sm" :aria-label="t('team.run.backToTerminals')" icon-only @click="emit('back')">‹</BaseButton>
+        <span class="brand">?? {{ t('team.run.brand') }}</span>
+        <span class="conn" :class="{ ok: connected }" :title="connected ? t('common.status.live') : t('common.status.disconnected')" />
       </div>
 
       <div v-if="state" class="run-meta">
@@ -157,67 +159,67 @@ async function reset() {
         <span
           v-if="roleTurns != null"
           class="progress-meter"
-          :title="`Lead-managed sequencing · ${turnsLabel} run so far`"
+          :title="t('team.run.leadManagedTitle', { turns: turnsLabel })"
         >
-          ▸ Lead-managed · {{ turnsLabel }}
+          ? {{ t('team.run.leadManaged') }} ? {{ turnsLabel }}
         </span>
       </div>
 
       <div v-if="state" class="controls">
         <template v-if="readOnly">
-          <span class="ro-tag" title="Viewing a past run read-only">read-only</span>
-          <BaseButton size="sm" variant="primary" @click="returnToLive">Back to live</BaseButton>
+          <span class="ro-tag" :title="t('team.run.readOnlyTitle')">{{ t('team.run.readOnly') }}</span>
+          <BaseButton size="sm" variant="primary" @click="returnToLive">{{ t('team.run.backToLive') }}</BaseButton>
         </template>
         <BaseButton
           v-if="canPause"
           size="sm"
           :loading="team.isBusy(`pause:${state.id}`)"
           @click="team.pause(state.id)"
-        >Pause</BaseButton>
+        >{{ t('team.controls.pause') }}</BaseButton>
         <BaseButton
           v-if="canResume"
           size="sm"
           variant="primary"
           :loading="team.isBusy(`resume:${state.id}`)"
           @click="team.resume(state.id)"
-        >Resume</BaseButton>
+        >{{ t('team.controls.resume') }}</BaseButton>
         <BaseButton
           v-if="canStop"
           size="sm"
           variant="secondary"
           :loading="team.isBusy(`stop:${state.id}`)"
-          title="Halt the flow but keep the agent terminals alive (resumable)"
+          :title="t('team.controls.haltTitle')"
           @click="team.stop(state.id)"
-        >Stop</BaseButton>
+        >{{ t('team.controls.stop') }}</BaseButton>
         <BaseButton
           v-if="hasLiveSessions"
           size="sm"
           variant="danger"
           :loading="team.isBusy(`close:${state.id}`)"
-          title="End the run and kill the agent terminals"
+          :title="t('team.controls.closeTitle')"
           @click="closeRun(state.id)"
-        >Close</BaseButton>
+        >{{ t('team.controls.close') }}</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
-          title="See the real code changes the agents made (git diff) and review them inline"
+          :title="t('team.controls.changesTitle')"
           @click="showChanges = true"
-        >⌥ Changes</BaseButton>
+        >? {{ t('team.controls.changes') }}</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
-          title="Browse and re-open past runs (read-only)"
+          :title="t('team.controls.historyTitle')"
           @click="showHistory = true"
-        >⏱ History</BaseButton>
-        <BaseButton size="sm" variant="ghost" title="Download the transcript as JSON" @click="team.exportRun('json')">⇩ JSON</BaseButton>
-        <BaseButton size="sm" variant="ghost" title="Download the transcript as Markdown" @click="team.exportRun('markdown')">⇩ MD</BaseButton>
-        <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">New run</BaseButton>
+        >? {{ t('team.controls.history') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json')">⇩ JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown')">⇩ MD</BaseButton>
+        <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">{{ t('team.run.newRun') }}</BaseButton>
       </div>
     </header>
 
     <section v-if="!state && team.loading" class="placeholder">
       <Spinner :size="22" />
-      <p>Loading team…</p>
+      <p>{{ t('team.run.loading') }}</p>
     </section>
 
     <TeamLauncher v-else-if="!state" />
@@ -226,16 +228,16 @@ async function reset() {
       <aside class="rail">
         <TeamDoneGate :gate="state.doneGate" :status="status" :message="team.actionError" />
         <div class="rail-head">
-          <h3>Roles</h3>
+          <h3>{{ t('team.run.roles') }}</h3>
           <span class="count">{{ state.roles.length }}</span>
           <BaseButton
             v-if="isActive && !readOnly"
             size="sm"
             variant="ghost"
             class="manage-toggle"
-            :title="showRoleControls ? 'Hide role controls' : 'Add / pause / steer / edit / remove roles'"
+            :title="showRoleControls ? t('team.controls.hideRoleControls') : t('team.controls.manageRoleControls')"
             @click="showRoleControls = !showRoleControls"
-          >{{ showRoleControls ? 'Done' : 'Manage' }}</BaseButton>
+          >{{ showRoleControls ? t('team.controls.done') : t('team.controls.manage') }}</BaseButton>
         </div>
         <div v-if="showRoleControls" class="roles">
           <TeamRoleControls
@@ -262,7 +264,7 @@ async function reset() {
         <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
 
         <details v-if="team.artifacts.length" class="artifacts">
-          <summary>Artifacts · {{ team.artifacts.length }}</summary>
+          <summary>{{ t('team.run.artifacts') }} ? {{ team.artifacts.length }}</summary>
           <ul>
             <li v-for="a in team.artifacts" :key="a.id" :title="a.path">{{ a.name }}</li>
           </ul>

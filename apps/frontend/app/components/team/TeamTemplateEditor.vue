@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { displayRoleName, isLeadRole, nextRoleName, uniqueRoleId } from '~/lib/teamRoles';
 import { useTeamStore } from '~/stores/team';
+import { useT } from '~/composables/useT';
 import { useTigerStore } from '~/stores/tiger';
 import type { TeamAgentType, TeamTemplate } from '~/types';
 import BaseModal from '../ui/BaseModal.vue';
@@ -13,6 +14,7 @@ const emit = defineEmits<{ saved: [TeamTemplate]; close: [] }>();
 
 const team = useTeamStore();
 const tiger = useTigerStore();
+const { t } = useT();
 
 // Efforts the CLIs accept, per tool ('' = use the CLI default). Antigravity has no effort flag.
 const EFFORTS_BY_TOOL: Record<TeamAgentType, string[]> = {
@@ -43,7 +45,7 @@ interface EditableRole {
 }
 
 const isEdit = computed(() => !!props.template && !props.template.builtin);
-const title = computed(() => (props.template ? (props.template.builtin ? 'New from built-in' : 'Edit team template') : 'New team template'));
+const title = computed(() => (props.template ? (props.template.builtin ? t('team.templateEditor.newFromBuiltin') : t('team.templateEditor.editTitle')) : t('team.templateEditor.newTitle')));
 
 const name = ref('');
 const description = ref('');
@@ -137,7 +139,7 @@ function defaultDeveloperRole(): EditableRole {
 function addRole(source?: EditableRole) {
   error.value = '';
   if (source && isLeadRole(source)) {
-    error.value = 'Exactly one Lead role is required.';
+    error.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   const role: EditableRole = source
@@ -157,7 +159,7 @@ function canRemoveRole(role: EditableRole): boolean {
 
 function removeRole(i: number) {
   if (!canRemoveRole(roles[i]!)) {
-    error.value = 'Exactly one Lead role is required.';
+    error.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   error.value = '';
@@ -169,19 +171,19 @@ const busy = computed(() => team.isBusy('template'));
 async function save() {
   error.value = '';
   if (!name.value.trim()) {
-    error.value = 'Template name is required.';
+    error.value = t('team.templateEditor.nameRequired');
     return;
   }
   if (!roles.length) {
-    error.value = 'Add at least one role.';
+    error.value = t('team.templateEditor.roleRequired');
     return;
   }
   if (leadCount.value !== 1) {
-    error.value = 'Exactly one Lead role is required.';
+    error.value = t('team.roleControls.oneLeadRequired');
     return;
   }
   if (!roles.some((r) => r.requiredForSignoff)) {
-    error.value = 'At least one role must be required for sign-off.';
+    error.value = t('team.templateEditor.signoffRequired');
     return;
   }
   const usedRoleIds = new Set<string>();
@@ -217,7 +219,7 @@ async function save() {
     emit('saved', saved);
   } catch (e) {
     error.value = (e as { data?: { error?: { message?: string } }; message?: string })?.data?.error?.message
-      ?? (e as { message?: string })?.message ?? 'Save failed';
+      ?? (e as { message?: string })?.message ?? t('team.templateEditor.saveFailed');
   }
 }
 </script>
@@ -227,36 +229,36 @@ async function save() {
     <div class="form">
       <div class="head-fields">
         <label class="field">
-          <span>Name</span>
-          <input v-model="name" placeholder="My custom team" />
+          <span>{{ t('team.templateEditor.name') }}</span>
+          <input v-model="name" :placeholder="t('team.templateEditor.namePlaceholder')" />
         </label>
         <label class="field">
-          <span>Description</span>
-          <input v-model="description" placeholder="One line describing this team" />
+          <span>{{ t('team.templateEditor.description') }}</span>
+          <input v-model="description" :placeholder="t('team.templateEditor.descriptionPlaceholder')" />
         </label>
       </div>
 
       <div class="roles-head">
-        <h4>Roles</h4>
-        <BaseButton size="sm" variant="ghost" @click="addRole()">+ Add Developer</BaseButton>
+        <h4>{{ t('team.templateEditor.roles') }}</h4>
+        <BaseButton size="sm" variant="ghost" @click="addRole()">{{ t('team.templateEditor.addDeveloper') }}</BaseButton>
       </div>
 
       <div v-for="(role, i) in roles" :key="i" class="role-card">
         <div class="role-top">
           <TeamAgentBadge :tool="role.tool" />
           <span class="role-instance" :title="displayRoleName(roles, role, i)">{{ displayRoleName(roles, role, i) }}</span>
-          <input v-model="role.name" class="role-name" placeholder="Role name (e.g. Tester / QA)" />
+          <input v-model="role.name" class="role-name" :placeholder="t('team.templateEditor.roleNamePlaceholder')" />
           <BaseButton
             size="sm"
             variant="ghost"
             :disabled="isLeadRole(role)"
-            title="Duplicate this non-Lead role"
+            :title="t('team.templateEditor.duplicateTitle')"
             @click="addRole(role)"
-          >Duplicate</BaseButton>
+          >{{ t('team.launcher.duplicate') }}</BaseButton>
           <button
             type="button"
             class="rm"
-            title="Remove role"
+            :title="t('team.templateEditor.removeRole')"
             :disabled="!canRemoveRole(role)"
             @click="removeRole(i)"
           >x</button>
@@ -264,7 +266,7 @@ async function save() {
 
         <div class="role-grid">
           <label class="mini">
-            <span>CLI</span>
+            <span>{{ t('team.templateEditor.cli') }}</span>
             <select v-model="role.tool" @change="onToolChange(role)">
               <option value="claude">claude</option>
               <option value="codex">codex</option>
@@ -272,41 +274,41 @@ async function save() {
             </select>
           </label>
           <label class="mini">
-            <span>Model</span>
+            <span>{{ t('team.roleControls.model') }}</span>
             <select v-model="role.model">
-              <option v-for="m in models(role.tool, role.model)" :key="m" :value="m">{{ m || '(default)' }}</option>
+              <option v-for="m in models(role.tool, role.model)" :key="m" :value="m">{{ m || t('team.roleControls.default') }}</option>
             </select>
           </label>
           <label class="mini">
-            <span>Effort</span>
+            <span>{{ t('team.roleControls.effort') }}</span>
             <select v-model="role.effort">
-              <option v-for="e in efforts(role.tool, role.effort)" :key="e" :value="e">{{ e || '(default)' }}</option>
+              <option v-for="e in efforts(role.tool, role.effort)" :key="e" :value="e">{{ e || t('team.roleControls.default') }}</option>
             </select>
           </label>
           <label class="mini">
-            <span>Permission</span>
+            <span>{{ t('team.roleControls.permission') }}</span>
             <select v-model="role.permission">
               <option v-for="p in permissions(role.tool, role.permission)" :key="p" :value="p">{{ p }}</option>
             </select>
           </label>
         </div>
 
-        <textarea v-model="role.persona" class="persona" rows="2" placeholder="Persona — how this role behaves and what it is accountable for…" />
-        <textarea v-model="role.responsibilities" class="resp" rows="2" placeholder="Responsibilities, one per line…" />
+        <textarea v-model="role.persona" class="persona" rows="2" :placeholder="t('team.templateEditor.personaPlaceholder')" />
+        <textarea v-model="role.responsibilities" class="resp" rows="2" :placeholder="t('team.templateEditor.responsibilitiesPlaceholder')" />
 
         <div class="flags">
-          <label><input v-model="role.canWriteCode" type="checkbox" /> may edit project source</label>
-          <label><input v-model="role.requiredForSignoff" type="checkbox" /> required for sign-off</label>
+          <label><input v-model="role.canWriteCode" type="checkbox" /> {{ t('team.templateEditor.mayEditSource') }}</label>
+          <label><input v-model="role.requiredForSignoff" type="checkbox" /> {{ t('team.templateEditor.requiredForSignoff') }}</label>
         </div>
       </div>
 
       <p v-if="error" class="err">{{ error }}</p>
-      <p class="hint">Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).</p>
+      <p class="hint">{{ t('team.templateEditor.permissionHint') }}</p>
     </div>
 
     <template #footer>
-      <BaseButton variant="ghost" :disabled="busy" @click="emit('close')">Cancel</BaseButton>
-      <BaseButton variant="primary" :loading="busy" @click="save">{{ isEdit ? 'Save changes' : 'Create template' }}</BaseButton>
+      <BaseButton variant="ghost" :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton variant="primary" :loading="busy" @click="save">{{ isEdit ? t('cue.editor.saveChanges') : t('team.templateEditor.createTemplate') }}</BaseButton>
     </template>
   </BaseModal>
 </template>
