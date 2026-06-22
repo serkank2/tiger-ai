@@ -1,4 +1,5 @@
 import type { AgentType } from '../orchestrator/types.js';
+import { config } from '../config.js';
 import { evaluateLimitRules } from './rules.js';
 import type { LimitRuleDecision, LimitsPersistedState } from './types.js';
 import { defaultLimitRules } from './types.js';
@@ -10,6 +11,8 @@ export interface LimitGate {
 interface LimitGateEvaluationOptions {
   now?: Date;
   staleAfterMs?: number;
+  /** Allow (don't block) when a probe is missing/failed/stale. Defaults to config.limits.limitFailOpen. */
+  failOpen?: boolean;
 }
 
 export class StateLimitGate implements LimitGate {
@@ -54,7 +57,10 @@ export function evaluateLimitGate(
   );
   if (rules.length === 0) return allowDecision(provider, 'no enabled blocking rule matched provider', options.now);
 
-  return evaluateLimitRules(state?.snapshots ?? [], rules, options);
+  return evaluateLimitRules(state?.snapshots ?? [], rules, {
+    ...options,
+    failOpen: options.failOpen ?? config.limitFailOpen,
+  });
 }
 
 function allowDecision(provider: AgentType, reason: string, now = new Date()): LimitRuleDecision {

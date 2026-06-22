@@ -48,6 +48,7 @@ test('StateLimitGate blocks conservatively when no provider snapshot exists', as
   const gate = new StateLimitGate(() => limits([]), {
     now: NOW,
     staleAfterMs: 60_000,
+    failOpen: false,
   });
 
   const decision = await gate.check('claude');
@@ -75,7 +76,7 @@ test('StateLimitGate blocks conservatively when latest provider probe failed', a
           checkedAt: NOW.toISOString(),
         }),
       ]),
-    { now: NOW, staleAfterMs: 60_000 },
+    { now: NOW, staleAfterMs: 60_000, failOpen: false },
   );
 
   const decision = await gate.check('claude');
@@ -86,10 +87,38 @@ test('StateLimitGate blocks conservatively when latest provider probe failed', a
   assert.match(decision.reason, /probe failed/i);
 });
 
+test('StateLimitGate fails OPEN by default when the latest probe failed (does not block)', async () => {
+  // The operator manages their own quota; a probe that merely failed to read must not block.
+  const gate = new StateLimitGate(
+    () =>
+      limits([
+        snapshot({
+          id: 'failed',
+          windowKey: 'probe',
+          label: 'Probe',
+          percentUsed: null,
+          metricRaw: null,
+          ok: false,
+          error: 'cli unavailable',
+          resetAt: null,
+          parseConfidence: 'unknown',
+          checkedAt: NOW.toISOString(),
+        }),
+      ]),
+    { now: NOW, staleAfterMs: 60_000, failOpen: true },
+  );
+
+  const decision = await gate.check('claude');
+
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.action, 'allow');
+});
+
 test('StateLimitGate blocks conservatively on stale snapshots', async () => {
   const gate = new StateLimitGate(() => limits([snapshot({ percentUsed: 10, checkedAt: '2026-06-18T05:00:00.000Z' })]), {
     now: NOW,
     staleAfterMs: 10 * 60 * 1000,
+    failOpen: false,
   });
 
   const decision = await gate.check('claude');

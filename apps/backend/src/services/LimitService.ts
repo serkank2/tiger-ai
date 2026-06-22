@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { config } from '../config.js';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { PersistedState } from '../store/types.js';
 import type { LimitRepository } from '../repositories/LimitRepository.js';
@@ -180,7 +181,7 @@ export class LimitService extends EventEmitter {
             conservative: false,
             checkedAt: now.toISOString(),
           }
-        : evaluateLimitRules(limits.snapshots, limits.rules, { now, staleAfterMs: this.staleAfterMs }),
+        : evaluateLimitRules(limits.snapshots, limits.rules, { now, staleAfterMs: this.staleAfterMs, failOpen: config.limitFailOpen }),
       staleAfterMs: this.staleAfterMs,
       updatedAt: limits.updatedAt,
     };
@@ -302,7 +303,7 @@ export class LimitService extends EventEmitter {
       if (limits.snapshots.length > this.maxSnapshots) {
         limits.snapshots.splice(0, limits.snapshots.length - this.maxSnapshots);
       }
-      limits.lastDecision = evaluateLimitRules(limits.snapshots, limits.rules, { staleAfterMs: this.staleAfterMs });
+      limits.lastDecision = evaluateLimitRules(limits.snapshots, limits.rules, { staleAfterMs: this.staleAfterMs, failOpen: config.limitFailOpen });
       limits.updatedAt = new Date().toISOString();
       await this.save();
     }

@@ -192,7 +192,10 @@ test('LimitService.refresh persists normalized snapshots into state', async () =
   assert.equal(persisted.limits?.snapshots.length, 3);
   assert.equal(status.latest.find((item) => item.provider === 'codex')?.percentUsed, 92);
   assert.equal(status.providers.antigravity.ok, false);
-  assert.equal(status.decision.allowed, false);
+  // The persisted snapshots are timestamped in the past relative to the real wall clock the refresh
+  // path evaluates against, so they read as stale. Under the default fail-open policy a stale /
+  // unverifiable probe no longer conservatively blocks — it allows (the operator owns their quota).
+  assert.equal(status.decision.allowed, true);
 });
 
 function serviceWithRepo(repo: LimitRepository): LimitService {

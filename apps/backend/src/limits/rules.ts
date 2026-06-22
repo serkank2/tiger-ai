@@ -246,18 +246,27 @@ export function evaluateLimitWarnings(
 export function evaluateLimitRules(
   snapshots: LimitSnapshot[],
   rules: LimitRule[],
-  options: { now?: Date; staleAfterMs?: number } = {},
+  options: { now?: Date; staleAfterMs?: number; failOpen?: boolean } = {},
 ): LimitRuleDecision {
   const now = options.now ?? new Date();
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_LIMIT_STALE_AFTER_MS;
+  // When failOpen is set, a probe that could not be read (missing / failed / stale) does NOT block:
+  // we skip the conservative blocks and only ever block on a fresh, parseable, over-threshold
+  // reading. Defaults false so the pure function's behavior is unchanged for direct callers/tests;
+  // the production gate passes config.limits.limitFailOpen.
+  const failOpen = options.failOpen ?? false;
   const latest = latestSnapshots(snapshots);
 
   for (const rule of rules.filter((entry) => entry.enabled)) {
     const providerLatest = mostRecent(snapshots.filter((snapshot) => snapshot.provider === rule.provider));
-    if (!providerLatest) return missingSnapshotDecision(rule, now);
+    if (!providerLatest) {
+      if (failOpen) continue;
+      return missingSnapshotDecision(rule, now);
+    }
     if (!providerLatest.ok) {
       const latestOk = mostRecent(latest.filter((snapshot) => ruleMatches(rule, snapshot)));
       if (!latestOk || toTime(providerLatest.checkedAt) >= toTime(latestOk.checkedAt)) {
+        if (failOpen) continue;
         return failedProbeDecision(rule.provider, providerLatest, now);
       }
     }
@@ -275,7 +284,10 @@ export function evaluateLimitRules(
       (snapshot.percentUsed ?? -1) > (highest.percentUsed ?? -1) ? snapshot : highest,
     );
     const stale = isStale(selected, now, staleAfterMs);
-    if (stale) return staleDecision(rule, selected, now);
+    if (stale) {
+      if (failOpen) continue;
+      return staleDecision(rule, selected, now);
+    }
     if ((selected.percentUsed ?? 0) >= rule.thresholdPercent) return thresholdDecision(rule, selected, now, stale);
   }
 

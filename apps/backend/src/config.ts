@@ -131,6 +131,12 @@ export const config = {
   // Provider limit probes.
   limitProbeIntervalMs: Math.max(0, envInt('KAPLAN_LIMIT_PROBE_MS', 5 * 60 * 1000)),
   limitStaleAfterMs: Math.max(60_000, envInt('KAPLAN_LIMIT_STALE_AFTER_MS', 15 * 60 * 1000)),
+  // Fail OPEN when a usage probe can't be read. The CLIs' usage panels are flaky (a failed,
+  // missing, or stale probe is common), and this is a local single-user tool where the operator
+  // manages their own quota — so a probe that simply failed to PARSE must not block execution.
+  // Only a fresh, successfully-read snapshot that is actually at/over a rule's threshold blocks.
+  // Set KAPLAN_LIMIT_FAIL_OPEN=0 to restore the old conservative "block until a probe succeeds".
+  limitFailOpen: envBool('KAPLAN_LIMIT_FAIL_OPEN', true),
 
   // Structured logging. JSON in production, human-friendly otherwise; level gates output.
   log: {
