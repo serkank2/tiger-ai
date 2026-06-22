@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { TerminalDto } from '~/types';
+import { useT } from '~/composables/useT';
 
 const props = defineProps<{ modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [ids: string[]] }>();
 
+const { t } = useT();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
 
@@ -24,7 +26,8 @@ const sections = computed(() => {
   return entries;
 });
 const groupKey = (id: string | null) => id ?? '__none__';
-const groupName = (id: string | null) => (id ? groups.byId[id]?.name ?? 'Ungrouped' : 'Ungrouped');
+const groupName = (id: string | null) =>
+  id ? groups.byId[id]?.name ?? t('prompts.targetPicker.ungrouped') : t('prompts.targetPicker.ungrouped');
 
 const selected = computed(() => new Set(props.modelValue));
 const chips = computed(() => props.modelValue.map((id) => terminals.byId[id]).filter(Boolean) as TerminalDto[]);
@@ -33,12 +36,14 @@ function commit(ids: string[]) {
   // dedupe + drop unknown ids (e.g. a stray external drop), then announce the real count
   const next = [...new Set(ids)].filter((id) => terminals.byId[id]);
   emit('update:modelValue', next);
-  status.value = `${next.length} terminal${next.length === 1 ? '' : 's'} selected`;
+  status.value = t('prompts.targetPicker.selectedStatus', { n: next.length });
 }
 function addTerm(id: string) {
   if (selected.value.has(id)) return;
   if (terminals.byId[id]?.protected) {
-    status.value = `${terminals.byId[id]?.name ?? 'Terminal'} is protected — excluded`;
+    status.value = t('prompts.targetPicker.protectedStatus', {
+      name: terminals.byId[id]?.name ?? t('prompts.targetPicker.terminalFallback'),
+    });
     return;
   }
   commit([...props.modelValue, id]);
@@ -76,41 +81,66 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
 
 <template>
   <div class="picker">
-    <div class="col-head">Available</div>
+    <div class="col-head">{{ t('prompts.targetPicker.available') }}</div>
     <div class="available">
       <template v-for="[gid, list] in sections" :key="groupKey(gid)">
         <div class="ghead" draggable="true" @dragstart="onDragStart($event, `group:${groupKey(gid)}`)">
-          <button class="chev" :aria-expanded="!collapsed[groupKey(gid)]" :aria-label="`${collapsed[groupKey(gid)] ? 'Expand' : 'Collapse'} ${groupName(gid)}`" @click="collapsed[groupKey(gid)] = !collapsed[groupKey(gid)]">
+          <button
+            class="chev"
+            :aria-expanded="!collapsed[groupKey(gid)]"
+            :aria-label="
+              collapsed[groupKey(gid)]
+                ? t('prompts.targetPicker.expand', { name: groupName(gid) })
+                : t('prompts.targetPicker.collapse', { name: groupName(gid) })
+            "
+            @click="collapsed[groupKey(gid)] = !collapsed[groupKey(gid)]"
+          >
             {{ collapsed[groupKey(gid)] ? '▸' : '▾' }}
           </button>
           <span class="gdot" :style="{ background: (gid && groups.byId[gid]?.color) || 'var(--text-faint)' }" />
           <span class="gname">{{ groupName(gid) }}</span>
           <span class="gcount">{{ list.length }}</span>
-          <button class="add" title="Add all in group" @click="addGroup(gid)" @keydown.enter.prevent="addGroup(gid)">+ all</button>
+          <button
+            class="add"
+            :title="t('prompts.targetPicker.addAllInGroup')"
+            :aria-label="t('prompts.targetPicker.addAllInGroup')"
+            @click="addGroup(gid)"
+            @keydown.enter.prevent="addGroup(gid)"
+          >
+            {{ t('prompts.targetPicker.addAll') }}
+          </button>
         </div>
         <template v-if="!collapsed[groupKey(gid)]">
           <div
-            v-for="t in list"
-            :key="t.id"
+            v-for="term in list"
+            :key="term.id"
             class="trow"
-            :class="{ added: selected.has(t.id), prot: t.protected }"
-            :draggable="!t.protected"
-            @dragstart="onDragStart($event, `term:${t.id}`)"
+            :class="{ added: selected.has(term.id), prot: term.protected }"
+            :draggable="!term.protected"
+            @dragstart="onDragStart($event, `term:${term.id}`)"
           >
-            <span class="dot" :class="isRunning(t) ? 'on' : 'off'" />
-            <span class="tname" :title="t.cwd"><span v-if="t.protected" class="lk">🔒</span>{{ t.name }}</span>
-            <span v-if="t.protected" class="addedtag" title="Protected — excluded from sends">protected</span>
-            <button v-else-if="!selected.has(t.id)" class="add" title="Add" @click="addTerm(t.id)">+</button>
-            <span v-else class="addedtag">added</span>
+            <span class="dot" :class="isRunning(term) ? 'on' : 'off'" />
+            <span class="tname" :title="term.cwd"><span v-if="term.protected" class="lk">🔒</span>{{ term.name }}</span>
+            <span v-if="term.protected" class="addedtag" :title="t('prompts.targetPicker.protectedExcluded')">{{ t('prompts.targetPicker.protected') }}</span>
+            <button
+              v-else-if="!selected.has(term.id)"
+              class="add"
+              :title="t('prompts.targetPicker.add')"
+              :aria-label="t('prompts.targetPicker.add')"
+              @click="addTerm(term.id)"
+            >
+              +
+            </button>
+            <span v-else class="addedtag">{{ t('prompts.targetPicker.added') }}</span>
           </div>
         </template>
       </template>
-      <div v-if="!terminals.items.length" class="empty">No terminals yet.</div>
+      <div v-if="!terminals.items.length" class="empty">{{ t('terminals.none') }}</div>
     </div>
 
     <div class="col-head row">
-      <span>Send to <b>{{ chips.length }}</b></span>
-      <button v-if="chips.length" class="link" @click="clearAll">clear</button>
+      <span>{{ t('prompts.targetPicker.sendTo') }} <b>{{ chips.length }}</b></span>
+      <button v-if="chips.length" class="link" @click="clearAll">{{ t('terminals.clear') }}</button>
     </div>
     <div
       class="dropzone"
@@ -119,11 +149,18 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
       @dragleave="dragOver = false"
       @drop.prevent="onDrop"
     >
-      <div v-if="!chips.length" class="dzempty">Drop terminals or groups here, or use <b>+</b></div>
-      <div v-for="t in chips" :key="t.id" class="chip">
-        <span class="dot" :class="isRunning(t) ? 'on' : 'off'" />
-        {{ t.name }}
-        <button class="x" title="Remove" @click="remove(t.id)">✕</button>
+      <div v-if="!chips.length" class="dzempty">{{ t('prompts.targetPicker.dropHint') }} <b>+</b></div>
+      <div v-for="term in chips" :key="term.id" class="chip">
+        <span class="dot" :class="isRunning(term) ? 'on' : 'off'" />
+        {{ term.name }}
+        <button
+          class="x"
+          :title="t('prompts.targetPicker.remove')"
+          :aria-label="t('prompts.targetPicker.remove')"
+          @click="remove(term.id)"
+        >
+          ✕
+        </button>
       </div>
     </div>
     <p class="sr" aria-live="polite">{{ status }}</p>

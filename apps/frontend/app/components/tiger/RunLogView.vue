@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { errText } from '~/lib/apiError';
+import { useT } from '~/composables/useT';
+import BaseButton from '~/components/ui/BaseButton.vue';
 
+const { t } = useT();
 const tiger = useTigerStore();
 const content = ref('');
 const error = ref('');
@@ -31,12 +34,12 @@ watch(
 <template>
   <div class="runlog">
     <div class="head">
-      <span class="t">Run log</span>
+      <span class="t">{{ t('tiger.runLog.title') }}</span>
       <span class="spacer" />
-      <button class="ghost" :disabled="loading" @click="refresh">{{ loading ? '…' : 'Refresh' }}</button>
+      <BaseButton variant="ghost" size="sm" :loading="loading" @click="refresh">{{ t('tiger.runLog.refresh') }}</BaseButton>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
-    <pre v-else class="body">{{ content || 'No log entries yet.' }}</pre>
+    <pre v-else class="body">{{ content || t('tiger.runLog.empty') }}</pre>
   </div>
 </template>
 
@@ -61,16 +64,6 @@ watch(
 }
 .spacer {
   flex: 1;
-}
-.ghost {
-  border: 1px solid var(--border-strong);
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.ghost:hover {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 .body {
   margin: 0;

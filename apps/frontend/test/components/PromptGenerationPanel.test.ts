@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import PromptGenerationPanel from '~/components/prompt/PromptGenerationPanel.vue';
 import type { PromptGenerationState } from '~/types';
+import { createTestI18n } from '../support/i18n';
 
 function state(status: PromptGenerationState['generation']['status'], outputText: string | null = null): PromptGenerationState {
   return {
@@ -29,7 +30,7 @@ describe('PromptGenerationPanel', () => {
   it('submits a rough draft for generation', async () => {
     const wrapper = mount(PromptGenerationPanel, {
       props: { state: null },
-      global: { stubs: { Spinner: true } },
+      global: { plugins: [createTestI18n()], stubs: { Spinner: true } },
     });
 
     await wrapper.find('textarea').setValue('make this clearer');
@@ -44,7 +45,7 @@ describe('PromptGenerationPanel', () => {
   it('renders running, done, and failed states', async () => {
     const wrapper = mount(PromptGenerationPanel, {
       props: { state: state('running') },
-      global: { stubs: { Spinner: true } },
+      global: { plugins: [createTestI18n()], stubs: { Spinner: true } },
     });
 
     expect(wrapper.text()).toContain('Progress: running');

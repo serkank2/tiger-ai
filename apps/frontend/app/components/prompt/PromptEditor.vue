@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { detectVariables, render } from '~/lib/promptTemplate';
 import { strictestLimit } from '~/lib/shellLimits';
+import { useT } from '~/composables/useT';
+import BaseInput from '~/components/ui/BaseInput.vue';
+import BaseSelect from '~/components/ui/BaseSelect.vue';
 
 export interface PromptDraft {
   title: string;
@@ -17,11 +20,36 @@ const props = defineProps<{
   targetShellKinds: (string | undefined)[];
 }>();
 
+// The parent owns `draft`/`values`. This editor never mutates them in place: each
+// edit is announced and the parent writes it back (keeps a single source of truth).
+const emit = defineEmits<{
+  'update:draft': [draft: PromptDraft];
+  'update:value': [name: string, value: string];
+}>();
+
+const { t } = useT();
 const groups = useGroupsStore();
 
+function patchDraft(changes: Partial<PromptDraft>): void {
+  emit('update:draft', { ...props.draft, ...changes });
+}
+// Writable computed per field so the template keeps `v-model` ergonomics while the
+// setter emits instead of assigning to the prop.
+function draftField<K extends keyof PromptDraft>(key: K) {
+  return computed<PromptDraft[K]>({
+    get: () => props.draft[key],
+    set: (value) => patchDraft({ [key]: value } as Partial<PromptDraft>),
+  });
+}
+const title = draftField('title');
+const description = draftField('description');
+const tagsText = draftField('tagsText');
+const target = draftField('target');
+const body = draftField('body');
+
 const detectedVars = computed(() => detectVariables(props.draft.body));
-// No pre-seeding of props.values: each variable input binds v-model="values[v]", which
-// creates the key on first keystroke; unfilled variables stay absent (→ treated unresolved).
+// No pre-seeding of props.values: each variable input emits on first keystroke, which
+// creates the key in the parent; unfilled variables stay absent (→ treated unresolved).
 
 const today = new Date().toISOString().slice(0, 10);
 const renderedLen = computed(() => render(props.draft.body, { values: props.values, date: today }).length);
@@ -32,39 +60,52 @@ const overLimit = computed(() => Number.isFinite(limit.value) && renderedLen.val
 <template>
   <div class="editor">
     <div class="metarow">
-      <input v-model="draft.title" class="title" placeholder="Title" spellcheck="false" />
-      <select v-model="draft.target" class="target" title="Default target (hint)">
-        <option value="">target: pick on send</option>
-        <option value="all">target: all</option>
-        <option value="selected">target: selected</option>
-        <option v-for="g in groups.groups" :key="g.id" :value="`group:${g.name}`">target: {{ g.name }}</option>
-      </select>
+      <BaseInput v-model="title" class="title" :placeholder="t('prompts.editor.placeholders.title')" spellcheck="false" />
+      <BaseSelect v-model="target" class="target" :title="t('prompts.editor.targetTitle')">
+        <option value="">{{ t('prompts.editor.targets.pickOnSend') }}</option>
+        <option value="all">{{ t('prompts.editor.targets.all') }}</option>
+        <option value="selected">{{ t('prompts.editor.targets.selected') }}</option>
+        <option v-for="g in groups.groups" :key="g.id" :value="`group:${g.name}`">
+          {{ t('prompts.editor.targets.group', { name: g.name }) }}
+        </option>
+      </BaseSelect>
     </div>
-    <input v-model="draft.description" class="desc" placeholder="Description (optional)" spellcheck="false" />
-    <input v-model="draft.tagsText" class="tags" placeholder="tags: comma, separated" spellcheck="false" />
-
-    <textarea
-      v-model="draft.body"
-      class="body"
+    <BaseInput
+      v-model="description"
+      class="desc"
+      :placeholder="t('prompts.editor.placeholders.description')"
       spellcheck="false"
-      placeholder="Prompt text. Use {{variable}} and built-ins {{terminal.name}}, {{terminal.cwd}}, {{date}}."
     />
+    <BaseInput v-model="tagsText" class="tags" :placeholder="t('prompts.editor.placeholders.tags')" spellcheck="false" />
+
+    <textarea v-model="body" class="body" spellcheck="false" :placeholder="t('prompts.editor.placeholders.body')" />
 
     <div v-if="detectedVars.length" class="vars">
-      <div class="vars-head">Variables</div>
+      <div class="vars-head">{{ t('prompts.editor.variables') }}</div>
       <div v-for="v in detectedVars" :key="v" class="varrow">
         <label :for="`var-${v}`">{{ v }}</label>
-        <input :id="`var-${v}`" v-model="values[v]" spellcheck="false" :placeholder="`value for {{${v}}}`" />
+        <BaseInput
+          :id="`var-${v}`"
+          :model-value="values[v]"
+          spellcheck="false"
+          :placeholder="t('prompts.editor.placeholders.variableValue', { name: v })"
+          @update:model-value="(val) => emit('update:value', v, String(val ?? ''))"
+        />
       </div>
     </div>
 
     <div class="footer-row">
-      <div class="mode" aria-label="Send mode">
-        <button type="button" :class="{ on: !draft.run }" :aria-pressed="!draft.run" @click="draft.run = false">Paste</button>
-        <button type="button" :class="{ on: draft.run }" :aria-pressed="draft.run" @click="draft.run = true">Run ⏎</button>
+      <div class="mode" :aria-label="t('prompts.editor.sendMode')">
+        <button type="button" :class="{ on: !draft.run }" :aria-pressed="!draft.run" @click="patchDraft({ run: false })">
+          {{ t('prompts.editor.paste') }}
+        </button>
+        <button type="button" :class="{ on: draft.run }" :aria-pressed="draft.run" @click="patchDraft({ run: true })">
+          {{ t('prompts.editor.run') }}
+        </button>
       </div>
       <span class="count" :class="{ over: overLimit }">
-        {{ renderedLen }} chars<span v-if="overLimit"> · ⚠ may be cut (~{{ limit }})</span>
+        {{ t('prompts.editor.chars', { n: renderedLen }) }}
+        <span v-if="overLimit"> · ⚠ {{ t('prompts.editor.mayBeCut', { limit }) }}</span>
       </span>
     </div>
   </div>
@@ -82,7 +123,7 @@ const overLimit = computed(() => Number.isFinite(limit.value) && renderedLen.val
 .vars-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-faint); font-weight: 700; margin-bottom: 6px; }
 .varrow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .varrow label { width: 30%; font-family: var(--font-mono); font-size: 12px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.varrow input { flex: 1; font-size: 12px; }
+.varrow :deep(input) { flex: 1; font-size: 12px; }
 .footer-row { display: flex; align-items: center; justify-content: space-between; }
 .mode { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
 .mode button { padding: 5px 12px; font-size: 12px; color: var(--text-dim); border-right: 1px solid var(--border); }

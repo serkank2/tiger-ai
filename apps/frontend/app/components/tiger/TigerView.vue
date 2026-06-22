@@ -118,6 +118,11 @@ const ranWithConfig = computed(
 );
 const shownCfg = computed(() => (ranWithConfig.value ? stageState.value!.config! : runCfg));
 const cfgDisabled = computed(() => tiger.busy || ranWithConfig.value);
+// StageConfigPanel never mutates its prop; it emits the edited config and the parent
+// (owner of `runCfg`) writes it back. Only the editable panel emits (disabled = read-only).
+function onCfgUpdate(next: TigerStageRunConfig) {
+  Object.assign(runCfg, next);
+}
 
 const atCycleLimit = computed(
   () => (tiger.state?.correctionCycles ?? 0) >= (tiger.state?.maxCorrectionCycles ?? 0),
@@ -339,6 +344,7 @@ onMounted(() => {
           :stage="selectedStage"
           :cfg="shownCfg"
           :disabled="cfgDisabled"
+          @update:cfg="onCfgUpdate"
         />
 
         <div v-if="selectedStage === 'requesting-code-review'" class="route">

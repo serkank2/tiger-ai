@@ -337,7 +337,13 @@ onMounted(() => {
           />
         </section>
         <section class="col editor-col">
-          <PromptEditor :draft="draft" :values="values" :target-shell-kinds="targetShellKinds" />
+          <PromptEditor
+            :draft="draft"
+            :values="values"
+            :target-shell-kinds="targetShellKinds"
+            @update:draft="(next) => Object.assign(draft, next)"
+            @update:value="(name, value) => (values[name] = value)"
+          />
         </section>
         <section class="col target-col">
           <PromptTargetPicker v-model="selectedTermIds" />

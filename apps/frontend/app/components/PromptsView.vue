@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useT } from '~/composables/useT';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseTabs from '~/components/ui/BaseTabs.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
@@ -36,6 +37,7 @@ const conn = useConnectionStore();
 const notices = useNoticesStore();
 const socket = useSocket();
 const api = useApi();
+const { t } = useT();
 
 const activeTab = ref('library');
 const draft = reactive<PromptDraft>({ title: '', description: '', tagsText: '', target: '', run: false, body: '' });
@@ -55,11 +57,11 @@ const enqueuing = ref(false);
 const usingProject = ref(false);
 const actionError = ref<string | null>(null);
 
-const tabs: { id: Tab; label: string }[] = [
-  { id: 'library', label: 'Library' },
-  { id: 'history', label: 'History' },
-  { id: 'generation', label: 'Generation' },
-];
+const tabs = computed<{ id: Tab; label: string }[]>(() => [
+  { id: 'library', label: t('prompts.view.library') },
+  { id: 'history', label: t('prompts.view.history') },
+  { id: 'generation', label: t('prompts.view.generation') },
+]);
 
 const content = computed(() => serializePrompt(metaFromDraft(), draft.body));
 const dirty = computed(() => content.value !== loadedSnapshot.value);
@@ -82,7 +84,7 @@ const currentSource = computed<ReuseSource>(() => {
     const record = generation.current?.generation;
     return {
       kind: 'generation',
-      title: 'Generated prompt',
+      title: t('prompts.generation.generatedPrompt'),
       text: generationText.value,
       generationId: record?.id,
       status: record?.status ?? null,
@@ -90,7 +92,7 @@ const currentSource = computed<ReuseSource>(() => {
   }
   return {
     kind: 'library',
-    title: draft.title.trim() || currentPath.value || 'Library draft',
+    title: draft.title.trim() || currentPath.value || t('prompts.view.libraryDraft'),
     text: draft.body,
     status: currentPath.value ? 'saved' : dirty.value ? 'editing' : null,
   };
@@ -198,7 +200,7 @@ function uniquePath(base: string): string {
 
 async function saveLibraryDraft(): Promise<boolean> {
   if (!draft.body.trim() && !draft.title.trim()) {
-    notices.push('Nothing to save', 'error');
+    notices.push(t('prompts.notices.nothingToSave'), 'error');
     return false;
   }
   if (currentPath.value) {
@@ -207,7 +209,7 @@ async function saveLibraryDraft(): Promise<boolean> {
     loadedVersion.value = file.version;
     setSnapshot();
     savedPath.value = file.path;
-    notices.push('Prompt saved', 'info');
+    notices.push(t('prompts.notices.promptSaved'), 'info');
     return true;
   }
   const file = await prompts.create(uniquePath(`${slug(draft.title) || 'untitled'}.md`), content.value);
@@ -216,7 +218,7 @@ async function saveLibraryDraft(): Promise<boolean> {
   loadedVersion.value = file.version;
   setSnapshot();
   savedPath.value = file.path;
-  notices.push(`Saved as ${file.path}`, 'info');
+  notices.push(t('prompts.notices.savedAs', { path: file.path }), 'info');
   return true;
 }
 
@@ -241,7 +243,7 @@ async function saveReusableText(): Promise<void> {
       if (!file) return;
       savedPath.value = file.path;
     }
-    notices.push(`Saved to ${savedPath.value}`, 'info');
+    notices.push(t('prompts.notices.savedTo', { path: savedPath.value }), 'info');
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -278,7 +280,7 @@ function editReusableText(): void {
   loadedVersion.value = null;
   loadedSnapshot.value = '';
   activeTab.value = 'library';
-  notices.push('Loaded into library editor', 'info');
+  notices.push(t('prompts.notices.loadedIntoEditor'), 'info');
 }
 
 async function useAsProjectPrompt(): Promise<void> {
@@ -289,7 +291,7 @@ async function useAsProjectPrompt(): Promise<void> {
     if (currentSource.value.kind === 'generation' && currentSource.value.generationId) {
       await generation.reuse(currentSource.value.generationId, 'use-as-project-prompt');
       await tiger.load();
-      notices.push('Project prompt updated', 'info');
+      notices.push(t('prompts.notices.projectPromptUpdated'), 'info');
     } else {
       await tiger.replaceProjectPrompt(currentSource.value.text);
     }
@@ -319,7 +321,7 @@ async function enqueueReusableText(): Promise<void> {
         provider: enqueueProvider.value,
       });
     }
-    notices.push('Prompt enqueued', 'info');
+    notices.push(t('prompts.notices.promptEnqueued'), 'info');
     await history.fetchAll({}, { silent: true }).catch(() => {});
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e);
@@ -391,7 +393,7 @@ async function sendReusableText(): Promise<void> {
       else failure = broadcastFailureMessage(result);
     }
     if (!delivered) {
-      notices.push(failure ?? 'Not sent: no eligible terminal received it.', 'error');
+      notices.push(failure ?? t('prompts.notices.notSent'), 'error');
     }
   } finally {
     sending.value = false;
@@ -445,11 +447,11 @@ onBeforeUnmount(() => {
   <div class="prompts-view">
     <header class="phead">
       <div class="brand">
-        <b>Prompts</b>
-        <span>Library, history, and generation</span>
+        <b>{{ t('prompts.view.title') }}</b>
+        <span>{{ t('prompts.view.subtitle') }}</span>
       </div>
       <span class="spacer" />
-      <BaseButton variant="secondary" @click="emit('back')">Back to Terminals</BaseButton>
+      <BaseButton variant="secondary" @click="emit('back')">{{ t('prompts.view.backToTerminals') }}</BaseButton>
     </header>
 
     <main class="pbody">
@@ -457,7 +459,7 @@ onBeforeUnmount(() => {
         v-model="activeTab"
         class="prompt-tabs"
         :tabs="tabs"
-        label="Prompt sections"
+        :label="t('prompts.view.sectionsLabel')"
         id-prefix="prompt-section"
         panel-class="main-panel"
       >
@@ -480,15 +482,21 @@ onBeforeUnmount(() => {
             <section class="library-editor">
               <div class="editor-head">
                 <div>
-                  <h2>{{ currentPath || 'New library prompt' }}</h2>
-                  <p>{{ dirty ? 'Unsaved changes' : 'Saved' }}</p>
+                  <h2>{{ currentPath || t('prompts.view.newLibraryPrompt') }}</h2>
+                  <p>{{ dirty ? t('prompts.view.unsaved') : t('prompts.view.saved') }}</p>
                 </div>
-                <BaseButton variant="ghost" @click="resetDraft">New</BaseButton>
+                <BaseButton variant="ghost" @click="resetDraft">{{ t('common.new') }}</BaseButton>
                 <BaseButton variant="primary" :disabled="!dirty" @click="saveLibraryDraft">
-                  {{ currentPath ? 'Save' : 'Save As' }}
+                  {{ currentPath ? t('common.save') : t('common.saveAs') }}
                 </BaseButton>
               </div>
-              <PromptEditor :draft="draft" :values="values" :target-shell-kinds="targetShellKinds" />
+              <PromptEditor
+                :draft="draft"
+                :values="values"
+                :target-shell-kinds="targetShellKinds"
+                @update:draft="(next) => Object.assign(draft, next)"
+                @update:value="(name, value) => (values[name] = value)"
+              />
             </section>
           </div>
         </template>
@@ -517,19 +525,19 @@ onBeforeUnmount(() => {
         </template>
       </BaseTabs>
 
-      <aside class="reuse-panel" aria-label="Prompt reuse actions">
+      <aside class="reuse-panel" :aria-label="t('prompts.reuse.actionsLabel')">
         <div class="reuse-head">
           <div>
-            <h2>Reuse</h2>
-            <p>{{ currentSource.kind }} / {{ currentSource.status || 'ready' }}</p>
+            <h2>{{ t('prompts.reuse.title') }}</h2>
+            <p>{{ currentSource.kind }} / {{ currentSource.status || t('prompts.view.ready') }}</p>
           </div>
-          <span class="chars">{{ currentSource.text.length.toLocaleString() }} chars</span>
+          <span class="chars">{{ t('prompts.editor.chars', { n: currentSource.text.length.toLocaleString() }) }}</span>
         </div>
 
         <EmptyState
           v-if="!hasReusableText"
-          title="No prompt selected"
-          description="Select a library prompt, history item, or generated result."
+          :title="t('prompts.reuse.noPromptTitle')"
+          :description="t('prompts.reuse.noPromptDescription')"
         />
 
         <template v-else>
@@ -539,38 +547,43 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="save-row">
-            <input v-model="savePath" :aria-label="t('prompts.reuse.savePath')" placeholder="library-path.md" spellcheck="false" />
+            <input
+              v-model="savePath"
+              :aria-label="t('prompts.reuse.savePath')"
+              :placeholder="t('prompts.reuse.savePathPlaceholder')"
+              spellcheck="false"
+            />
             <BaseButton variant="secondary" :loading="saving" :disabled="saving" @click="saveReusableText">
-              Save
+              {{ t('common.save') }}
             </BaseButton>
           </div>
-          <p v-if="savedPath" class="saved">Saved to {{ savedPath }}</p>
+          <p v-if="savedPath" class="saved">{{ t('prompts.reuse.savedTo', { path: savedPath }) }}</p>
 
           <div class="actions">
-            <BaseButton variant="secondary" @click="editReusableText">Edit</BaseButton>
+            <BaseButton variant="secondary" @click="editReusableText">{{ t('prompts.reuse.edit') }}</BaseButton>
             <BaseButton
               variant="secondary"
               :loading="usingProject"
               :disabled="!canUseAsProjectPrompt"
               @click="useAsProjectPrompt"
             >
-              Use As Project Prompt
+              {{ t('prompts.reuse.useAsProjectPrompt') }}
             </BaseButton>
-            <select v-model="enqueueProvider" aria-label="Queue provider">
-              <option value="mixed">Mixed queue</option>
-              <option value="claude">Claude queue</option>
-              <option value="codex">Codex queue</option>
-              <option value="antigravity">Antigravity queue</option>
+            <select v-model="enqueueProvider" :aria-label="t('prompts.reuse.queueProvider')">
+              <option value="mixed">{{ t('prompts.reuse.mixedQueue') }}</option>
+              <option value="claude">{{ t('prompts.reuse.claudeQueue') }}</option>
+              <option value="codex">{{ t('prompts.reuse.codexQueue') }}</option>
+              <option value="antigravity">{{ t('prompts.reuse.antigravityQueue') }}</option>
             </select>
             <BaseButton variant="secondary" :loading="enqueuing" :disabled="enqueuing" @click="enqueueReusableText">
-              Enqueue
+              {{ t('common.enqueue') }}
             </BaseButton>
           </div>
 
           <div class="send-box">
             <div class="send-head">
-              <b>Send to terminals</b>
-              <label><input v-model="runOnSend" type="checkbox" /> append Enter</label>
+              <b>{{ t('prompts.reuse.sendToTerminals') }}</b>
+              <label><input v-model="runOnSend" type="checkbox" /> {{ t('prompts.reuse.appendEnter') }}</label>
             </div>
             <PromptTargetPicker v-model="selectedTermIds" />
             <BaseButton
@@ -580,11 +593,11 @@ onBeforeUnmount(() => {
               :disabled="!canSend"
               @click="sendReusableText"
             >
-              Send to {{ selectedTermIds.length }} terminal(s)
+              {{ t('prompts.reuse.sendToCount', { n: selectedTermIds.length }) }}
             </BaseButton>
           </div>
 
-          <p v-if="!tiger.initialized" class="hint">Open a Tiger project before using a prompt as the active project prompt.</p>
+          <p v-if="!tiger.initialized" class="hint">{{ t('prompts.reuse.openTigerHint') }}</p>
           <p v-if="actionError" class="error">{{ actionError }}</p>
         </template>
       </aside>

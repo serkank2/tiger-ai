@@ -5,6 +5,9 @@ import BaseButton from '~/components/ui/BaseButton.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
 import Skeleton from '~/components/ui/Skeleton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
+import { useT } from '~/composables/useT';
+
+const { t } = useT();
 
 const props = defineProps<{
   items: PromptSummary[];
@@ -65,16 +68,16 @@ onBeforeUnmount(() => {
 <template>
   <div class="lib">
     <div class="top">
-      <input v-model="q" class="search" placeholder="🔍 search prompts" spellcheck="false" />
+      <input v-model="q" class="search" :placeholder="t('prompts.library.searchPlaceholder')" spellcheck="false" />
     </div>
     <div class="actions">
-      <BaseButton size="sm" variant="secondary" block @click="emit('create')">+ New</BaseButton>
+      <BaseButton size="sm" variant="secondary" block @click="emit('create')">{{ t('prompts.library.new') }}</BaseButton>
       <BaseButton
         size="sm"
         variant="secondary"
         icon-only
-        aria-label="Reload from disk"
-        title="Reload from disk"
+        :aria-label="t('prompts.library.reload')"
+        :title="t('prompts.library.reload')"
         :disabled="loading"
         @click="emit('refresh')"
       >
@@ -83,13 +86,28 @@ onBeforeUnmount(() => {
     </div>
     <div class="list">
       <div v-if="loading && !items.length" class="loading-list">
-        <Spinner :size="14" label="Loading prompts" />
+        <Spinner :size="14" :label="t('prompts.library.loadingPrompts')" />
         <Skeleton v-for="i in 4" :key="i" :lines="2" />
       </div>
 
-      <EmptyState v-else-if="error" title="Prompt library unavailable" :description="error" tone="danger">
+      <EmptyState
+        v-else-if="error"
+        :title="t('prompts.library.unavailableTitle')"
+        :description="error"
+        tone="danger"
+      >
         <template #actions>
-          <BaseButton size="sm" variant="secondary" @click="emit('refresh')">Retry</BaseButton>
+          <BaseButton size="sm" variant="secondary" @click="emit('refresh')">{{ t('prompts.library.retry') }}</BaseButton>
+        </template>
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="!items.length"
+        :title="t('prompts.library.emptyTitle')"
+        :description="t('prompts.library.emptyDescription')"
+      >
+        <template #actions>
+          <BaseButton size="sm" variant="secondary" @click="emit('create')">{{ t('prompts.library.createFirst') }}</BaseButton>
         </template>
       </EmptyState>
 
@@ -119,11 +137,11 @@ onBeforeUnmount(() => {
             <div class="meta">
               <div class="title">
                 {{ p.title || p.path }}
-                <span v-if="p.path === currentPath && dirty" class="dirty" title="Unsaved changes">●</span>
+                <span v-if="p.path === currentPath && dirty" class="dirty" :title="t('prompts.library.unsavedTitle')">●</span>
               </div>
               <div class="path">{{ p.path }}</div>
               <div v-if="p.tags?.length" class="tags">
-                <span v-for="(t, i) in p.tags" :key="`${t}-${i}`" class="tag">{{ t }}</span>
+                <span v-for="(tag, i) in p.tags" :key="`${tag}-${i}`" class="tag">{{ tag }}</span>
               </div>
             </div>
             <div class="row-actions" @click.stop>
@@ -132,8 +150,8 @@ onBeforeUnmount(() => {
                 variant="ghost"
                 icon-only
                 class="ic"
-                aria-label="Rename"
-                title="Rename"
+                :aria-label="t('prompts.library.rename')"
+                :title="t('prompts.library.rename')"
                 @click="startRename(p.path)"
               >
                 ✎
@@ -144,8 +162,8 @@ onBeforeUnmount(() => {
                 icon-only
                 class="ic danger"
                 :class="{ confirm: confirmingPath === p.path }"
-                :aria-label="confirmingPath === p.path ? 'Click again to delete' : 'Delete'"
-                :title="confirmingPath === p.path ? 'Click again to delete' : 'Delete'"
+                :aria-label="confirmingPath === p.path ? t('prompts.library.deleteConfirm') : t('prompts.library.delete')"
+                :title="confirmingPath === p.path ? t('prompts.library.deleteConfirm') : t('prompts.library.delete')"
                 @click="onDelete(p.path)"
               >
                 <template v-if="confirmingPath === p.path">✓?</template>
@@ -154,7 +172,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </div>
-        <div v-if="!filtered.length" class="empty">{{ items.length ? 'No matches.' : 'No prompts yet. Create one →' }}</div>
+        <div v-if="!filtered.length" class="empty">{{ t('prompts.library.noMatches') }}</div>
       </template>
     </div>
   </div>

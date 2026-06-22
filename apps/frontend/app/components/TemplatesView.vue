@@ -685,6 +685,7 @@ watch(
                     :config="tiger.config"
                     :stage="stage.id"
                     :cfg="runTemplateForm.configs[stage.id]"
+                    @update:cfg="(next) => (runTemplateForm.configs[stage.id] = next)"
                   />
                 </div>
               </details>

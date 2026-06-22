@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import PromptsView from '~/components/PromptsView.vue';
+import { createTestI18n } from '../support/i18n';
 
 const stores = vi.hoisted(() => ({
   prompts: {
@@ -96,6 +97,7 @@ async function mountPromptsView() {
   const wrapper = mount(PromptsView, {
     attachTo: document.body,
     global: {
+      plugins: [createTestI18n()],
       stubs: {
         BaseButton: BaseButtonStub,
         EmptyState: { template: '<div class="empty"><slot /></div>' },

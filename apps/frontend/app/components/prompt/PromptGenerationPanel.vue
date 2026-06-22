@@ -2,7 +2,10 @@
 import { computed, ref } from 'vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
 import Spinner from '~/components/ui/Spinner.vue';
+import { useT } from '~/composables/useT';
 import type { PromptGenerationState, TigerAgentType } from '~/types';
+
+const { t } = useT();
 
 const props = defineProps<{
   state: PromptGenerationState | null;
@@ -25,10 +28,10 @@ const generation = computed(() => props.state?.generation ?? null);
 const output = computed(() => generation.value?.outputText?.trim() ?? '');
 const statusLabel = computed(() => {
   const status = generation.value?.status;
-  if (!status) return 'idle';
-  if (status === 'pending') return 'queued';
-  if (props.state?.progress === 'persisting') return 'saving result';
-  return status;
+  if (!status) return t('prompts.generation.status.idle');
+  if (status === 'pending') return t('prompts.generation.status.queued');
+  if (props.state?.progress === 'persisting') return t('prompts.generation.status.savingResult');
+  return t(`prompts.generation.status.${status}`);
 });
 const isBusy = computed(() => props.starting || generation.value?.status === 'pending' || generation.value?.status === 'running');
 const canSubmit = computed(() => rough.value.trim().length > 0 && !props.starting);
@@ -49,26 +52,26 @@ function submit(): void {
   <section class="generation-panel">
     <form class="draft" @submit.prevent="submit">
       <div class="draft-head">
-        <h3>Generate Improved Prompt</h3>
+        <h3>{{ t('prompts.generation.formTitle') }}</h3>
         <span class="status" :class="`st-${generation?.status ?? 'idle'}`">{{ statusLabel }}</span>
       </div>
       <textarea
         v-model="rough"
         rows="9"
         maxlength="100000"
-        placeholder="Paste a rough draft. The generator will turn it into a complete prompt."
+        :placeholder="t('prompts.generation.roughPlaceholder')"
         spellcheck="false"
       />
       <div class="controls">
-        <select v-model="agentType" aria-label="Generation agent">
+        <select v-model="agentType" :aria-label="t('prompts.generation.agentAria')">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
           <option value="antigravity">Antigravity</option>
         </select>
-        <input v-model="model" placeholder="Model override" spellcheck="false" />
-        <input v-model="effort" placeholder="Effort override" spellcheck="false" />
+        <input v-model="model" :placeholder="t('prompts.generation.modelPlaceholder')" spellcheck="false" />
+        <input v-model="effort" :placeholder="t('prompts.generation.effortPlaceholder')" spellcheck="false" />
         <button class="primary" type="submit" :disabled="!canSubmit">
-          {{ starting ? 'Submitting' : 'Generate' }}
+          {{ starting ? t('prompts.generation.submitting') : t('prompts.generation.submit') }}
         </button>
       </div>
       <p class="count">{{ rough.length.toLocaleString() }}/100,000</p>
@@ -76,52 +79,56 @@ function submit(): void {
 
     <article class="result">
       <div v-if="loading" class="state">
-        <Spinner label="Loading generation" />
+        <Spinner :label="t('prompts.generation.loading')" />
       </div>
 
       <EmptyState
         v-else-if="error && !generation"
-        title="Generation unavailable"
+        :title="t('prompts.generation.unavailableTitle')"
         :description="error"
         tone="danger"
       />
 
       <EmptyState
         v-else-if="!generation"
-        title="No generation running"
-        description="Submit a rough draft to queue a prompt-generation run."
+        :title="t('prompts.generation.emptyTitle')"
+        :description="t('prompts.generation.emptyDescription')"
       />
 
       <div v-else class="result-body">
         <header>
           <div>
-            <h3>Generation Result</h3>
-            <p>{{ generation.agentType }} / {{ generation.model || 'default model' }}</p>
+            <h3>{{ t('prompts.generation.resultTitle') }}</h3>
+            <p>{{ generation.agentType }} / {{ generation.model || t('prompts.generation.defaultModel') }}</p>
           </div>
           <span class="status" :class="`st-${generation.status}`">{{ statusLabel }}</span>
         </header>
 
         <div v-if="isBusy" class="state inline">
-          <Spinner :label="generation.status === 'pending' ? 'Queued for generation' : 'Generation running'" />
-          <p v-if="state?.progress && state.progress !== 'idle'">Progress: {{ String(state.progress).replaceAll('_', ' ') }}</p>
+          <Spinner
+            :label="generation.status === 'pending' ? t('prompts.generation.queuedForGeneration') : t('prompts.generation.generationRunning')"
+          />
+          <p v-if="state?.progress && state.progress !== 'idle'">
+            {{ t('prompts.generation.progress') }}: {{ String(state.progress).replaceAll('_', ' ') }}
+          </p>
         </div>
 
         <div v-else-if="generation.status === 'failed'" class="failed">
-          <b>Generation failed</b>
-          <p>{{ generation.error || error || 'The generation run did not produce a prompt.' }}</p>
+          <b>{{ t('prompts.generation.failedTitle') }}</b>
+          <p>{{ generation.error || error || t('prompts.generation.missingOutput') }}</p>
         </div>
 
         <template v-else-if="output">
           <pre>{{ output }}</pre>
           <div class="result-actions">
-            <button class="secondary" @click="emit('selectResult')">Use This Result</button>
+            <button class="secondary" @click="emit('selectResult')">{{ t('prompts.generation.useResult') }}</button>
           </div>
         </template>
 
         <EmptyState
           v-else
-          title="No improved prompt yet"
-          description="The run completed without a reusable output."
+          :title="t('prompts.generation.noImprovedTitle')"
+          :description="t('prompts.generation.noImprovedDescription')"
           tone="danger"
         />
       </div>
@@ -251,7 +258,7 @@ textarea {
   border: 1px solid var(--red);
   color: var(--text);
   border-radius: var(--radius-sm);
-  background: rgba(229, 86, 75, 0.12);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
   padding: 12px;
 }
 .failed p {

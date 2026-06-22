@@ -5,12 +5,14 @@ import { TIGER_STAGES } from '~/lib/tigerStages';
 import { cloneStageConfigs, fullStageConfigs } from '~/lib/tigerTemplateConfig';
 import { templateRef, useTemplatesStore } from '~/stores/templates';
 import { useTigerStore } from '~/stores/tiger';
+import { useT } from '~/composables/useT';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import StageConfigPanel from '~/components/tiger/StageConfigPanel.vue';
 
 const emit = defineEmits<{ close: []; openTemplates: [] }>();
 
+const { t } = useT();
 const tiger = useTigerStore();
 const templates = useTemplatesStore();
 
@@ -37,7 +39,7 @@ function replaceStageConfigs(next: Partial<Record<TigerStageId, TigerStageRunCon
 
 function stageSummary(id: TigerStageId): string {
   const cfg = stageConfigs[id];
-  if (id === 'merge-tasks') return `merge: ${cfg.mergeAgent ?? 'claude'}`;
+  if (id === 'merge-tasks') return t('tiger.runAll.mergeSummary', { agent: cfg.mergeAgent ?? 'claude' });
   const parts = [`${cfg.claudeAgents} Claude`, `${cfg.codexAgents} Codex`];
   if (cfg.antigravityAgents > 0) parts.push(`${cfg.antigravityAgents} Antigravity`);
   return parts.join(', ');
@@ -108,19 +110,19 @@ watch(selectedKey, () => {
 </script>
 
 <template>
-  <BaseModal title="Run All From Template" size="lg" @close="emit('close')">
+  <BaseModal :title="t('tiger.runAll.title')" size="lg" @close="emit('close')">
     <template #header-actions>
-      <BaseButton icon-only variant="ghost" aria-label="Close" @click="emit('close')">x</BaseButton>
+      <BaseButton icon-only variant="ghost" :aria-label="t('tiger.runAll.close')" @click="emit('close')">x</BaseButton>
     </template>
 
-    <p class="lead">Select a saved DB template, review its stage settings, then start the automatic run.</p>
+    <p class="lead">{{ t('tiger.runAll.lead') }}</p>
 
     <div class="picker">
       <label>
-        <span>Template</span>
+        <span>{{ t('tiger.runAll.template') }}</span>
         <select v-model="selectedKey" :disabled="templates.loading || !templates.items.length">
           <option v-for="template in templates.items" :key="templateRef(template)" :value="templateRef(template)">
-            {{ template.name }} ({{ template.builtin ? 'built-in' : 'custom' }})
+            {{ template.name }} ({{ template.builtin ? t('tiger.runAll.builtIn') : t('tiger.runAll.custom') }})
           </option>
         </select>
       </label>
@@ -130,29 +132,29 @@ watch(selectedKey, () => {
         :disabled="!selectedTemplate"
         @click="applySelected"
       >
-        Apply
+        {{ t('tiger.runAll.apply') }}
       </BaseButton>
-      <BaseButton variant="ghost" @click="openManager">Manage templates</BaseButton>
+      <BaseButton variant="ghost" @click="openManager">{{ t('tiger.runAll.manageTemplates') }}</BaseButton>
     </div>
 
-    <div v-if="templates.loading && !templates.loaded" class="state">Loading templates...</div>
+    <div v-if="templates.loading && !templates.loaded" class="state">{{ t('tiger.runAll.loadingTemplates') }}</div>
     <div v-else-if="activeError" class="state error" role="alert">{{ activeError }}</div>
-    <div v-else-if="!templates.items.length" class="state empty">No templates are available. Create one in Templates.</div>
+    <div v-else-if="!templates.items.length" class="state empty">{{ t('tiger.runAll.noTemplates') }}</div>
 
     <div v-if="appliedTemplate" class="template-note">
       <b>{{ appliedTemplate.name }}</b>
-      <span>{{ appliedTemplate.description || 'No description' }}</span>
-      <small>{{ appliedTemplate.builtin ? 'Built-in template' : 'Custom template' }}</small>
+      <span>{{ appliedTemplate.description || t('tiger.runAll.noDescription') }}</span>
+      <small>{{ appliedTemplate.builtin ? t('tiger.runAll.builtInTemplate') : t('tiger.runAll.customTemplate') }}</small>
     </div>
 
     <label class="from">
-      <span>Start from</span>
+      <span>{{ t('tiger.runAll.startFrom') }}</span>
       <select v-model="fromStage">
         <option v-for="stage in TIGER_STAGES" :key="stage.id" :value="stage.id">
           {{ stage.number }} - {{ stage.title }}
         </option>
       </select>
-      <small>Stages before this are skipped.</small>
+      <small>{{ t('tiger.runAll.skippedBefore') }}</small>
     </label>
 
     <div class="stages">
@@ -160,8 +162,8 @@ watch(selectedKey, () => {
         <summary>
           <span class="snum">{{ stage.number }}</span>
           <span class="stitle">{{ stage.title }}</span>
-          <span v-if="stage.optional" class="sopt" title="Optional stage">optional</span>
-          <span v-if="!willRun(stage.id)" class="sskip">skipped</span>
+          <span v-if="stage.optional" class="sopt" :title="t('tiger.runAll.optionalStage')">{{ t('tiger.runAll.optional') }}</span>
+          <span v-if="!willRun(stage.id)" class="sskip">{{ t('tiger.runAll.skipped') }}</span>
           <span v-else class="ssum">{{ stageSummary(stage.id) }}</span>
         </summary>
         <div class="sbody">
@@ -171,15 +173,16 @@ watch(selectedKey, () => {
             :stage="stage.id"
             :cfg="stageConfigs[stage.id]"
             disabled
+            @update:cfg="(next) => (stageConfigs[stage.id] = next)"
           />
-          <p v-else class="state">Loading configuration...</p>
+          <p v-else class="state">{{ t('tiger.runAll.loadingConfig') }}</p>
         </div>
       </details>
     </div>
 
     <template #footer>
-      <BaseButton variant="ghost" @click="emit('close')">Cancel</BaseButton>
-      <BaseButton variant="primary" :loading="starting" :disabled="!canStart" @click="start">Start auto run</BaseButton>
+      <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton variant="primary" :loading="starting" :disabled="!canStart" @click="start">{{ t('tiger.runAll.startAutoRun') }}</BaseButton>
     </template>
   </BaseModal>
 </template>
