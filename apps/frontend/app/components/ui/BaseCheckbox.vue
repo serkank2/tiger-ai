@@ -3,7 +3,7 @@
 // "<input type=checkbox> + <span>label</span>" pattern scattered across panels.
 // v-model binds the boolean checked state; the whole row is a <label> so the
 // text is clickable and the native input keeps full keyboard/focus semantics.
-const props = withDefaults(
+withDefaults(
   defineProps<{
     modelValue?: boolean;
     label?: string;
@@ -21,14 +21,10 @@ function onChange(e: Event) {
 
 <template>
   <label class="checkbox" :class="{ disabled }">
-    <input
-      type="checkbox"
-      class="box"
-      :checked="modelValue"
-      :disabled="disabled"
-      @change="onChange"
-    />
-    <span v-if="label || $slots.default" class="label"><slot>{{ label }}</slot></span>
+    <input type="checkbox" class="box" :checked="modelValue" :disabled="disabled" @change="onChange" />
+    <span v-if="label || $slots.default" class="label"
+      ><slot>{{ label }}</slot></span
+    >
   </label>
 </template>
 
