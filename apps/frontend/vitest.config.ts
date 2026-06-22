@@ -22,6 +22,9 @@ export default defineConfig({
     // runs headless and never needs a live Kaplan backend.
     environment: 'happy-dom',
     include: ['test/**/*.test.ts'],
+    // Installs a global vue-i18n instance into Vue Test Utils so every mount can
+    // resolve useT()/useI18n() (see test/setup.ts).
+    setupFiles: ['./test/setup.ts'],
     clearMocks: true,
   },
 });
