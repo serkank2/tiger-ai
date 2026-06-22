@@ -15,6 +15,15 @@ function makeI18n() {
   });
 }
 
+function leafKeys(value: unknown, prefix = ''): string[] {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value)
+      .flatMap(([key, nested]) => leafKeys(nested, prefix ? `${prefix}.${key}` : key))
+      .sort();
+  }
+  return prefix ? [prefix] : [];
+}
+
 describe('i18n scaffolding', () => {
   it('exposes the default locale among the available locales', () => {
     expect(AVAILABLE_LOCALES).toContain(DEFAULT_LOCALE);
@@ -41,6 +50,49 @@ describe('i18n scaffolding', () => {
       // A missing key falls back to echoing the key itself; assert we got real copy.
       expect(translated).not.toBe(item.labelKey);
       expect(translated.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps locale catalogs key-for-key in sync', () => {
+    const expectedKeys = leafKeys(messages.en);
+    for (const locale of AVAILABLE_LOCALES) {
+      expect(leafKeys(messages[locale])).toEqual(expectedKeys);
+    }
+  });
+
+  it('exposes shared foundation keys for upcoming feature wiring', () => {
+    const { t } = makeI18n().global;
+    const requiredKeys = [
+      'prompts.editor.placeholders.title',
+      'prompts.editor.placeholders.description',
+      'prompts.editor.placeholders.body',
+      'cue.status.running',
+      'cue.status.stopped',
+      'limits.chip.error',
+      'limits.chip.empty',
+      'limits.chip.stale',
+      'queue.rules.createRule',
+      'queue.rules.updateRule',
+      'queue.target.label',
+      'queue.pipeline.history',
+      'queue.pipeline.livePipeline',
+      'queue.enqueue.placeholders.prompt',
+      'team.changes.commit',
+      'team.changes.createPr',
+      'team.export.jsonTooltip',
+      'team.export.markdownTooltip',
+      'tiger.runAll.builtInTemplate',
+      'tiger.runAll.customTemplate',
+      'prompts.view.saved',
+      'prompts.view.unsaved',
+      'prompts.view.ready',
+      'prompts.generation.status.queued',
+      'prompts.generation.status.running',
+      'team.steer.placeholder',
+    ];
+
+    for (const key of requiredKeys) {
+      expect(t(key)).not.toBe(key);
     }
   });
 });

@@ -97,10 +97,10 @@ function onTabKeydown(ev: KeyboardEvent, tab: BaseTab): void {
 
     <section
       v-if="activeTab"
+      :id="panelId(activeTab)"
       class="base-tabs-panel"
       :class="panelClass"
       role="tabpanel"
-      :id="panelId(activeTab)"
       :aria-labelledby="tabId(activeTab)"
     >
       <slot :name="activeTab.id" :tab="activeTab" />
