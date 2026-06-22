@@ -61,9 +61,9 @@ const ROWS: Row[] = [
   ['dracula', 'Dracula', true, ['#282a36','#2f3240','#383b4a','#21222c','#3a3d4d','#4d5066','#f8f8f2','#c2c5da','#6272a4','#bd93f9','#d6acff','rgba(189,147,249,0.18)','#50fa7b','#f1fa8c','#ff5555','#6272a4','#8be9fd']],
   ['solarized-dark', 'Solarized Dark', true, ['#002b36','#073642','#0a4250','#00252e','#0f4b58','#2a6471','#cad4d4','#93a1a1','#657b83','#b58900','#cb9a14','rgba(181,137,0,0.18)','#859900','#b58900','#dc322f','#586e75','#268bd2']],
   ['forest', 'Forest', true, ['#0f1a14','#16241c','#1d2f24','#0a140f','#25382c','#38503f','#e3ece5','#9db3a4','#647568','#5fce8f','#74e0a3','rgba(95,206,143,0.14)','#6cc56c','#d8b34a','#e5564b','#7c8c82','#5aa9c9']],
-  ['light', 'Light', false, ['#f6f7f9','#ffffff','#eef0f3','#ffffff','#e2e5ea','#cfd4dc','#1c2330','#5b6472','#98a1b0','#c2680a','#e07b12','rgba(217,118,15,0.12)','#2e9e4f','#b07d12','#d23b35','#6b7484','#2f72d6']],
-  ['paper', 'Paper (warm light)', false, ['#f5f1e8','#fffdf7','#ece6d8','#fffdf7','#e0d8c8','#cabfa9','#2a2620','#6b6354','#9c927d','#b5651d','#cf7320','rgba(181,101,29,0.12)','#4f8a3f','#a8780f','#c0392b','#7a7363','#2f6fb0']],
-  ['solarized-light', 'Solarized Light', false, ['#fdf6e3','#fbf3df','#eee8d5','#fdf6e3','#e6dfc8','#d3cbb0','#586e75','#657b83','#93a1a1','#b58900','#cb9a14','rgba(181,137,0,0.14)','#859900','#b58900','#dc322f','#93a1a1','#268bd2']],
+  ['light', 'Light', false, ['#f6f7f9','#ffffff','#eef0f3','#ffffff','#e2e5ea','#cfd4dc','#1c2330','#5b6472','#687282','#a95705','#944b04','rgba(217,118,15,0.12)','#2e9e4f','#b07d12','#d23b35','#6b7484','#2f72d6']],
+  ['paper', 'Paper (warm light)', false, ['#f5f1e8','#fffdf7','#ece6d8','#fffdf7','#e0d8c8','#cabfa9','#2a2620','#6b6354','#766d5d','#98510e','#844407','rgba(181,101,29,0.12)','#4f8a3f','#a8780f','#c0392b','#7a7363','#2f6fb0']],
+  ['solarized-light', 'Solarized Light', false, ['#fdf6e3','#fbf3df','#eee8d5','#fdf6e3','#e6dfc8','#d3cbb0','#586e75','#5f747b','#5f747b','#896a00','#7c6000','rgba(181,137,0,0.14)','#7f9400','#896a00','#dc322f','#5f747b','#268bd2']],
 ];
 
 const VAR_KEYS = [
