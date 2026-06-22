@@ -539,7 +539,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="save-row">
-            <input v-model="savePath" aria-label="Save path" placeholder="library-path.md" spellcheck="false" />
+            <input v-model="savePath" :aria-label="t('prompts.reuse.savePath')" placeholder="library-path.md" spellcheck="false" />
             <BaseButton variant="secondary" :loading="saving" :disabled="saving" @click="saveReusableText">
               Save
             </BaseButton>

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue';
 import LimitStatusBadge from '~/components/shell/LimitStatusBadge.vue';
 import { useSocket } from '~/composables/useSocket';
+import { useT } from '~/composables/useT';
 import { useConnectionStore } from '~/stores/connection';
 import { useLimitsStore } from '~/stores/limits';
 import { useQueueStore } from '~/stores/queue';

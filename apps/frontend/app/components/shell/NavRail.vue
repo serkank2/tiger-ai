@@ -3,6 +3,7 @@
 // active path as props so it renders identically in the app and in unit tests
 // (no router/composable dependency). The default layout supplies both.
 import type { NavItem } from '~/lib/navigation';
+import { useT } from '~/composables/useT';
 
 defineProps<{ items: NavItem[]; activePath: string }>();
 

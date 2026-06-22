@@ -128,6 +128,20 @@ export default {
     cantReachBackend: "Can't reach the backend",
     discardChanges: 'Discard unsaved changes?',
     newGroupName: 'New group name',
+    placeholders: {
+      nameExample: 'e.g. Frontend Claude',
+      modelOptional: 'model (optional)',
+    },
+  },
+  templates: {
+    placeholders: {
+      name: 'Template name',
+      description: 'Optional description',
+    },
+    runGroups: {
+      builtins: 'Built-in runs',
+      custom: 'Custom runs',
+    },
   },
   team: {
     chatLanguage: 'Chat language',

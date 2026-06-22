@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useConnectionStore } from '~/stores/connection';
 import { useLimitsStore } from '~/stores/limits';
+import { useT } from '~/composables/useT';
 import { percentText } from '~/lib/limits';
 
 const emit = defineEmits<{ open: [] }>();

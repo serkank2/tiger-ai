@@ -119,6 +119,20 @@ const tr: MessageSchema = {
     cantReachBackend: 'Sunucuya ulaşılamıyor',
     discardChanges: 'Kaydedilmemiş değişikliklerden vazgeçilsin mi?',
     newGroupName: 'Yeni grup adı',
+    placeholders: {
+      nameExample: 'örn. Frontend Claude',
+      modelOptional: 'model (isteğe bağlı)',
+    },
+  },
+  templates: {
+    placeholders: {
+      name: 'Şablon adı',
+      description: 'İsteğe bağlı açıklama',
+    },
+    runGroups: {
+      builtins: 'Yerleşik çalıştırmalar',
+      custom: 'Özel çalıştırmalar',
+    },
   },
   team: {
     chatLanguage: 'Sohbet dili',

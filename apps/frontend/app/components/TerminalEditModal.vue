@@ -278,7 +278,7 @@ async function save() {
         <input
           :id="id"
           v-model="form.name"
-          placeholder="e.g. Frontend Claude"
+          :placeholder="t('terminals.placeholders.nameExample')"
           autofocus
           :aria-invalid="invalid || undefined"
           :aria-describedby="describedby"
@@ -311,7 +311,7 @@ async function save() {
             @input="onCwdInput"
             @blur="checkCwd"
           />
-          <button type="button" class="browse" title="Browse folders" aria-label="Browse folders" @click="showPicker = true">📁</button>
+          <button type="button" class="browse" :title="t('settings.browseFolders')" :aria-label="t('settings.browseFolders')" @click="showPicker = true">📁</button>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -336,7 +336,7 @@ async function save() {
             </select>
           </template>
           <template v-else-if="form.aiTool === 'codex'">
-            <input v-model="form.aiModel" placeholder="model (optional)" spellcheck="false" @input="rebuildAi" />
+            <input v-model="form.aiModel" :placeholder="t('terminals.placeholders.modelOptional')" spellcheck="false" @input="rebuildAi" />
             <select v-model="form.aiMode" aria-label="Codex sandbox mode" @change="rebuildAi">
               <option v-for="o in CODEX_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
             </select>

@@ -12,7 +12,17 @@ const groups = useGroupsStore();
 const terminals = useTerminalsStore();
 const { t } = useT();
 
-const COLORS = ['#f59e42', '#6cc56c', '#5aa9e6', '#c08cd6', '#e5564b', '#e0b03a', '#5bc2b8', '#7c8390'];
+// A small set of predefined tag colors using available theme tokens.
+const COLORS = [
+  'var(--accent)',
+  'var(--green)',
+  'var(--blue)',
+  'var(--agent-claude-color)',
+  'var(--red)',
+  'var(--amber)',
+  'var(--agent-antigravity-color)',
+  'var(--slate)',
+];
 const GROUP_NAME_MAX_CHARS = 80;
 
 const newName = ref('');

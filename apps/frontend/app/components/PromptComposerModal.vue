@@ -389,7 +389,14 @@ onMounted(() => {
 .mode-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .mode-tag.paste { background: var(--bg-elev-2); color: var(--text-dim); }
 .mode-tag.run { background: var(--accent-soft); color: var(--accent); }
-.preview-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; border-radius: var(--radius); }
+.preview-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-backdrop);
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+}
 .preview { width: min(680px, 90%); max-height: 86%; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
 .preview.small { width: auto; }
 .preview h3 { margin: 0 0 10px; }

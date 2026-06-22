@@ -87,8 +87,8 @@ const selectedRunTemplate = computed(
 const selectedRunTemplateConfigs = computed(() => fullStageConfigs(tiger.config, selectedRunTemplate.value));
 const runTemplateGroups = computed(() =>
   [
-    { key: 'builtins', title: 'Built-in runs', items: runTemplates.builtins },
-    { key: 'custom', title: 'Custom runs', items: runTemplates.custom },
+    { key: 'builtins', title: t('templates.runGroups.builtins'), items: runTemplates.builtins },
+    { key: 'custom', title: t('templates.runGroups.custom'), items: runTemplates.custom },
   ].filter((group) => group.items.length),
 );
 const canSaveRunTemplate = computed(
@@ -646,7 +646,7 @@ watch(
             <div class="run-template-form-grid">
               <label class="form-field">
                 <span>Name</span>
-                <input v-model="runTemplateForm.name" data-testid="run-template-name" maxlength="160" placeholder="Template name" />
+                <input v-model="runTemplateForm.name" data-testid="run-template-name" maxlength="160" :placeholder="t('templates.placeholders.name')" />
               </label>
               <label class="form-field">
                 <span>Start from</span>
@@ -662,7 +662,7 @@ watch(
                   v-model="runTemplateForm.description"
                   data-testid="run-template-description"
                   rows="2"
-                  placeholder="Optional description"
+                  :placeholder="t('templates.placeholders.description')"
                 />
               </label>
             </div>
@@ -971,7 +971,7 @@ watch(
 .feedback.error {
   color: var(--red);
   border-color: var(--red);
-  background: rgba(229, 86, 75, 0.08);
+  background: var(--red-soft);
 }
 .state,
 .empty-state,

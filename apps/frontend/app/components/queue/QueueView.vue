@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import BaseButton from '~/components/ui/BaseButton.vue';
 import { useDialog } from '~/composables/useDialog';
 import { useSocket } from '~/composables/useSocket';
+import { useT } from '~/composables/useT';
 import { useConnectionStore } from '~/stores/connection';
 import { useQueueStore } from '~/stores/queue';
 import type {
@@ -25,6 +26,7 @@ const emit = defineEmits<{ back: [] }>();
 const queue = useQueueStore();
 const conn = useConnectionStore();
 const socket = useSocket();
+const { t } = useT();
 
 const selectedJobId = ref<string | null>(null);
 const nowMs = ref(Date.now());
@@ -691,7 +693,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
         <form class="rule-form" data-testid="rule-form" @submit.prevent="saveRule">
           <label>
             <span>Name</span>
-            <input v-model="ruleDraft.name" data-testid="rule-name" placeholder="Rule name" maxlength="191" />
+            <input v-model="ruleDraft.name" data-testid="rule-name" :placeholder="t('queue.rules.placeholders.name')" maxlength="191" />
           </label>
           <label>
             <span>Provider</span>
@@ -701,7 +703,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </label>
           <label>
             <span>Window</span>
-            <input v-model="ruleDraft.windowKey" data-testid="rule-window" placeholder="any" />
+            <input v-model="ruleDraft.windowKey" data-testid="rule-window" :placeholder="t('queue.rules.placeholders.window')" />
           </label>
           <label>
             <span>Operator</span>
@@ -718,7 +720,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <span>Enabled</span>
           </label>
           <BaseButton variant="primary" data-testid="save-rule" type="submit" :loading="savingRule" :disabled="!canSaveRule">
-            {{ editingRuleId ? 'Update rule' : 'Create rule' }}
+            {{ editingRuleId ? t('queue.rules.updateRule') : t('queue.rules.createRule') }}
           </BaseButton>
         </form>
 
@@ -745,7 +747,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
       <section class="content">
         <aside class="left">
           <form class="enqueue" data-testid="enqueue-form" @submit.prevent="submitEnqueue">
-        <div v-if="isPipelineV2" class="target-tabs" data-testid="enqueue-target-tabs" role="group" aria-label="Queue target">
+        <div v-if="isPipelineV2" class="target-tabs" data-testid="enqueue-target-tabs" role="group" :aria-label="t('queue.target.label')">
           <button
             type="button"
             data-testid="enqueue-target-project"
@@ -779,7 +781,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               <div class="form-grid">
                 <label>
                   <span>Project</span>
-                  <input v-model="draft.projectName" data-testid="enqueue-project" placeholder="Optional project name" />
+                  <input v-model="draft.projectName" data-testid="enqueue-project" :placeholder="t('queue.enqueue.placeholders.projectName')" />
                 </label>
                 <label>
                   <span>Provider</span>
@@ -801,7 +803,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               </div>
               <label>
                 <span>Workspace</span>
-                <input v-model="draft.workspacePath" data-testid="enqueue-workspace" placeholder="Optional absolute path" />
+                <input v-model="draft.workspacePath" data-testid="enqueue-workspace" :placeholder="t('queue.enqueue.placeholders.workspacePath')" />
               </label>
               <label>
                 <span>Prompt</span>
@@ -809,7 +811,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                   v-model="draft.prompt"
                   data-testid="enqueue-prompt"
                   rows="5"
-                  placeholder="Write the autonomous prompt to run..."
+                  :placeholder="t('queue.enqueue.placeholders.prompt')"
                 />
               </label>
             </template>
@@ -818,7 +820,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               <div class="form-grid terminal-grid">
                 <label>
                   <span>Name</span>
-                  <input v-model="terminalDraft.name" data-testid="enqueue-terminal-name" placeholder="Terminal name" />
+                  <input v-model="terminalDraft.name" data-testid="enqueue-terminal-name" :placeholder="t('queue.enqueue.placeholders.terminalName')" />
                 </label>
                 <label>
                   <span>Shell</span>
@@ -833,7 +835,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               </div>
               <label>
                 <span>CWD</span>
-                <input v-model="terminalDraft.cwd" data-testid="enqueue-terminal-cwd" placeholder="Optional working directory" />
+                <input v-model="terminalDraft.cwd" data-testid="enqueue-terminal-cwd" :placeholder="t('queue.enqueue.placeholders.terminalCwd')" />
               </label>
               <label>
                 <span>Command</span>
@@ -841,7 +843,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                   v-model="terminalDraft.initialCommand"
                   data-testid="enqueue-terminal-command"
                   rows="4"
-                  placeholder="Optional startup command"
+                  :placeholder="t('queue.enqueue.placeholders.terminalCommand')"
                 />
               </label>
             </template>
@@ -857,11 +859,11 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 </label>
                 <label v-if="teamDraft.mode === 'append'">
                   <span>Run id</span>
-                  <input v-model="teamDraft.runId" data-testid="enqueue-team-run-id" placeholder="Active run id" />
+                  <input v-model="teamDraft.runId" data-testid="enqueue-team-run-id" :placeholder="t('queue.enqueue.placeholders.teamRunId')" />
                 </label>
                 <label v-else>
                   <span>Workspace</span>
-                  <input v-model="teamDraft.workspacePath" data-testid="enqueue-team-workspace" placeholder="Optional workspace" />
+                  <input v-model="teamDraft.workspacePath" data-testid="enqueue-team-workspace" :placeholder="t('queue.enqueue.placeholders.teamWorkspace')" />
                 </label>
               </div>
               <label>
@@ -870,7 +872,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                   v-model="teamDraft.body"
                   data-testid="enqueue-team-body"
                   rows="5"
-                  placeholder="Write the Team instruction..."
+                  :placeholder="t('queue.enqueue.placeholders.teamBody')"
                 />
               </label>
             </template>
@@ -911,7 +913,7 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 :disabled="jobs.length === 0"
                 @change="toggleSelectAll"
               />
-              <b>{{ isPipelineV2 ? (activeList === 'history' ? 'History' : 'Live pipeline') : 'Ordered jobs' }}</b>
+              <b>{{ isPipelineV2 ? (activeList === 'history' ? t('queue.pipeline.history') : t('queue.pipeline.livePipeline')) : t('queue.pipeline.orderedJobs') }}</b>
             </label>
             <span>{{ isPipelineV2 && activeList === 'history' ? `${queue.historyTotal || queue.historyCounts.total} total` : `${jobs.length} total` }}</span>
           </div>
@@ -1634,7 +1636,7 @@ textarea {
   border: 1px solid var(--amber);
   border-radius: var(--radius-sm);
   color: var(--amber);
-  background: rgba(224, 176, 58, 0.08);
+  background: var(--amber-soft);
 }
 .blocked-detail span {
   color: var(--text-dim);
@@ -1662,7 +1664,7 @@ textarea {
 .failure-detail {
   color: var(--amber);
   border-color: var(--amber);
-  background: rgba(224, 176, 58, 0.08);
+  background: var(--amber-soft);
 }
 .controls {
   display: flex;
