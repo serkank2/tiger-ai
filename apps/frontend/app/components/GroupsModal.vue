@@ -45,8 +45,8 @@ function clearCreateErrors() {
 }
 function groupNameError(value: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed) return 'Group name is required.';
-  if (trimmed.length > GROUP_NAME_MAX_CHARS) return `Group name must be ${GROUP_NAME_MAX_CHARS} characters or fewer.`;
+  if (!trimmed) return t('groups.nameRequired');
+  if (trimmed.length > GROUP_NAME_MAX_CHARS) return t('groups.nameTooLong', { max: GROUP_NAME_MAX_CHARS });
   return null;
 }
 function applyCreateServerError(e: unknown) {
@@ -60,7 +60,7 @@ function clearRenameError(id: string) {
 }
 
 const newNameError = computed(() => createServerErrors.name ?? (newName.value.length ? groupNameError(newName.value) : null));
-const newColorError = computed(() => createServerErrors.color ?? hexColorError(newColor.value, 'Group color'));
+const newColorError = computed(() => createServerErrors.color ?? hexColorError(newColor.value, t('groups.colorLabel')));
 const hasCreateError = computed(() => Boolean(groupNameError(newName.value) || newColorError.value));
 
 // two-step delete confirm (consistent with the terminal list)
@@ -128,9 +128,9 @@ async function remove(id: string) {
 </script>
 
 <template>
-  <BaseModal title="Groups" size="md" @close="emit('close')">
+  <BaseModal :title="t('groups.title')" size="md" @close="emit('close')">
       <form class="create" @submit.prevent="create">
-        <BaseField id="group-new-name" v-slot="{ id, describedby, invalid }" class="create-name" label="New group name" :error="newNameError || undefined">
+        <BaseField id="group-new-name" v-slot="{ id, describedby, invalid }" class="create-name" :label="t('terminals.newGroupName')" :error="newNameError || undefined">
           <BaseInput
             :id="id"
             v-model="newName"
@@ -140,7 +140,7 @@ async function remove(id: string) {
             @input="clearCreateError('name')"
           />
         </BaseField>
-        <BaseField id="group-new-color" v-slot="{ id, describedby, invalid }" class="create-color" label="Color" :error="newColorError || undefined">
+        <BaseField id="group-new-color" v-slot="{ id, describedby, invalid }" class="create-color" :label="t('groups.color')" :error="newColorError || undefined">
           <div class="color-row">
             <div class="swatches">
               <button
@@ -165,7 +165,7 @@ async function remove(id: string) {
             />
           </div>
         </BaseField>
-        <BaseButton type="submit" class="add-btn" variant="primary" :loading="busy" :disabled="hasCreateError">Add</BaseButton>
+        <BaseButton type="submit" class="add-btn" variant="primary" :loading="busy" :disabled="hasCreateError">{{ t('groups.add') }}</BaseButton>
       </form>
 
       <ul class="list">
@@ -184,8 +184,8 @@ async function remove(id: string) {
           <button
             class="del"
             :class="{ confirm: confirmingId === g.id }"
-            :title="confirmingId === g.id ? 'Click again to delete' : 'Delete group'"
-            :aria-label="confirmingId === g.id ? `Confirm delete group ${g.name}` : `Delete group ${g.name}`"
+            :title="confirmingId === g.id ? t('groups.deleteConfirm') : t('groups.deleteGroup')"
+            :aria-label="confirmingId === g.id ? t('groups.confirmDeleteAria', { name: g.name }) : t('groups.deleteGroupAria', { name: g.name })"
             @click="onDelete(g.id)"
           >
             <template v-if="confirmingId === g.id">✓?</template>
@@ -196,11 +196,11 @@ async function remove(id: string) {
             {{ renameErrors[g.id] }}
           </p>
         </li>
-        <li v-if="!groups.groups.length" class="empty">No groups yet.</li>
+        <li v-if="!groups.groups.length" class="empty">{{ t('groups.empty') }}</li>
       </ul>
 
       <template #footer>
-        <BaseButton variant="ghost" @click="emit('close')">Done</BaseButton>
+        <BaseButton variant="ghost" @click="emit('close')">{{ t('groups.done') }}</BaseButton>
       </template>
   </BaseModal>
 </template>

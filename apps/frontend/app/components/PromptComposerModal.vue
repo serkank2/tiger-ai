@@ -7,11 +7,13 @@ import PromptTargetPicker from './prompt/PromptTargetPicker.vue';
 import { serializePrompt } from '~/lib/frontmatter';
 import { render, hasPerTerminalVars, detectVariables } from '~/lib/promptTemplate';
 import { limitFor, strictestLimit } from '~/lib/shellLimits';
+import { useT } from '~/composables/useT';
 import type { PromptMeta, TerminalDto } from '~/types';
 import type { BroadcastOutcome } from '~/composables/useSocket';
 
 const emit = defineEmits<{ close: [] }>();
 
+const { t } = useT();
 const prompts = usePromptsStore();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
@@ -122,7 +124,7 @@ function uniquePath(base: string): string {
 }
 async function save() {
   if (!draft.body.trim() && !draft.title.trim()) {
-    notices.push('Nothing to save', 'error');
+    notices.push(t('prompts.notices.nothingToSave'), 'error');
     return;
   }
   if (currentPath.value) {
@@ -130,7 +132,7 @@ async function save() {
     if (f) {
       loadedVersion.value = f.version;
       setSnapshot();
-      notices.push('Prompt saved');
+      notices.push(t('prompts.notices.promptSaved'));
     }
   } else {
     const path = uniquePath(`${slug(draft.title) || 'untitled'}.md`);
@@ -139,7 +141,7 @@ async function save() {
       currentPath.value = f.path;
       loadedVersion.value = f.version;
       setSnapshot();
-      notices.push(`Saved as ${f.path}`);
+      notices.push(t('prompts.notices.savedAs', { path: f.path }));
     }
   }
 }
@@ -176,7 +178,7 @@ const previewText = computed(() => {
 const perTerminal = computed(() => hasPerTerminalVars(draft.body));
 function summarizeAffectedTargets(names: string[]): string {
   const visible = names.slice(0, 3).join(', ');
-  const extra = names.length > 3 ? ` and ${names.length - 3} more` : '';
+  const extra = names.length > 3 ? t('prompts.composer.andMore', { n: names.length - 3 }) : '';
   return `${visible}${extra}`;
 }
 const promptLengthWarning = computed(() => {
@@ -195,13 +197,19 @@ const promptLengthWarning = computed(() => {
 
     if (!affected.length) return null;
     const worst = affected.reduce((max, item) => (item.len > max.len ? item : max));
-    return `${affected.length} target(s) may exceed shell limits: ${summarizeAffectedTargets(affected.map((item) => item.name))}. Longest prompt is ${worst.len} characters; ${worst.name}'s limit is ${worst.limit}.`;
+    return t('prompts.composer.lengthWarnPerTerminal', {
+      n: affected.length,
+      targets: summarizeAffectedTargets(affected.map((item) => item.name)),
+      len: worst.len,
+      name: worst.name,
+      limit: worst.limit,
+    });
   }
 
-  const limit = strictestLimit(targets.map((t) => t.shell?.kind));
+  const limit = strictestLimit(targets.map((term) => term.shell?.kind));
   const len = render(draft.body, { values, date }).length;
   if (Number.isFinite(limit) && len > limit) {
-    return `${len} characters - one or more target shells may truncate this prompt near the ${limit} character limit.`;
+    return t('prompts.composer.lengthWarnSingle', { len, limit });
   }
   return null;
 });
@@ -228,12 +236,12 @@ function broadcastFailureMessage(result: BroadcastOutcome): string | null {
       return null;
     case 'not_sent':
       return result.reason === 'server_error'
-        ? `Send failed: ${result.message ?? 'the backend rejected the request.'}`
-        : 'Send failed: the socket is not connected.';
+        ? t('prompts.composer.sendFailedServer', { message: result.message ?? t('prompts.composer.sendFailedServerDefault') })
+        : t('prompts.composer.sendFailedDisconnected');
     case 'timeout':
-      return 'Send status unknown: no broadcast confirmation was received within 5 seconds.';
+      return t('prompts.composer.sendStatusTimeout');
     case 'disconnected':
-      return 'Send status unknown: the socket disconnected before confirming delivery.';
+      return t('prompts.composer.sendStatusDisconnected');
   }
 }
 
@@ -270,12 +278,15 @@ async function doSend() {
     }
     // Surface cases the per-send toast cannot fully cover.
     if (!delivered) {
-      notices.push(deliveryFailureMessage ?? 'Not sent: no eligible terminal received it.', 'error');
+      notices.push(deliveryFailureMessage ?? t('prompts.notices.notSent'), 'error');
     } else if (failedCount > 0) {
       // Partial fan-out failure: some terminals got it, others did not. Without this the user
       // would be told nothing failed while part of the per-terminal send was silently lost.
       notices.push(
-        `Sent to some terminals, but ${failedCount} failed: ${deliveryFailureMessage ?? 'delivery failed'}.`,
+        t('prompts.composer.partialSendFailed', {
+          n: failedCount,
+          message: deliveryFailureMessage ?? t('prompts.composer.deliveryFailed'),
+        }),
         'error',
       );
     }
@@ -291,9 +302,9 @@ async function guardDirty(action: () => void | Promise<void>) {
   if (
     dirty.value &&
     !(await dialog.confirm({
-      message: 'Discard unsaved changes?',
-      confirmText: 'Discard',
-      cancelText: 'Keep editing',
+      message: t('terminals.discardChanges'),
+      confirmText: t('common.discard'),
+      cancelText: t('common.keepEditing'),
       danger: true,
     }))
   ) {
@@ -313,11 +324,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <BaseModal title="Prompt Composer" size="xl" @close="tryClose">
+  <BaseModal :title="t('prompts.composer.title')" size="xl" @close="tryClose">
     <template #header-actions>
-      <BaseButton variant="ghost" @click="newDraft">+ New</BaseButton>
-      <BaseButton variant="primary" :disabled="!dirty" @click="save">{{ currentPath ? 'Save' : 'Save as…' }}</BaseButton>
-      <BaseButton icon-only variant="ghost" aria-label="Close" @click="tryClose">✕</BaseButton>
+      <BaseButton variant="ghost" @click="newDraft">{{ t('prompts.composer.new') }}</BaseButton>
+      <BaseButton variant="primary" :disabled="!dirty" @click="save">{{ currentPath ? t('common.save') : t('prompts.composer.saveAs') }}</BaseButton>
+      <BaseButton icon-only variant="ghost" :aria-label="t('common.close')" @click="tryClose">✕</BaseButton>
     </template>
 
     <div class="composer">
@@ -353,35 +364,36 @@ onMounted(() => {
       <footer class="cfoot">
         <span class="summary">
           <template v-if="selectedTerminals.length">
-            Sending to <b>{{ selectedTerminals.length }}</b>:
-            {{ selectedTerminals.slice(0, 4).map((t) => t.name).join(', ') }}{{ selectedTerminals.length > 4 ? '…' : '' }}
+            {{ t('prompts.composer.sendingTo') }} <b>{{ selectedTerminals.length }}</b>:
+            {{ selectedTerminals.slice(0, 4).map((term) => term.name).join(', ') }}{{ selectedTerminals.length > 4 ? '…' : '' }}
           </template>
-          <template v-else>No targets selected</template>
-          <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? 'Run ⏎' : 'Paste' }}</span>
+          <template v-else>{{ t('prompts.composer.noTargets') }}</template>
+          <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? t('prompts.editor.run') : t('prompts.editor.paste') }}</span>
         </span>
         <span v-if="promptLengthWarning" class="length-warn">{{ promptLengthWarning }}</span>
-        <BaseButton variant="primary" :disabled="!canSend" @click="requestSend">Preview &amp; Send</BaseButton>
+        <BaseButton variant="primary" :disabled="!canSend" @click="requestSend">{{ t('prompts.composer.previewSend') }}</BaseButton>
       </footer>
 
-      <!-- Preview / confirm overlay -->
-      <div v-if="showPreview" class="preview-overlay" @click.self="showPreview = false">
-        <div class="preview">
-          <h3>Preview</h3>
-          <div class="pmeta">
-            <span><b>{{ selectedTerminals.length }}</b> target(s): {{ selectedTerminals.map((t) => t.name).join(', ') }}</span>
-            <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? 'Run (Enter appended)' : 'Paste (no Enter)' }}</span>
-          </div>
-          <p v-if="perTerminal" class="note">Built-ins vary per terminal — showing "{{ selectedTerminals[0]?.name }}".</p>
-          <p v-if="unresolved.length" class="warn">⚠ Unfilled variables: {{ unresolved.join(', ') }} (will send as-is)</p>
-          <p v-if="promptLengthWarning" class="warn">{{ promptLengthWarning }}</p>
-          <pre class="ptext">{{ previewText }}</pre>
-          <div class="pfoot">
-            <BaseButton variant="ghost" @click="showPreview = false">Back</BaseButton>
-            <BaseButton variant="primary" :loading="sending" :disabled="!canSend" @click="doSend">{{ sending ? 'Sending…' : `Send to ${selectedTerminals.length}` }}</BaseButton>
-          </div>
-        </div>
-      </div>
     </div>
+
+    <!-- Preview / confirm dialog — BaseModal gives Escape-to-close, focus-trap,
+         focus-restore, and topmost (teleported) overlay behaviour. -->
+    <BaseModal v-if="showPreview" :title="t('prompts.composer.previewTitle')" size="lg" @close="showPreview = false">
+      <div class="pmeta">
+        <span><b>{{ selectedTerminals.length }}</b> {{ t('prompts.composer.targetsLabel') }}: {{ selectedTerminals.map((term) => term.name).join(', ') }}</span>
+        <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? t('prompts.composer.runMode') : t('prompts.composer.pasteMode') }}</span>
+      </div>
+      <p v-if="perTerminal" class="note">{{ t('prompts.composer.perTerminalNote', { name: selectedTerminals[0]?.name }) }}</p>
+      <p v-if="unresolved.length" class="warn">{{ t('prompts.composer.unfilledVars', { vars: unresolved.join(', ') }) }}</p>
+      <p v-if="promptLengthWarning" class="warn">{{ promptLengthWarning }}</p>
+      <pre class="ptext">{{ previewText }}</pre>
+      <template #footer>
+        <BaseButton variant="ghost" @click="showPreview = false">{{ t('common.back') }}</BaseButton>
+        <BaseButton variant="primary" :loading="sending" :disabled="!canSend" @click="doSend">
+          {{ sending ? t('prompts.composer.sending') : t('prompts.composer.sendTo', { n: selectedTerminals.length }) }}
+        </BaseButton>
+      </template>
+    </BaseModal>
   </BaseModal>
 </template>
 
@@ -395,20 +407,8 @@ onMounted(() => {
 .mode-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .mode-tag.paste { background: var(--bg-elev-2); color: var(--text-dim); }
 .mode-tag.run { background: var(--accent-soft); color: var(--accent); }
-.preview-overlay {
-  position: absolute;
-  inset: 0;
-  background: var(--overlay-backdrop);
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius);
-}
-.preview { width: min(680px, 90%); max-height: 86%; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
-.preview.small { width: auto; }
-.preview h3 { margin: 0 0 10px; }
 .pmeta { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); margin-bottom: 8px; flex-wrap: wrap; }
 .note { font-size: 12px; color: var(--text-dim); margin: 4px 0; }
 .warn { font-size: 12px; color: var(--amber); margin: 4px 0; }
-.ptext { flex: 1; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 12px; }
-.pfoot { display: flex; justify-content: flex-end; gap: 10px; }
+.ptext { overflow: auto; max-height: 50vh; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
 </style>
