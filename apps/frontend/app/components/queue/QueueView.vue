@@ -673,8 +673,8 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
         <div class="metric rules-panel" data-testid="rules-panel">
           <span class="label">Rules</span>
           <b>{{ enabledRules.length }} enabled</b>
-          <span class="meta" v-if="enabledRules[0]">{{ enabledRules.map(ruleLabel).join(', ') }}</span>
-          <span class="meta" v-else>No enabled queue dispatch rules</span>
+          <span v-if="enabledRules[0]" class="meta">{{ enabledRules.map(ruleLabel).join(', ') }}</span>
+          <span v-else class="meta">No enabled queue dispatch rules</span>
           <span v-if="disabledRules.length" class="eta">{{ disabledRules.length }} disabled</span>
         </div>
       </section>

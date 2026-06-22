@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
+import BaseInput from '~/components/ui/BaseInput.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 
 const props = defineProps<{ initial?: string }>();
 const emit = defineEmits<{ select: [path: string]; close: [] }>();
 const api = useApi();
+const { t } = useT();
 
 const path = ref('');
 const parent = ref('');
@@ -54,11 +56,11 @@ onMounted(async () => {
     <div class="cur"><code>{{ path || '…' }}</code></div>
 
     <form class="go-row" @submit.prevent="loadTyped">
-      <input
+      <BaseInput
         v-model="typedPath"
         class="go-input"
         spellcheck="false"
-        placeholder="Type an absolute path to jump to another drive…"
+        :placeholder="t('settings.folderPickerPlaceholder')"
         aria-label="Absolute folder path"
         :disabled="loading"
       />

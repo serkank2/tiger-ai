@@ -23,7 +23,7 @@ const activeKey = computed(() => activeNavKey(route.path));
 const showLimitTopPanel = computed(() => Boolean(config.public.limitTopPanel));
 const sectionTitle = computed(() => {
   const item = NAV_ITEMS.find((i) => i.key === activeKey.value);
-  return item ? t(item.labelKey) : 'Kaplan';
+  return item ? t(item.labelKey) : t('nav.home');
 });
 
 const connLabel = computed(() => {

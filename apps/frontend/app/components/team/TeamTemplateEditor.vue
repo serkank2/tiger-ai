@@ -295,8 +295,8 @@ async function save() {
         <textarea v-model="role.responsibilities" class="resp" rows="2" placeholder="Responsibilities, one per line…" />
 
         <div class="flags">
-          <label><input type="checkbox" v-model="role.canWriteCode" /> may edit project source</label>
-          <label><input type="checkbox" v-model="role.requiredForSignoff" /> required for sign-off</label>
+          <label><input v-model="role.canWriteCode" type="checkbox" /> may edit project source</label>
+          <label><input v-model="role.requiredForSignoff" type="checkbox" /> required for sign-off</label>
         </div>
       </div>
 

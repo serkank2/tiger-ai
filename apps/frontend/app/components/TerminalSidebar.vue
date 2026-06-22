@@ -9,6 +9,7 @@ import Spinner from '~/components/ui/Spinner.vue';
 const emit = defineEmits<{ create: []; edit: [terminal: TerminalDto] }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
+const { t } = useT();
 
 // two-step confirm for bulk delete
 const confirmBulk = ref(false);
@@ -73,25 +74,25 @@ function groupSomeSelected(list: TerminalDto[]) {
           :indeterminate.prop="terminals.someSelected && !terminals.allSelected"
           @change="terminals.toggleSelectAll()"
         />
-        <span>{{ terminals.someSelected ? `${terminals.selectedIds.length} selected` : 'Select all' }}</span>
+        <span>{{ terminals.someSelected ? t('terminals.selected', { n: terminals.selectedIds.length }) : t('terminals.selectAll') }}</span>
       </label>
       <span v-if="terminals.someSelected" class="acts">
-        <BaseButton class="act" size="sm" variant="ghost" iconOnly ariaLabel="Start selected" title="Start selected" @click="terminals.startSelected()">▶</BaseButton>
-        <BaseButton class="act" size="sm" variant="ghost" iconOnly ariaLabel="Stop selected" title="Stop selected" @click="terminals.stopSelected()">■</BaseButton>
+        <BaseButton class="act" size="sm" variant="ghost" icon-only aria-label="Start selected" title="Start selected" @click="terminals.startSelected()">▶</BaseButton>
+        <BaseButton class="act" size="sm" variant="ghost" icon-only aria-label="Stop selected" title="Stop selected" @click="terminals.stopSelected()">■</BaseButton>
         <BaseButton
           class="act danger"
           :class="{ confirm: confirmBulk }"
           size="sm"
           variant="ghost"
-          iconOnly
-          :ariaLabel="confirmBulk ? 'Confirm delete all selected' : 'Delete selected'"
+          icon-only
+          :aria-label="confirmBulk ? 'Confirm delete all selected' : 'Delete selected'"
           :title="confirmBulk ? 'Click again to delete all selected' : 'Delete selected'"
           @click="onBulkDelete"
         >
           <template v-if="confirmBulk">✓?</template>
           <IconTrash v-else />
         </BaseButton>
-        <button class="link" @click="terminals.clearSelection()">clear</button>
+        <BaseButton class="link" variant="ghost" @click="terminals.clearSelection()">{{ t('terminals.clear') }}</BaseButton>
       </span>
     </div>
 
@@ -116,24 +117,24 @@ function groupSomeSelected(list: TerminalDto[]) {
           <span class="gname">{{ groupName(gid) }}</span>
           <span class="count">{{ list.length }}</span>
           <span class="gacts">
-            <BaseButton class="gact" size="sm" variant="ghost" iconOnly :ariaLabel="`Start all in ${groupName(gid)}`" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</BaseButton>
-            <BaseButton class="gact" size="sm" variant="ghost" iconOnly :ariaLabel="`Stop all in ${groupName(gid)}`" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</BaseButton>
+            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="`Start all in ${groupName(gid)}`" :title="`Start all in ${groupName(gid)}`" @click="terminals.startMany(groupIds(list))">▶</BaseButton>
+            <BaseButton class="gact" size="sm" variant="ghost" icon-only :aria-label="`Stop all in ${groupName(gid)}`" :title="`Stop all in ${groupName(gid)}`" @click="terminals.stopMany(groupIds(list))">■</BaseButton>
           </span>
         </div>
         <TerminalListItem
-          v-for="t in list"
-          :key="t.id"
-          :terminal="t"
-          :active="t.id === terminals.activeId"
-          :selected="terminals.selectedIds.includes(t.id)"
-          @select="terminals.setActive(t.id)"
-          @toggle="terminals.toggleSelected(t.id)"
-          @start="terminals.start(t.id)"
-          @stop="terminals.stop(t.id)"
-          @restart="terminals.restart(t.id)"
-          @duplicate="terminals.duplicate(t.id)"
-          @edit="emit('edit', t)"
-          @remove="terminals.remove(t.id)"
+          v-for="term in list"
+          :key="term.id"
+          :terminal="term"
+          :active="term.id === terminals.activeId"
+          :selected="terminals.selectedIds.includes(term.id)"
+          @select="terminals.setActive(term.id)"
+          @toggle="terminals.toggleSelected(term.id)"
+          @start="terminals.start(term.id)"
+          @stop="terminals.stop(term.id)"
+          @restart="terminals.restart(term.id)"
+          @duplicate="terminals.duplicate(term.id)"
+          @edit="emit('edit', term)"
+          @remove="terminals.remove(term.id)"
         />
         </template>
       </template>

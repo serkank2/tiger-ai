@@ -161,8 +161,8 @@ watch(selectedKey, () => {
           <span class="snum">{{ stage.number }}</span>
           <span class="stitle">{{ stage.title }}</span>
           <span v-if="stage.optional" class="sopt" title="Optional stage">optional</span>
-          <span class="sskip" v-if="!willRun(stage.id)">skipped</span>
-          <span class="ssum" v-else>{{ stageSummary(stage.id) }}</span>
+          <span v-if="!willRun(stage.id)" class="sskip">skipped</span>
+          <span v-else class="ssum">{{ stageSummary(stage.id) }}</span>
         </summary>
         <div class="sbody">
           <StageConfigPanel

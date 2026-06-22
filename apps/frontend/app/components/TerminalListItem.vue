@@ -64,18 +64,18 @@ onBeforeUnmount(() => {
       <div v-if="terminal.lastOutput" class="out">{{ terminal.lastOutput }}</div>
     </div>
     <div class="actions" @click.stop>
-      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Start terminal" title="Start" @click="emit('start')">▶</BaseButton>
-      <BaseButton v-else class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Stop terminal" title="Stop" @click="emit('stop')">■</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Restart terminal" title="Restart" @click="emit('restart')">⟳</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Duplicate terminal" title="Duplicate" @click="emit('duplicate')">⧉</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" iconOnly ariaLabel="Edit terminal" title="Edit" @click="emit('edit')">✎</BaseButton>
+      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" icon-only aria-label="Start terminal" title="Start" @click="emit('start')">▶</BaseButton>
+      <BaseButton v-else class="ic" size="sm" variant="ghost" icon-only aria-label="Stop terminal" title="Stop" @click="emit('stop')">■</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Restart terminal" title="Restart" @click="emit('restart')">⟳</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Duplicate terminal" title="Duplicate" @click="emit('duplicate')">⧉</BaseButton>
+      <BaseButton class="ic" size="sm" variant="ghost" icon-only aria-label="Edit terminal" title="Edit" @click="emit('edit')">✎</BaseButton>
       <BaseButton
         class="ic danger"
         :class="{ confirm: confirming }"
         size="sm"
         variant="ghost"
-        iconOnly
-        :ariaLabel="confirming ? 'Confirm delete terminal' : 'Delete terminal'"
+        icon-only
+        :aria-label="confirming ? 'Confirm delete terminal' : 'Delete terminal'"
         :title="confirming ? 'Click again to delete' : 'Delete'"
         @click="onDelete"
       >

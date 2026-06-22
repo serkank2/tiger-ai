@@ -5,10 +5,12 @@ import IconTrash from '~/components/IconTrash.vue';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseField from '~/components/ui/BaseField.vue';
+import BaseInput from '~/components/ui/BaseInput.vue';
 
 const emit = defineEmits<{ close: [] }>();
 const groups = useGroupsStore();
 const terminals = useTerminalsStore();
+const { t } = useT();
 
 const COLORS = ['#f59e42', '#6cc56c', '#5aa9e6', '#c08cd6', '#e5564b', '#e0b03a', '#5bc2b8', '#7c8390'];
 const GROUP_NAME_MAX_CHARS = 80;
@@ -118,17 +120,17 @@ async function remove(id: string) {
 <template>
   <BaseModal title="Groups" size="md" @close="emit('close')">
       <form class="create" @submit.prevent="create">
-        <BaseField v-slot="{ id, describedby, invalid }" class="create-name" id="group-new-name" label="New group name" :error="newNameError || undefined">
-          <input
+        <BaseField id="group-new-name" v-slot="{ id, describedby, invalid }" class="create-name" label="New group name" :error="newNameError || undefined">
+          <BaseInput
             :id="id"
             v-model="newName"
-            placeholder="New group name"
-            :aria-invalid="invalid || undefined"
-            :aria-describedby="describedby"
+            :placeholder="t('terminals.newGroupName')"
+            :invalid="invalid || undefined"
+            :describedby="describedby"
             @input="clearCreateError('name')"
           />
         </BaseField>
-        <BaseField v-slot="{ id, describedby, invalid }" class="create-color" id="group-new-color" label="Color" :error="newColorError || undefined">
+        <BaseField id="group-new-color" v-slot="{ id, describedby, invalid }" class="create-color" label="Color" :error="newColorError || undefined">
           <div class="color-row">
             <div class="swatches">
               <button
@@ -142,13 +144,13 @@ async function remove(id: string) {
                 @click="chooseColor(c)"
               />
             </div>
-            <input
+            <BaseInput
               :id="id"
               v-model="newColor"
               class="color-value"
               spellcheck="false"
-              :aria-invalid="invalid || undefined"
-              :aria-describedby="describedby"
+              :invalid="invalid || undefined"
+              :describedby="describedby"
               @input="clearCreateError('color')"
             />
           </div>
@@ -160,11 +162,11 @@ async function remove(id: string) {
         <li v-for="g in groups.groups" :key="g.id">
           <div class="group-row">
           <span class="dot" :style="{ background: g.color || 'var(--text-faint)' }" />
-          <input
+          <BaseInput
             class="gname"
             :value="g.name"
-            :aria-invalid="!!renameErrors[g.id] || undefined"
-            :aria-describedby="renameErrors[g.id] ? `group-${g.id}-name-error` : undefined"
+            :invalid="!!renameErrors[g.id] || undefined"
+            :describedby="renameErrors[g.id] ? `group-${g.id}-name-error` : undefined"
             @input="clearRenameError(g.id)"
             @change="rename(g.id, ($event.target as HTMLInputElement).value)"
           />

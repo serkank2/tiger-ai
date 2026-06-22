@@ -3,6 +3,7 @@ import type { AppSettings, ShellKind } from '~/types';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import BaseButton from '~/components/ui/BaseButton.vue';
 import BaseField from '~/components/ui/BaseField.vue';
+import BaseInput from '~/components/ui/BaseInput.vue';
 import { errText } from '~/lib/apiError';
 import { absoluteLocalPathError, customShellPathError, usesWindowsPathSyntax } from '~/lib/formValidation';
 import type { LocaleCode } from '~/locales';
@@ -192,32 +193,32 @@ async function save() {
       </header>
 
       <BaseField
-        v-slot="{ id, describedby, invalid }"
         id="settings-default-cwd"
+        v-slot="{ id, describedby, invalid }"
         :label="t('settings.defaultCwd')"
         :hint="t('settings.defaultCwdHint')"
         :error="defaultCwdError || undefined"
       >
         <span class="cwd-row">
-          <input
+          <BaseInput
             :id="id"
             v-model="form.defaultCwd"
             spellcheck="false"
-            placeholder="C:\path"
-            :aria-invalid="invalid || undefined"
-            :aria-describedby="describedby"
+            :placeholder="t('settings.defaultCwdPlaceholder')"
+            :invalid="invalid || undefined"
+            :describedby="describedby"
             @input="onCwdInput"
             @blur="checkCwd"
           />
-          <button
-            type="button"
+          <BaseButton
             class="browse"
+            icon-only
             :title="t('settings.browseFolders')"
             :aria-label="t('settings.browseFolders')"
             @click="showPicker = true"
           >
             📁
-          </button>
+          </BaseButton>
           <span class="flag" :class="cwdState">
             {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
           </span>
@@ -232,18 +233,18 @@ async function save() {
       </label>
       <BaseField
         v-if="form.shellKind === 'custom'"
-        v-slot="{ id, describedby, invalid }"
         id="settings-shell-path"
+        v-slot="{ id, describedby, invalid }"
         :label="t('settings.defaultShellPath')"
         :error="shellPathError || undefined"
       >
-        <input
+        <BaseInput
           :id="id"
           v-model="form.shellPath"
           spellcheck="false"
-          placeholder="C:\path\to\shell.exe"
-          :aria-invalid="invalid || undefined"
-          :aria-describedby="describedby"
+          :placeholder="t('settings.defaultShellPathPlaceholder')"
+          :invalid="invalid || undefined"
+          :describedby="describedby"
           @input="clearServerError('shellPath')"
         />
       </BaseField>
@@ -279,7 +280,7 @@ async function save() {
 
       <label class="field" for="settings-auth-token">
         <span class="field-label">{{ t('settings.authToken') }}</span>
-        <input
+        <BaseInput
           id="settings-auth-token"
           v-model="form.authToken"
           type="password"

@@ -20,6 +20,7 @@ const emit = defineEmits<{ back: [] }>();
 
 const conn = useConnectionStore();
 const limits = useLimitsStore();
+const { t } = useT();
 const rawOpen = ref<Record<string, boolean>>({});
 
 const providers: TigerAgentType[] = ['claude', 'codex', 'antigravity'];
@@ -233,7 +234,7 @@ onMounted(() => {
               <h2>{{ provider.latest.length }} window{{ provider.latest.length === 1 ? '' : 's' }}</h2>
             </div>
             <span class="status-pill" :class="{ bad: !provider.ok }">
-              {{ provider.ok ? 'ok' : provider.error ? 'error' : 'empty' }}
+              {{ provider.ok ? t('common.ok').toLowerCase() : provider.error ? t('common.status.error').toLowerCase() : t('common.status.empty').toLowerCase() }}
             </span>
           </header>
           <p class="provider-time">Checked {{ fmtDate(provider.latestCheckedAt) }}</p>
@@ -404,7 +405,7 @@ onMounted(() => {
             <span>{{ percentText(snapshot.percentUsed) }}</span>
             <span>{{ fmtDate(snapshot.checkedAt) }}</span>
             <span>{{ fmtDate(snapshot.resetAt) }}</span>
-            <span>{{ snapshot.ok ? freshness(snapshot) : 'error' }}</span>
+            <span>{{ snapshot.ok ? t('limits.freshness.' + freshness(snapshot)) : t('common.status.error') }}</span>
           </div>
         </div>
         <p v-else class="provider-empty">No snapshot history.</p>

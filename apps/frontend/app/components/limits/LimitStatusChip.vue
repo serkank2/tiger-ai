@@ -8,6 +8,7 @@ const emit = defineEmits<{ open: [] }>();
 
 const conn = useConnectionStore();
 const limits = useLimitsStore();
+const { t } = useT();
 
 const chipState = computed(() => {
   if (limits.loading && !limits.loaded) return 'loading';
@@ -20,13 +21,13 @@ const chipState = computed(() => {
 });
 
 const label = computed(() => {
-  if (chipState.value === 'loading') return 'Limits';
-  if (chipState.value === 'disconnected') return 'Offline';
-  if (chipState.value === 'error') return 'Limits error';
-  if (chipState.value === 'empty') return 'Limits empty';
-  if (chipState.value === 'blocked') return 'Blocked';
-  if (chipState.value === 'stale') return 'Limits stale';
-  return 'Limits';
+  if (chipState.value === 'loading') return t('limits.chip.label');
+  if (chipState.value === 'disconnected') return t('limits.chip.offline');
+  if (chipState.value === 'error') return t('limits.chip.error');
+  if (chipState.value === 'empty') return t('limits.chip.empty');
+  if (chipState.value === 'blocked') return t('limits.chip.blocked');
+  if (chipState.value === 'stale') return t('limits.chip.stale');
+  return t('limits.chip.label');
 });
 
 const title = computed(() => {
@@ -34,7 +35,7 @@ const title = computed(() => {
   if (decision) return decision;
   if (limits.loadError) return limits.loadError;
   if (limits.refreshError) return limits.refreshError;
-  return 'Open provider limits';
+  return t('limits.chip.openTitle');
 });
 
 const percent = computed(() => percentText(limits.maxPercentUsed));
@@ -47,7 +48,7 @@ const showPercent = computed(() => limits.maxPercentUsed !== null && chipState.v
     class="limit-chip"
     :class="`state-${chipState}`"
     :title="title"
-    aria-label="Open limits"
+    :aria-label="t('limits.chip.openAria')"
     @click="emit('open')"
   >
     <span class="dot" aria-hidden="true" />

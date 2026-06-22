@@ -127,6 +127,7 @@ export default {
     chooseGroup: 'Choose group…',
     cantReachBackend: "Can't reach the backend",
     discardChanges: 'Discard unsaved changes?',
+    newGroupName: 'New group name',
   },
   team: {
     chatLanguage: 'Chat language',
@@ -617,5 +618,8 @@ export default {
     authTokenHint: 'Only required if the backend sets KAPLAN_AUTH_TOKEN.',
     authTokenPlaceholder: 'leave empty for local (no auth)',
     saved: 'Settings saved',
+    folderPickerPlaceholder: 'Type an absolute path to jump to another drive…',
+    defaultCwdPlaceholder: 'C:\\path',
+    defaultShellPathPlaceholder: 'C:\\path\\to\\shell.exe',
   },
 };

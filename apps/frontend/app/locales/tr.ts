@@ -118,6 +118,7 @@ const tr: MessageSchema = {
     chooseGroup: 'Grup seç…',
     cantReachBackend: 'Sunucuya ulaşılamıyor',
     discardChanges: 'Kaydedilmemiş değişikliklerden vazgeçilsin mi?',
+    newGroupName: 'Yeni grup adı',
   },
   team: {
     chatLanguage: 'Sohbet dili',
@@ -609,6 +610,9 @@ const tr: MessageSchema = {
     authTokenHint: 'Yalnızca sunucu KAPLAN_AUTH_TOKEN ayarlarsa gereklidir.',
     authTokenPlaceholder: 'yerel için boş bırakın (kimlik doğrulama yok)',
     saved: 'Ayarlar kaydedildi',
+    folderPickerPlaceholder: 'Başka bir sürücüye atlamak için mutlak bir yol yazın…',
+    defaultCwdPlaceholder: 'C:\\yol',
+    defaultShellPathPlaceholder: 'C:\\yol\\shell.exe',
   },
 } satisfies MessageSchema;
 

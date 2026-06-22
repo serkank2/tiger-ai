@@ -104,8 +104,8 @@ function expand() {
         class="ic"
         size="sm"
         variant="ghost"
-        iconOnly
-        ariaLabel="Start terminal"
+        icon-only
+        aria-label="Start terminal"
         title="Start"
         :loading="pending"
         @click="runLifecycle(() => terminals.start(terminal.id))"
@@ -116,8 +116,8 @@ function expand() {
         class="ic"
         size="sm"
         variant="ghost"
-        iconOnly
-        ariaLabel="Stop terminal"
+        icon-only
+        aria-label="Stop terminal"
         title="Stop"
         :loading="pending"
         @click="runLifecycle(() => terminals.stop(terminal.id))"
@@ -127,8 +127,8 @@ function expand() {
         class="ic"
         size="sm"
         variant="ghost"
-        iconOnly
-        ariaLabel="Restart terminal"
+        icon-only
+        aria-label="Restart terminal"
         title="Restart"
         :loading="pending"
         @click="runLifecycle(() => terminals.restart(terminal.id))"
@@ -138,8 +138,8 @@ function expand() {
         class="ic"
         size="sm"
         variant="ghost"
-        iconOnly
-        ariaLabel="Expand to single view"
+        icon-only
+        aria-label="Expand to single view"
         title="Expand to single view"
         @click="expand"
         >⛶</BaseButton

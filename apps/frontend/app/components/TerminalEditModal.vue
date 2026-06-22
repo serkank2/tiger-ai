@@ -274,7 +274,7 @@ async function save() {
 
 <template>
   <BaseModal :title="isEdit ? 'Edit terminal' : 'New terminal'" size="lg" @close="emit('close')">
-      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-name" label="Name" :error="nameError || undefined">
+      <BaseField id="terminal-name" v-slot="{ id, describedby, invalid }" label="Name" :error="nameError || undefined">
         <input
           :id="id"
           v-model="form.name"
@@ -286,7 +286,7 @@ async function save() {
         />
       </BaseField>
 
-      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-group" label="Group" :error="groupError || undefined">
+      <BaseField id="terminal-group" v-slot="{ id, describedby, invalid }" label="Group" :error="groupError || undefined">
         <select
           :id="id"
           v-model="form.groupId"
@@ -299,7 +299,7 @@ async function save() {
         </select>
       </BaseField>
 
-      <BaseField v-slot="{ id, describedby, invalid }" id="terminal-cwd" label="Working directory" :error="cwdError || undefined">
+      <BaseField id="terminal-cwd" v-slot="{ id, describedby, invalid }" label="Working directory" :error="cwdError || undefined">
         <span class="cwd-row">
           <input
             :id="id"
@@ -372,7 +372,7 @@ async function save() {
       </label>
 
       <template v-if="form.shellKind === 'custom'">
-        <BaseField v-slot="{ id, describedby, invalid }" id="terminal-shell-path" label="Shell path" :error="shellPathError || undefined">
+        <BaseField id="terminal-shell-path" v-slot="{ id, describedby, invalid }" label="Shell path" :error="shellPathError || undefined">
           <input
             :id="id"
             v-model="form.shellPath"
@@ -389,8 +389,8 @@ async function save() {
       </template>
 
       <BaseField
-        v-slot="{ id, describedby, invalid }"
         id="terminal-env"
+        v-slot="{ id, describedby, invalid }"
         label="Environment variables"
         hint="KEY=VALUE per line, optional"
         :error="envError || undefined"

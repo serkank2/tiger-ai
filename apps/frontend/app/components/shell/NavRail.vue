@@ -9,11 +9,13 @@ defineProps<{ items: NavItem[]; activePath: string }>();
 function isActive(item: NavItem, path: string): boolean {
   return path === item.to || path.startsWith(`${item.to}/`);
 }
+
+const { t } = useT();
 </script>
 
 <template>
   <nav class="rail" aria-label="Primary">
-    <NuxtLink to="/terminals" class="brand" aria-label="Kaplan home">
+    <NuxtLink to="/terminals" class="brand" :aria-label="t('nav.home')">
       <span class="logo">🐅</span>
       <span class="word">Kaplan</span>
     </NuxtLink>

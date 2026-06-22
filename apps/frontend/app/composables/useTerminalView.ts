@@ -57,7 +57,6 @@ export function useTerminalView(
   let ro: ResizeObserver | null = null;
   let mousedown: (() => void) | null = null;
   let mountedHost: HTMLElement | null = null;
-  let mountedId: string | null = null;
   let attachedId: string | null = null; // set only AFTER socket.attach — detach only this (correct ref-count)
   let mountToken = 0;
   let rafId: number | null = null;
@@ -82,7 +81,6 @@ export function useTerminalView(
     ro?.disconnect();
     term?.dispose();
     offOutput = offSnapshot = onData = onResize = offWebglContextLoss = ro = term = fit = webgl = mousedown = mountedHost = null;
-    mountedId = null;
     attachedId = null;
   }
 
@@ -183,7 +181,6 @@ export function useTerminalView(
 
     term = t;
     fit = f;
-    mountedId = id;
     mountedHost = host.value;
     lastCols = 0;
     lastRows = 0;

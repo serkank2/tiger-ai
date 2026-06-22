@@ -6,7 +6,6 @@ import { useConnectionStore } from '~/stores/connection';
 import { useLimitsStore } from '~/stores/limits';
 import { useQueueStore } from '~/stores/queue';
 import {
-  gateLabel,
   isSnapshotStale,
   normalizedPercent,
   percentText,
@@ -31,6 +30,7 @@ const limits = useLimitsStore();
 const queue = useQueueStore();
 const conn = useConnectionStore();
 const socket = useSocket();
+const { t } = useT();
 
 const nowMs = ref(Date.now());
 const panelError = ref<string | null>(null);
@@ -42,17 +42,17 @@ let unsubscribeLimitState: (() => void) | null = null;
 let unsubscribeQueueState: (() => void) | null = null;
 
 onErrorCaptured((error) => {
-  panelError.value = error instanceof Error ? error.message : 'Limit panel failed.';
+  panelError.value = error instanceof Error ? error.message : t('shell.limitTopPanel.fallback');
   return false;
 });
 
 const loading = computed(() => !limits.loaded && !limits.loadError);
 
 const freshnessLabel = computed(() => {
-  if (conn.status === 'disconnected') return 'Disconnected';
-  if (limits.stale) return 'Stale';
-  if (!limits.hasData) return 'No snapshots';
-  return 'Fresh';
+  if (conn.status === 'disconnected') return t('limits.freshness.disconnected');
+  if (limits.stale) return t('limits.freshness.stale');
+  if (!limits.hasData) return t('limits.freshness.noSnapshots');
+  return t('limits.freshness.fresh');
 });
 
 const gate = computed(() => limits.decision);
@@ -200,15 +200,15 @@ function providerStatus(input: {
 }
 
 function statusLabel(status: string): string {
-  if (status === 'healthy') return 'Healthy';
-  if (status === 'amber') return 'Warn';
-  if (status === 'red') return 'High';
-  if (status === 'blocked') return 'Blocked';
-  if (status === 'stale') return 'Stale';
-  if (status === 'error') return 'Error';
-  if (status === 'unsupported') return 'Unsupported';
-  if (status === 'empty') return 'Empty';
-  return 'Unknown';
+  if (status === 'healthy') return t('limits.status.healthy');
+  if (status === 'amber') return t('limits.status.warn');
+  if (status === 'red') return t('limits.status.high');
+  if (status === 'blocked') return t('limits.status.blocked');
+  if (status === 'stale') return t('limits.status.stale');
+  if (status === 'error') return t('limits.status.error');
+  if (status === 'unsupported') return t('limits.status.unsupported');
+  if (status === 'empty') return t('limits.status.empty');
+  return t('limits.status.unknown');
 }
 
 /** Visual severity tier for dot colour / chip tint. */
@@ -237,11 +237,11 @@ function unsupportedMessage(provider: TigerAgentType, latest: LimitSnapshot[], b
   const msg = backendError ?? snapshotError ?? '';
   const lower = msg.toLowerCase();
   if (lower.includes('unsupported') || lower.includes('no usage') || lower.includes('no limit') || lower.includes('agy')) {
-    return msg || 'Antigravity usage limits are unsupported by the CLI.';
+    return msg || t('limits.panel.antigravityUnsupported');
   }
-  if (!latest.length) return 'Antigravity usage limits are unsupported by the CLI.';
+  if (!latest.length) return t('limits.panel.antigravityUnsupported');
   if (latest.every((snapshot) => !snapshot.ok && normalizedPercent(snapshot.percentUsed) === null)) {
-    return msg || 'Antigravity usage limits are unsupported by the CLI.';
+    return msg || t('limits.panel.antigravityUnsupported');
   }
   return null;
 }
@@ -273,19 +273,19 @@ function roundCoord(value: number): string {
 }
 
 function resetLabel(snapshot: LimitSnapshot | null): string {
-  if (!snapshot) return 'Reset unknown';
-  if (snapshot.resetAt) return `Reset ${countdown(snapshot.resetAt, 'unknown')}`;
-  if (snapshot.resetText) return `Reset ${snapshot.resetText}`;
-  return 'Reset unknown';
+  if (!snapshot) return t('limits.panel.resetUnknown');
+  if (snapshot.resetAt) return t('limits.panel.resetLabel', { value: countdown(snapshot.resetAt, t('limits.panel.resetWaiting')) });
+  if (snapshot.resetText) return t('limits.panel.resetLabel', { value: snapshot.resetText });
+  return t('limits.panel.resetUnknown');
 }
 
 function checkedLabel(iso: string | null): string {
-  if (!iso) return 'Not checked';
+  if (!iso) return t('limits.panel.checkedNever');
   const time = Date.parse(iso);
-  if (!Number.isFinite(time)) return 'Not checked';
+  if (!Number.isFinite(time)) return t('limits.panel.checkedNever');
   const diff = Math.max(0, nowMs.value - time);
   const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'Just now';
+  if (minutes < 1) return t('limits.panel.checkedNow');
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
@@ -319,7 +319,7 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
 <template>
   <LimitStatusBadge v-if="panelError" data-testid="limit-panel-fallback" />
 
-  <section v-else class="limit-top-panel" data-testid="limit-top-panel" aria-label="Provider limits top panel">
+  <section v-else class="limit-top-panel" data-testid="limit-top-panel" :aria-label="t('shell.limitTopPanel.providerLimits')">
     <div class="chip-row">
       <template v-if="loading">
         <span
@@ -370,13 +370,13 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
           </template>
 
           <span v-else class="chip-na" :title="chip.message ?? undefined">
-            {{ chip.unsupported ? 'Unsupported' : 'No limit snapshot' }}
+            {{ chip.unsupported ? t('limits.status.unsupported') : t('limits.panel.noLimitSnapshot') }}
             <em v-if="chip.message" class="chip-na-msg">{{ chip.message }}</em>
           </span>
 
           <!-- Detail trend retained for the expanded view / a11y; collapsed out of the compact band. -->
           <span class="chip-sparkline" :data-testid="`sparkline-${chip.provider}`" aria-hidden="true">
-            <svg viewBox="0 0 96 30" role="img" :aria-label="`${chip.label} usage trend`">
+            <svg viewBox="0 0 96 30" role="img" :aria-label="t('shell.limitTopPanel.providerUsageTrend', { provider: chip.label })">
               <polyline v-if="chip.sparklinePoints" :points="chip.sparklinePoints" />
             </svg>
           </span>
@@ -388,14 +388,14 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
           :class="{ 'is-danger': gateBlocked }"
           :data-state="gateState"
           data-testid="limit-gate-card"
-          :title="`Gate — ${gateLabel(gate)}\n${gate?.reason ?? 'No gate decision loaded.'}\n${freshnessLabel}`"
+          :title="`${t('shell.limitTopPanel.gateTitle', { state: gateBlocked ? t('limits.gate.block') : t('limits.gate.allow') })}\n${gate?.reason ?? t('limits.gate.noDecision')}\n${freshnessLabel}`"
           role="status"
-          :aria-label="`Gate ${gateBlocked ? 'blocked' : 'allowed'}. ${gate?.reason ?? ''}`"
+          :aria-label="`${t('shell.limitTopPanel.gateTitle', { state: gateBlocked ? t('limits.gate.block') : t('limits.gate.allow') })}. ${gate?.reason ?? ''}`"
           @click="openDetails"
         >
           <span class="dot" :class="gateBlocked ? 'tier-red' : 'tier-ok'" aria-hidden="true" />
-          <span class="chip-name">Gate</span>
-          <span class="chip-gate-state" :class="{ blocked: gateBlocked }">{{ gateBlocked ? 'Block' : 'Allow' }}</span>
+          <span class="chip-name">{{ t('limits.gate.label') }}</span>
+          <span class="chip-gate-state" :class="{ blocked: gateBlocked }">{{ gateBlocked ? t('limits.gate.block') : t('limits.gate.allow') }}</span>
           <span class="chip-reset gate-reason">{{ gate?.reason ?? freshnessLabel }}</span>
 
           <span v-if="firstBlockedJob" class="visually-hidden" data-testid="limit-blocked-summary">
@@ -403,7 +403,7 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
           </span>
         </button>
 
-        <span v-if="lanes.length" class="lane-strip" data-testid="limit-lanes" aria-label="Queue lanes">
+        <span v-if="lanes.length" class="lane-strip" data-testid="limit-lanes" :aria-label="t('shell.limitTopPanel.queueLanes')">
           <span
             v-for="lane in lanes"
             :key="lane.provider"
@@ -420,16 +420,16 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
             class="icon-button"
             :disabled="limits.refreshing"
             data-testid="limit-refresh"
-            :title="limits.refreshing ? 'Refreshing' : 'Refresh limits'"
-            aria-label="Refresh limits"
+            :title="limits.refreshing ? t('limits.panel.refreshing') : t('shell.limitTopPanel.refresh')"
+            :aria-label="t('shell.limitTopPanel.refresh')"
             @click="refresh"
           >{{ limits.refreshing ? '…' : '↻' }}</button>
           <button
             type="button"
             class="icon-button"
             data-testid="limit-open-details"
-            title="Open limits details"
-            aria-label="Open limits details"
+            :title="t('shell.limitTopPanel.openDetails')"
+            :aria-label="t('shell.limitTopPanel.openDetails')"
             @click="openDetails"
           >⋯</button>
         </span>

@@ -157,7 +157,7 @@ function sendKey(ch: string) {
         <option :value="null" disabled>{{ t('terminals.chooseGroup') }}</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <BaseButton class="iconbtn" variant="ghost" iconOnly :ariaLabel="t('terminals.manageGroups')" :title="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</BaseButton>
+      <BaseButton class="iconbtn" variant="ghost" icon-only :aria-label="t('terminals.manageGroups')" :title="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</BaseButton>
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -176,7 +176,7 @@ function sendKey(ch: string) {
     <!-- Screen-reader-only broadcast outcome announcer (visual feedback is via toasts/input clear). -->
     <p class="sr-only" role="status" aria-live="polite">{{ sendStatus }}</p>
 
-    <BaseButton class="iconbtn" variant="ghost" iconOnly :ariaLabel="t('terminals.openComposer')" :title="t('terminals.openComposer')" @click="emit('openComposer')">⤢</BaseButton>
+    <BaseButton class="iconbtn" variant="ghost" icon-only :aria-label="t('terminals.openComposer')" :title="t('terminals.openComposer')" @click="emit('openComposer')">⤢</BaseButton>
 
     <BaseButton class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{ t('nav.prompts') }}</BaseButton>
 
