@@ -2668,16 +2668,26 @@ export class TeamOrchestrator extends EventEmitter {
   /**
    * Create a per-task worktree for a claimed task and return the cwd the turn should run in.
    * Returns the shared workspace (unchanged behavior) when the feature is off, there is no
-   * claimed task, the workspace is not a git repo, or worktree creation fails. Never throws.
+   * claimed task, the workspace is not a git repo, the role cannot write code, or worktree
+   * creation fails. Never throws.
    */
   private async maybeCreateTaskWorktree(turn: TeamTurnRecord, task: AgentTask | null): Promise<string> {
     const state = this.requireState();
     const isRepo = await this.worktreeIsolationActive();
-    if (!task || !isRepo) return decideTeamTurnCwd({ workspace: state.workspace, enabled: this.worktreePerTask, isRepo, worktreePath: null });
+    // Only CODE-WRITING roles are isolated. A read-only role (Reviewer/Analyst/Tester/Architect)
+    // must run in the SHARED workspace so it inspects the real uncommitted diff — a fresh worktree
+    // branches from a committed ref and would show an EMPTY diff, making reviewers falsely conclude
+    // "no work was done" and forcing pointless re-planning.
+    if (!task || !isRepo || !this.roleCanWrite(turn.roleId)) {
+      return decideTeamTurnCwd({ workspace: state.workspace, enabled: this.worktreePerTask, isRepo, worktreePath: null });
+    }
     try {
       const worktree = await createWorktree({
         repoDir: state.workspace,
-        taskId: `${state.runId}-${task.id}`,
+        // Include the TURN id so the branch/path is unique per turn. The same board task running
+        // across multiple turns previously reused `runId-taskId`, whose branch is not deleted on
+        // merge, so the second `git worktree add` collided and failed ("could not isolate …").
+        taskId: `${state.runId}-${task.id}-${turn.id}`,
       });
       this.turnWorktrees.set(turn.id, worktree);
       state.taskWorktrees ??= [];
@@ -2913,6 +2923,10 @@ export class TeamOrchestrator extends EventEmitter {
     // Ids of the prose-inferred verification records created by THIS turn, so a structured
     // self-report (below) can supersede exactly them without disturbing earlier records.
     const inferredVerificationIds: string[] = [];
+    // A verification only stales sign-offs when it did NOT pass: a passing check confirms the work
+    // and must not reset everyone's sign-off clock (that was a key driver of the renewal loop). We
+    // stale ONCE at the end if any verification this turn regressed.
+    let verificationRegressed = false;
     for (const draft of messages) {
       const message = await this.appendMessage({ ...draft, turnId: draft.turnId ?? turn.id });
       appended.push(message);
@@ -2937,10 +2951,12 @@ export class TeamOrchestrator extends EventEmitter {
       if (authorityAllowed && message.kind === 'verification') {
         const id = nanoid();
         inferredVerificationIds.push(id);
+        const inferredStatus = inferVerificationOutcome(message.body);
+        if (inferredStatus !== 'passed') verificationRegressed = true;
         state.verifications.push({
           id,
           roleId: role.id,
-          status: inferVerificationOutcome(message.body),
+          status: inferredStatus,
           summary: message.body.slice(0, 280),
           createdAt: message.createdAt,
           completedAt: message.createdAt,
@@ -2959,19 +2975,21 @@ export class TeamOrchestrator extends EventEmitter {
       }
       for (const verification of structuredVerifications) {
         const completedAt = nowIso();
+        const status = verification.outcome === 'passed' ? 'passed' : verification.outcome === 'failed' ? 'failed' : 'skipped';
         state.verifications.push({
           id: nanoid(),
           roleId: verification.roleId ?? role.id,
-          status: verification.outcome === 'passed' ? 'passed' : verification.outcome === 'failed' ? 'failed' : 'skipped',
+          status,
           command: verification.command,
           exitCode: verification.exitCode,
           summary: verification.summary,
           createdAt: completedAt,
           completedAt,
         });
-        state.materialChangeAt = completedAt;
       }
-      this.staleSignoffs('A verification self-report changed the run state.');
+      // Structured directives are authoritative and supersede this turn's inferred records, so the
+      // regression signal is recomputed from them: only a non-passing structured check reopens work.
+      verificationRegressed = structuredVerifications.some((v) => v.outcome !== 'passed');
     }
     if (authorityAllowed && result.verification) {
       const verification: TeamVerificationRecord = {
@@ -2985,8 +3003,14 @@ export class TeamOrchestrator extends EventEmitter {
         completedAt: result.verification.completedAt,
       };
       state.verifications.push(verification);
-      state.materialChangeAt = verification.completedAt ?? verification.createdAt;
-      this.staleSignoffs('Verification changed the run state.');
+      if (verification.status !== 'passed') verificationRegressed = true;
+    }
+    // A failed/inconclusive verification means a previously-"done" role may no longer be done, so it
+    // reopens the gate; a clean pass does not. This replaces the old unconditional staling that made
+    // every successful check reset the sign-off clock.
+    if (verificationRegressed) {
+      state.materialChangeAt = nowIso();
+      this.staleSignoffs('A failed or inconclusive verification reopened the run.');
     }
     if (authorityAllowed && result.materialChange) {
       state.materialChangeAt = nowIso();
@@ -3284,6 +3308,9 @@ export class TeamOrchestrator extends EventEmitter {
     excludeRoleId?: string,
     policy: { readOnlyLimit?: number } = {},
   ): Promise<{ roleId: string; task: AgentTask }[]> {
+    // Refresh whether worktree isolation is actually engaged before reading effectiveMaxWrite(),
+    // so multi-writer concurrency is correct even when this is called outside the run loop.
+    this.worktreeActiveCache = await this.worktreeIsolationActive();
     await this.materializeKindQueuedTasks(excludeRoleId);
     return this.claimAgentTaskCandidates(excludeRoleId, {
       maxWrite: this.effectiveMaxWrite(),
@@ -4334,8 +4361,24 @@ function teamStatusToExecutionStatus(status: TeamRunStatus): ExecutionRunStatus 
   return 'failed';
 }
 
+/**
+ * Whether a message represents a REAL change to the work that should invalidate (stale) the
+ * sign-offs collected so far. Deliberately NARROW: only a new `finding` (a real problem surfaced)
+ * or a `steering` directive (the user changed scope) means a previously-"done" role might no longer
+ * be done.
+ *
+ * Excluded on purpose:
+ *  - `task`     — the Lead delegating/assigning work is coordination, not a product change. Pending
+ *                 work is already gated separately by the task board, so letting a `task` message
+ *                 stale sign-offs only created a self-defeating loop: the Lead's own renewal-task
+ *                 assignment invalidated the very sign-offs it was collecting.
+ *  - `decision` — the Lead's planning/decisions (e.g. "hold ambition mode") are bookkeeping.
+ *  - `verification` — staled based on OUTCOME instead (a passed check must not reset everyone's
+ *                 sign-off clock; only a failed/inconclusive one reopens the work). Handled in
+ *                 applyTurnResult's verification blocks.
+ */
 function isMaterialMessage(kind: TeamMessageKind): boolean {
-  return kind === 'decision' || kind === 'task' || kind === 'finding' || kind === 'verification' || kind === 'steering';
+  return kind === 'finding' || kind === 'steering';
 }
 
 function parseJson<T>(body: string): T | null {

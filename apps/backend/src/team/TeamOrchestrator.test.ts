@@ -26,6 +26,20 @@ import {
   type TeamTurnRunner,
 } from './TeamOrchestrator.js';
 import { TaskBoard } from './task-board.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+/** Minimal git repo so worktree-per-task isolation (which requires a git workspace) actually engages. */
+async function initGitRepo(dir: string): Promise<void> {
+  await execFileAsync('git', ['init', '-q'], { cwd: dir });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+  await fs.writeFile(path.join(dir, 'README.md'), '# test\n', 'utf8');
+  await execFileAsync('git', ['add', '-A'], { cwd: dir });
+  await execFileAsync('git', ['commit', '-q', '-m', 'init'], { cwd: dir });
+}
 
 const TASKS_MD = `# Final Tasks
 
@@ -1124,6 +1138,8 @@ test('company mode claims one write task plus read-only work, while legacy still
 test('company mode may claim two write tasks when worktree-per-task isolation is enabled', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-company-write-cap-'));
   try {
+    // Worktree isolation only engages on a real git repo, so multi-writer concurrency requires one.
+    await initGitRepo(workspace);
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       maxConcurrentWrite: 2,
