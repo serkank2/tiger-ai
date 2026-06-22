@@ -14,8 +14,10 @@ import BaseButton from '~/components/ui/BaseButton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 import Skeleton from '~/components/ui/Skeleton.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
+import { useT } from '~/composables/useT';
 
 const emit = defineEmits<{ back: []; openTemplates: [] }>();
+const { t } = useT();
 const tiger = useTigerStore();
 const conn = useConnectionStore();
 
@@ -256,7 +258,7 @@ onMounted(() => {
       <div class="field">
         <span>Workspace folder</span>
         <div class="wsrow">
-          <input v-model="workspacePath" placeholder="Choose or type an absolute folder path…" spellcheck="false" />
+          <input v-model="workspacePath" :placeholder="t('tiger.setup.workspacePlaceholder')" spellcheck="false" />
           <BaseButton variant="secondary" @click="showPicker = true">Browse…</BaseButton>
         </div>
         <small>A <code>.tiger/</code> directory will be created inside this folder.</small>
@@ -267,7 +269,7 @@ onMounted(() => {
           v-model="projectPrompt"
           rows="10"
           :maxlength="PROJECT_PROMPT_MAX_CHARS"
-          placeholder="Describe the project you want the AI team to build…"
+          :placeholder="t('tiger.setup.promptPlaceholder')"
         />
         <small>
           Stored verbatim in <code>.tiger/project-prompt.md</code> and used as context in every stage.

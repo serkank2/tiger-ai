@@ -833,6 +833,10 @@ export default {
         sandbox: 'Sandbox (terminal restricted)',
       },
     },
+    setup: {
+      workspacePlaceholder: 'Choose or type an absolute folder path…',
+      promptPlaceholder: 'Describe the project you want the AI team to build…',
+    },
   },
   prompts: {
     view: {
@@ -967,6 +971,9 @@ export default {
       selectedStatus: '{n} terminal(s) selected',
       protectedStatus: '{name} is protected — excluded',
       terminalFallback: 'Terminal',
+    },
+    history: {
+      searchPlaceholder: 'Search text, project, generation id',
     },
   },
   limits: {

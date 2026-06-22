@@ -827,6 +827,10 @@ const tr: MessageSchema = {
         sandbox: 'Sandbox (terminal kısıtlı)',
       },
     },
+    setup: {
+      workspacePlaceholder: 'Mutlak bir klasör yolu seçin veya yazın…',
+      promptPlaceholder: 'AI ekibinin oluşturmasını istediğiniz projeyi açıklayın…',
+    },
   },
   prompts: {
     view: {
@@ -961,6 +965,9 @@ const tr: MessageSchema = {
       selectedStatus: '{n} terminal seçildi',
       protectedStatus: '{name} korumalı — hariç tutuldu',
       terminalFallback: 'Terminal',
+    },
+    history: {
+      searchPlaceholder: 'Metin, proje, üretim kimliği ara',
     },
   },
   limits: {
