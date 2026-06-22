@@ -13,6 +13,7 @@ export const useTigerStore = defineStore('tiger', () => {
   const loading = ref(false);
   const loadError = ref<string | null>(null);
   const projectsLoading = ref(false);
+  const projectsLoadError = ref<string | null>(null);
 
   const initialized = computed(() => state.value?.initialized ?? false);
   const busy = computed(() => state.value?.busy ?? false);
@@ -41,10 +42,12 @@ export const useTigerStore = defineStore('tiger', () => {
 
   async function loadProjects() {
     projectsLoading.value = true;
+    projectsLoadError.value = null;
     try {
       projects.value = await api.listTigerProjects();
     } catch (e) {
-      notices.push(`Projects: ${errText(e)}`, 'error');
+      projectsLoadError.value = errText(e);
+      notices.push(`Projects: ${projectsLoadError.value}`, 'error');
     } finally {
       projectsLoading.value = false;
     }
@@ -170,6 +173,7 @@ export const useTigerStore = defineStore('tiger', () => {
     loading,
     loadError,
     projectsLoading,
+    projectsLoadError,
     initialized,
     busy,
     workspace,

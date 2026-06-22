@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { TigerStageId, TigerStageState } from '~/types';
 import { TIGER_STAGES } from '~/lib/tigerStages';
+import { useT } from '~/composables/useT';
+
+const { t } = useT();
 
 defineProps<{ stages: Record<TigerStageId, TigerStageState> | null }>();
 const selected = defineModel<TigerStageId>({ required: true });
@@ -23,7 +26,7 @@ function onKeydown(e: KeyboardEvent, index: number) {
 </script>
 
 <template>
-  <nav class="stepper" role="tablist" aria-label="Tiger workflow stages">
+  <nav class="stepper" role="tablist" :aria-label="t('tiger.stageStepper.ariaLabel')">
     <button
       v-for="(s, i) in TIGER_STAGES"
       :key="s.id"
@@ -38,8 +41,8 @@ function onKeydown(e: KeyboardEvent, index: number) {
       @keydown="onKeydown($event, i)"
     >
       <span class="num">{{ s.number }}</span>
-      <span class="title">{{ s.title }}</span>
-      <span v-if="s.optional" class="opt" title="Optional stage">opt</span>
+      <span class="title">{{ t('tiger.stages.' + s.id + '.title') }}</span>
+      <span v-if="s.optional" class="opt" :title="t('tiger.stageStepper.optionalTitle')">{{ t('tiger.stageStepper.opt') }}</span>
       <span class="dot" aria-hidden="true" />
     </button>
   </nav>

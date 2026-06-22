@@ -2,6 +2,10 @@
 import BaseButton from '~/components/ui/BaseButton.vue';
 import Spinner from '~/components/ui/Spinner.vue';
 import Skeleton from '~/components/ui/Skeleton.vue';
+import EmptyState from '~/components/ui/EmptyState.vue';
+import { useT } from '~/composables/useT';
+
+const { t } = useT();
 
 const emit = defineEmits<{ new: [] }>();
 const tiger = useTigerStore();
@@ -32,9 +36,9 @@ async function open(path: string) {
 
 async function forget(p: { path: string; name: string }) {
   const ok = await dialog.confirm({
-    title: 'Forget project',
-    message: `Forget “${p.name}”? This removes it from the project list but does not delete any files on disk.`,
-    confirmText: 'Forget',
+    title: t('tiger.projectLauncher.forgetDialogTitle'),
+    message: t('tiger.projectLauncher.forgetDialogMessage', { name: p.name }),
+    confirmText: t('tiger.projectLauncher.forgetDialogConfirm'),
     danger: true,
   });
   if (!ok) return;
@@ -66,31 +70,51 @@ onMounted(() => {
 <template>
   <section class="launcher">
     <div class="lhead">
-      <h2>Projects</h2>
+      <h2>{{ t('tiger.projectLauncher.title') }}</h2>
       <span class="spacer" />
       <BaseButton
         variant="secondary"
         icon-only
-        aria-label="Refresh projects"
-        title="Refresh"
+        :aria-label="t('tiger.projectLauncher.refreshProjects')"
+        :title="t('tiger.projectLauncher.refresh')"
         :loading="refreshing"
         @click="refresh"
       >
         ⟳
       </BaseButton>
     </div>
-    <p class="lead">Continue a previous project, or create a new one.</p>
+    <p class="lead">{{ t('tiger.projectLauncher.lead') }}</p>
 
     <div class="grid">
       <button class="card new" @click="emit('new')">
         <span class="plus">＋</span>
-        <span class="newlabel">New project</span>
-        <span class="newhint">Pick a folder &amp; write a prompt</span>
+        <span class="newlabel">{{ t('tiger.projectLauncher.newProject') }}</span>
+        <span class="newhint">{{ t('tiger.projectLauncher.newProjectHint') }}</span>
       </button>
 
       <div v-if="tiger.projectsLoading && !tiger.projects.length" class="card skeleton-card">
-        <Spinner :size="14" label="Loading projects" />
+        <Spinner :size="14" :label="t('tiger.projectLauncher.loading')" />
         <Skeleton :lines="4" />
+      </div>
+
+      <div v-else-if="tiger.projectsLoadError && !tiger.projects.length" class="card skeleton-card">
+        <EmptyState
+          tone="danger"
+          icon="⚠️"
+          :title="t('tiger.projectLauncher.errorStateTitle')"
+          :description="tiger.projectsLoadError"
+        >
+          <template #actions>
+            <BaseButton variant="secondary" @click="refresh">{{ t('tiger.projectLauncher.refresh') }}</BaseButton>
+          </template>
+        </EmptyState>
+      </div>
+
+      <div v-else-if="!tiger.projectsLoading && !tiger.projects.length" class="card skeleton-card">
+        <EmptyState
+          :title="t('tiger.projectLauncher.emptyStateTitle')"
+          :description="t('tiger.projectLauncher.emptyStateDesc')"
+        />
       </div>
 
       <div v-for="p in tiger.projects" :key="p.path" class="card" :class="{ missing: !p.exists }">
@@ -101,18 +125,18 @@ onMounted(() => {
             variant="ghost"
             size="sm"
             icon-only
-            title="Forget (does not delete files)"
-            :aria-label="`Forget project ${p.name} (does not delete files)`"
+            :title="t('tiger.projectLauncher.forgetTitle')"
+            :aria-label="t('tiger.projectLauncher.forgetAriaLabel', { name: p.name })"
             :loading="forgetting === p.path"
             @click="forget(p)"
           >
             ✕
           </BaseButton>
         </div>
-        <p class="cprompt">{{ p.promptPreview || (p.exists ? '(no prompt yet)' : 'Folder is missing') }}</p>
+        <p class="cprompt">{{ p.promptPreview || (p.exists ? t('tiger.projectLauncher.noPromptYet') : t('tiger.projectLauncher.folderMissing')) }}</p>
         <div class="cprog">
           <div class="ptrack"><div class="pfill" :style="{ width: pct(p) + '%' }" /></div>
-          <span class="pn">{{ p.completedStages }}/{{ p.totalStages }} stages</span>
+          <span class="pn">{{ t('tiger.projectLauncher.stagesProgress', { completed: p.completedStages, total: p.totalStages }) }}</span>
         </div>
         <div class="cfoot">
           <span class="cdate">{{ fmtDate(p.updatedAt) }}</span>
@@ -125,7 +149,7 @@ onMounted(() => {
             :loading="opening === p.path"
             @click="open(p.path)"
           >
-            {{ p.completedStages > 0 ? 'Continue →' : 'Open →' }}
+            {{ p.completedStages > 0 ? t('tiger.projectLauncher.continueBtn') : t('tiger.projectLauncher.openBtn') }}
           </BaseButton>
         </div>
       </div>

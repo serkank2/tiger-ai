@@ -214,13 +214,13 @@ onMounted(() => {
     <header class="thead">
       <div class="brand">
         <span class="logo">🐅</span>
-        <b>Tiger</b>
+        <b>{{ t('tiger.view.tiger') }}</b>
         <span class="sub">AI Software Team Orchestrator</span>
         <span class="conn" :class="conn.status" :title="`backend ${conn.status}`" />
       </div>
       <span class="spacer" />
       <code v-if="tiger.workspace" class="ws" :title="tiger.state?.tigerRoot ?? ''">{{ tiger.state?.tigerRoot }}</code>
-      <BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">Templates</BaseButton>
+      <BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">{{ t('tiger.view.templates') }}</BaseButton>
       <BaseButton v-if="tiger.initialized" variant="secondary" size="sm" @click="backToProjects">← Projects</BaseButton>
       <BaseButton variant="secondary" size="sm" @click="emit('back')">← Terminals</BaseButton>
     </header>
@@ -228,12 +228,12 @@ onMounted(() => {
     <section v-if="!tiger.loaded" class="loading-shell">
       <EmptyState
         v-if="tiger.loadError"
-        title="Tiger is unavailable"
+        :title="t('tiger.view.unavailableTitle')"
         :description="tiger.loadError"
         tone="danger"
       >
         <template #actions>
-          <BaseButton variant="secondary" @click="tiger.load()">Retry</BaseButton>
+          <BaseButton variant="secondary" @click="tiger.load()">{{ t('tiger.view.retry') }}</BaseButton>
         </template>
       </EmptyState>
       <div v-else class="loading-card">
@@ -249,14 +249,14 @@ onMounted(() => {
     <section v-else-if="!tiger.initialized" class="setup">
       <div class="setup-head">
         <BaseButton variant="secondary" size="sm" @click="mode = 'launcher'">← Projects</BaseButton>
-        <h2>New project</h2>
+        <h2>{{ t('tiger.view.newProject') }}</h2>
       </div>
       <p class="lead">
         Pick a workspace folder and provide your project prompt. Tiger creates a <code>.tiger/</code> workspace
         there (system prompts, config, logs) and drives Claude, Codex &amp; Antigravity CLI agents through the full workflow.
       </p>
       <div class="field">
-        <span>Workspace folder</span>
+        <span>{{ t('tiger.view.workspaceFolder') }}</span>
         <div class="wsrow">
           <input v-model="workspacePath" :placeholder="t('tiger.setup.workspacePlaceholder')" spellcheck="false" />
           <BaseButton variant="secondary" @click="showPicker = true">Browse…</BaseButton>
@@ -264,7 +264,7 @@ onMounted(() => {
         <small>A <code>.tiger/</code> directory will be created inside this folder.</small>
       </div>
       <div class="field">
-        <span>Project prompt</span>
+        <span>{{ t('tiger.view.projectPrompt') }}</span>
         <textarea
           v-model="projectPrompt"
           rows="10"
@@ -316,7 +316,7 @@ onMounted(() => {
             class="run-all"
             variant="secondary"
             :disabled="tiger.busy"
-            title="Configure every stage, then run them all automatically"
+            :title="t('tiger.view.runAllTitle')"
             @click="showRunAll = true"
           >
             ▶▶ Run all…
@@ -350,7 +350,7 @@ onMounted(() => {
         />
 
         <div v-if="selectedStage === 'requesting-code-review'" class="route">
-          <span class="rl">Correction routing</span>
+          <span class="rl">{{ t('tiger.view.correctionRouting') }}</span>
           <span class="cycles">cycles {{ tiger.state?.correctionCycles ?? 0 }}/{{ tiger.state?.maxCorrectionCycles ?? 0 }}</span>
           <span class="spacer" />
           <BaseButton size="sm" variant="secondary" :disabled="tiger.busy || atCycleLimit" :loading="routing" @click="route('executing-plan')">↩ Back to Execution</BaseButton>
@@ -368,12 +368,12 @@ onMounted(() => {
       </p>
 
       <details v-if="selectedStage === 'executing-plan' || selectedStage === 'task-review' || (tiger.state?.tasks?.total ?? 0) > 0" class="panel" open>
-        <summary>Tasks</summary>
-        <TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" />
+        <summary>{{ t('tiger.view.tasks') }}</summary>
+        <TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" :error="tiger.loadError" @retry="tiger.load()" />
       </details>
 
       <details class="panel">
-        <summary>Run log</summary>
+        <summary>{{ t('tiger.view.runLog') }}</summary>
         <RunLogView />
       </details>
     </section>
@@ -386,13 +386,13 @@ onMounted(() => {
     />
     <RunAllModal v-if="showRunAll" @close="showRunAll = false" @open-templates="emit('openTemplates')" />
 
-    <BaseModal v-if="pendingRun" title="Run out of order?" size="sm" @close="cancelOutOfOrder">
+    <BaseModal v-if="pendingRun" :title="t('tiger.view.outOfOrderTitle')" size="sm" @close="cancelOutOfOrder">
       <p class="confirm-text">
-        Stage “{{ prevIncomplete }}” is not completed yet. Run “{{ stageMeta.title }}” anyway?
+        {{ t('tiger.runAll.skippedBefore') }}
       </p>
       <template #footer>
-        <BaseButton variant="ghost" @click="cancelOutOfOrder">Cancel</BaseButton>
-        <BaseButton variant="primary" @click="confirmOutOfOrder">Run anyway</BaseButton>
+        <BaseButton variant="ghost" @click="cancelOutOfOrder">{{ t('tiger.view.cancel') }}</BaseButton>
+        <BaseButton variant="primary" @click="confirmOutOfOrder">{{ t('tiger.view.runAnyway') }}</BaseButton>
       </template>
     </BaseModal>
   </div>

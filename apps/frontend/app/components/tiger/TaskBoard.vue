@@ -3,57 +3,75 @@ import type { TigerTaskSummary } from '~/types';
 import Spinner from '~/components/ui/Spinner.vue';
 import Skeleton from '~/components/ui/Skeleton.vue';
 import EmptyState from '~/components/ui/EmptyState.vue';
+import BaseButton from '~/components/ui/BaseButton.vue';
+import { useT } from '~/composables/useT';
 
-defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean }>();
+defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean; error?: string | null }>();
+const emit = defineEmits<{ retry: [] }>();
+
+const { t } = useT();
 
 const EXEC = [
-  { k: 'not_started', label: 'not started' },
-  { k: 'in_progress', label: 'in progress' },
-  { k: 'done', label: 'done' },
-  { k: 'blocked', label: 'blocked' },
+  { k: 'not_started' },
+  { k: 'in_progress' },
+  { k: 'done' },
+  { k: 'blocked' },
 ] as const;
 const REVIEW = [
-  { k: 'pending', label: 'pending' },
-  { k: 'reviewing', label: 'reviewing' },
-  { k: 'approved', label: 'approved' },
-  { k: 'needs_fix', label: 'needs fix' },
-  { k: 'fixed', label: 'fixed' },
+  { k: 'pending' },
+  { k: 'reviewing' },
+  { k: 'approved' },
+  { k: 'needs_fix' },
+  { k: 'fixed' },
 ] as const;
 </script>
 
 <template>
   <div v-if="loading" class="loading-board">
-    <Spinner :size="14" label="Loading tasks" />
+    <Spinner :size="14" :label="t('tiger.taskBoard.loading')" />
     <Skeleton :lines="5" />
+  </div>
+
+  <div v-else-if="error" class="board">
+    <EmptyState
+      tone="danger"
+      icon="⚠️"
+      :title="t('tiger.taskBoard.errorStateTitle')"
+      :description="error"
+    >
+      <template #actions>
+        <BaseButton variant="secondary" @click="emit('retry')">{{ t('tiger.taskBoard.retry') }}</BaseButton>
+      </template>
+    </EmptyState>
   </div>
 
   <div v-else-if="tasks && tasks.total" class="board">
     <div class="summary">
       <div class="group">
-        <span class="gl">Execution</span>
+        <span class="gl">{{ t('tiger.taskBoard.execution') }}</span>
         <span v-for="e in EXEC" :key="e.k" class="chip" :class="`ex-${e.k}`">
-          {{ e.label }}<b>{{ tasks.byExecution[e.k] }}</b>
+          {{ t('tiger.taskBoard.executionStatus.' + e.k) }}<b>{{ tasks.byExecution[e.k] }}</b>
         </span>
       </div>
       <div class="group">
-        <span class="gl">Review</span>
+        <span class="gl">{{ t('tiger.taskBoard.review') }}</span>
         <span v-for="r in REVIEW" :key="r.k" class="chip" :class="`rv-${r.k}`">
-          {{ r.label }}<b>{{ tasks.byReview[r.k] }}</b>
+          {{ t('tiger.taskBoard.reviewStatus.' + r.k) }}<b>{{ tasks.byReview[r.k] }}</b>
         </span>
       </div>
     </div>
     <div class="rows">
-      <div v-for="t in tasks.items" :key="t.id" class="row">
-        <code class="id">{{ t.id }}</code>
-        <span class="title">{{ t.title }}</span>
+      <div v-for="item in tasks.items" :key="item.id" class="row">
+        <code class="id">{{ item.id }}</code>
+        <span class="title">{{ item.title }}</span>
         <span class="spacer" />
-        <span v-if="t.assignedAgent && t.assignedAgent !== '-'" class="agent">{{ t.assignedAgent }}</span>
-        <span class="badge" :class="`ex-${t.executionStatus}`">{{ t.executionStatus.replace('_', ' ') }}</span>
-        <span class="badge" :class="`rv-${t.reviewStatus}`">{{ t.reviewStatus.replace('_', ' ') }}</span>
+        <span v-if="item.assignedAgent && item.assignedAgent !== '-'" class="agent">{{ item.assignedAgent }}</span>
+        <span class="badge" :class="`ex-${item.executionStatus}`">{{ t('tiger.taskBoard.executionStatus.' + item.executionStatus) }}</span>
+        <span class="badge" :class="`rv-${item.reviewStatus}`">{{ t('tiger.taskBoard.reviewStatus.' + item.reviewStatus) }}</span>
       </div>
     </div>
   </div>
-  <EmptyState v-else title="No tasks yet." description="Run the Merge Tasks stage to produce the authoritative task list." />
+  <EmptyState v-else :title="t('tiger.taskBoard.emptyStateTitle')" :description="t('tiger.taskBoard.emptyStateDesc')" />
 </template>
 
 <style scoped>
