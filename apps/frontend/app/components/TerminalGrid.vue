@@ -38,45 +38,112 @@ const tiles = computed(() => terminals.items);
 
 <style scoped>
 .grid-pane {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-term);
+  background:
+    radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
+    radial-gradient(circle at 88% 14%, color-mix(in srgb, var(--blue) 10%, transparent), transparent 30%),
+    var(--bg-term);
+}
+.grid-pane::before,
+.grid-pane::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.grid-pane::before {
+  z-index: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--border) 34%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 30%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.28;
+}
+.grid-pane::after {
+  z-index: 0;
+  background:
+    linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg) 70%, transparent)),
+    radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--green) 7%, transparent), transparent 42%);
+  opacity: 0.72;
 }
 .grid-bar {
-  padding: 7px 14px;
+  position: relative;
+  z-index: 1;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 7px 14px 7px 30px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elev);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 46%),
+    color-mix(in srgb, var(--bg-elev) 92%, var(--bg) 8%);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+.grid-bar::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 14%, transparent);
+  transform: translateY(-50%);
 }
 .hint {
   font-size: 12px;
   color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 .grid {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-height: 0;
   display: grid;
-  gap: 8px;
+  gap: 10px;
   /* responsive auto-tiling with a usable preferred tile width */
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   grid-auto-rows: minmax(200px, 1fr);
-  padding: 8px;
+  padding: 10px;
   overflow: auto;
 }
 .loading-grid {
   align-items: stretch;
 }
 .loading-tile {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-elev);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%),
+    var(--bg-elev);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent),
+    0 8px 22px color-mix(in srgb, var(--bg) 34%, transparent);
+}
+.loading-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.65;
 }
 .empty {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: grid;
   place-items: center;

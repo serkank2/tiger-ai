@@ -140,7 +140,7 @@ async function reset() {
 </script>
 
 <template>
-  <div class="team">
+  <div class="team" :class="status ? `run-${status}` : 'run-empty'">
     <header class="team-header">
       <div class="title-group">
         <BaseButton variant="ghost" size="sm" aria-label="Back to terminals" icon-only @click="emit('back')">‹</BaseButton>
@@ -150,7 +150,10 @@ async function reset() {
 
       <div v-if="state" class="run-meta">
         <span class="run-name" :title="state.goal">{{ state.name }}</span>
-        <span class="status-chip" :class="`st-${status}`">{{ statusLabel(status) }}</span>
+        <span class="status-chip" :class="`st-${status}`">
+          <span class="chip-dot" aria-hidden="true" />
+          {{ statusLabel(status) }}
+        </span>
         <span
           v-if="roleTurns != null"
           class="progress-meter"
@@ -290,38 +293,86 @@ async function reset() {
 
 <style scoped>
 .team {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34%),
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 28%),
+    var(--bg);
+}
+.team::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--border) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 22%, transparent) 1px, transparent 1px);
+  background-size: 36px 36px;
+  opacity: 0.12;
 }
 .team-header {
+  position: relative;
+  z-index: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
   min-height: var(--bar-h);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
+    color-mix(in srgb, var(--bg-elev) 92%, var(--bg) 8%);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+.team-header::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 48%, transparent),
+    color-mix(in srgb, var(--green) 30%, transparent),
+    transparent 62%
+  );
+  pointer-events: none;
 }
 .title-group {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex: none;
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-weight: 700;
   font-size: var(--text-md);
+  white-space: nowrap;
 }
 .conn {
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);
   background: var(--slate);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--slate) 12%, transparent);
+  transition:
+    background-color var(--dur-base) var(--ease-standard),
+    opacity var(--dur-base) var(--ease-standard);
 }
 .conn.ok {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(108, 197, 108, 0.18);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent),
+    0 0 12px color-mix(in srgb, var(--green) 58%, transparent);
 }
 .run-meta {
   display: flex;
@@ -329,41 +380,69 @@ async function reset() {
   gap: var(--space-2);
   margin-left: var(--space-2);
   min-width: 0;
+  flex: 1 1 26rem;
 }
 .run-name {
   font-size: var(--text-sm);
   color: var(--text-dim);
   max-width: 42ch;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--text-xs);
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
+  background: color-mix(in srgb, var(--bg-elev-2) 72%, transparent);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
-.st-running { color: var(--accent); border-color: var(--accent); }
-.st-completed { color: var(--green); border-color: var(--green); }
-.st-failed { color: var(--red); border-color: var(--red); }
-.st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
-.st-paused, .st-stopped { color: var(--slate); border-color: var(--slate); }
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+.st-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 64%, var(--border)); }
+.st-completed { color: var(--green); border-color: color-mix(in srgb, var(--green) 64%, var(--border)); }
+.st-failed { color: var(--red); border-color: color-mix(in srgb, var(--red) 64%, var(--border)); }
+.st-blocked, .st-interrupted { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 64%, var(--border)); }
+.st-paused, .st-stopped { color: var(--slate); border-color: color-mix(in srgb, var(--slate) 64%, var(--border)); }
+.st-running .chip-dot,
+.st-blocked .chip-dot {
+  animation: chip-breathe 1.8s var(--ease-in-out) infinite;
+}
 .progress-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elev-2) 48%, transparent);
 }
 .controls {
   display: flex;
   gap: var(--space-2);
   margin-left: auto;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
 }
 .ro-tag {
   align-self: center;
@@ -377,6 +456,8 @@ async function reset() {
   margin-left: auto;
 }
 .placeholder {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -386,10 +467,13 @@ async function reset() {
   color: var(--text-dim);
 }
 .workspace {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: minmax(260px, 320px) 1fr;
   min-height: 0;
   flex: 1;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 24%, transparent), transparent 180px);
 }
 .rail {
   display: flex;
@@ -397,6 +481,10 @@ async function reset() {
   gap: var(--space-3);
   padding: var(--space-3);
   border-right: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 82%, transparent), color-mix(in srgb, var(--bg) 72%, transparent)),
+    var(--bg);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--text) 3%, transparent);
   overflow-y: auto;
 }
 .rail-head {
@@ -450,8 +538,43 @@ async function reset() {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  background:
+    radial-gradient(circle at 70% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 30%),
+    color-mix(in srgb, var(--bg) 94%, var(--bg-term) 6%);
 }
 @media (max-width: 720px) {
+  .team-header {
+    align-items: stretch;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+  .title-group,
+  .run-meta,
+  .controls {
+    width: 100%;
+  }
+  .run-meta {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+  .run-name {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+  .controls {
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+  .controls :deep(.btn) {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .controls :deep(.btn-label) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .workspace {
     grid-template-columns: 1fr;
   }
@@ -459,6 +582,22 @@ async function reset() {
     min-height: 0;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 3%, transparent);
+  }
+}
+@keyframes chip-breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-running .chip-dot,
+  .st-blocked .chip-dot {
+    animation: none;
   }
 }
 

@@ -45,13 +45,14 @@ const roleTemplate: RoleTemplate = {
   requiredForSignoff: true,
 };
 
-function template(): TeamTemplate {
+function template(overrides: Partial<TeamTemplate> = {}): TeamTemplate {
   return {
     id: 'template-1',
     name: 'Delivery team',
     description: 'Builds and reviews product changes',
     builtin: true,
     roles: [roleTemplate],
+    ...overrides,
   };
 }
 
@@ -70,9 +71,9 @@ function state(overrides: Partial<TeamRunState> = {}): TeamRunState {
   };
 }
 
-async function mountLauncher() {
+async function mountLauncher(teamTemplates: TeamTemplate[] = [template()]) {
   const store = useTeamStore();
-  store.templates = [template()];
+  store.templates = teamTemplates;
   store.projects = ['C:\\repo'];
   store.lastWorkspace = 'C:\\repo';
 
@@ -90,13 +91,17 @@ async function mountLauncher() {
   return wrapper;
 }
 
+function resetTeamTestState() {
+  setActivePinia(createPinia());
+  vi.clearAllMocks();
+  mocks.api.startTeamRun.mockResolvedValue({ state: state({ orchestrationMode: 'legacy' }) });
+  mocks.api.listTeamMessages.mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
+  mocks.api.listTeamArtifacts.mockResolvedValue([]);
+}
+
 describe('TeamLauncher orchestration mode', () => {
   beforeEach(() => {
-    setActivePinia(createPinia());
-    vi.clearAllMocks();
-    mocks.api.startTeamRun.mockResolvedValue({ state: state({ orchestrationMode: 'legacy' }) });
-    mocks.api.listTeamMessages.mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
-    mocks.api.listTeamArtifacts.mockResolvedValue([]);
+    resetTeamTestState();
   });
 
   it('omits orchestrationMode by default so the server config default applies', async () => {
@@ -129,5 +134,49 @@ describe('TeamLauncher orchestration mode', () => {
       orchestrationMode: 'company',
     });
     expect(useTeamStore().activeRun?.orchestrationMode).toBe('company');
+  });
+});
+
+describe('TeamLauncher template selection accessibility', () => {
+  beforeEach(() => {
+    resetTeamTestState();
+  });
+
+  it('separates the native template selector from card action buttons', async () => {
+    const wrapper = await mountLauncher([
+      template(),
+      template({
+        id: 'template-2',
+        name: 'Review team',
+        description: 'Reviews product changes',
+        builtin: false,
+      }),
+    ]);
+
+    const cards = wrapper.findAll('.tpl');
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.attributes('role')).toBeUndefined();
+    expect(cards[0]!.attributes('tabindex')).toBeUndefined();
+
+    let selectors = wrapper.findAll('.tpl-select');
+    expect(selectors).toHaveLength(2);
+    expect(selectors[0]!.element.tagName).toBe('BUTTON');
+    expect(selectors[0]!.attributes('type')).toBe('button');
+    expect(selectors[0]!.attributes('aria-pressed')).toBe('true');
+    expect(selectors[1]!.attributes('aria-pressed')).toBe('false');
+    expect(selectors[0]!.element.querySelector('button')).toBeNull();
+    expect(cards[1]!.find('.tpl-actions').element.parentElement).toBe(cards[1]!.element);
+
+    await cards[1]!.find('.tpl-actions button').trigger('click');
+    await flushPromises();
+    selectors = wrapper.findAll('.tpl-select');
+    expect(selectors[0]!.attributes('aria-pressed')).toBe('true');
+    expect(selectors[1]!.attributes('aria-pressed')).toBe('false');
+
+    await selectors[1]!.trigger('click');
+    await flushPromises();
+    selectors = wrapper.findAll('.tpl-select');
+    expect(selectors[0]!.attributes('aria-pressed')).toBe('false');
+    expect(selectors[1]!.attributes('aria-pressed')).toBe('true');
   });
 });

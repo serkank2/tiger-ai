@@ -90,11 +90,29 @@ function onSaved(tpl: TeamTemplate) {
 <template>
   <section class="launcher">
     <div class="intro">
-      <h1>Assemble an AI Team</h1>
-      <p>
-        Pick the project folder, choose a team template, describe the goal, and the role agents will
-        plan, build, review, and only stop once every required role signs off. Steer them anytime.
-      </p>
+      <div class="intro-copy">
+        <h1>Assemble an AI Team</h1>
+        <p>
+          Pick the project folder, choose a team template, describe the goal, and the role agents will
+          plan, build, review, and only stop once every required role signs off. Steer them anytime.
+        </p>
+      </div>
+      <div class="assembly-viz" aria-hidden="true">
+        <span class="assembly-ring ring-a"></span>
+        <span class="assembly-ring ring-b"></span>
+        <span class="link link-lead"></span>
+        <span class="link link-build"></span>
+        <span class="link link-review"></span>
+        <span class="link link-qa"></span>
+        <span class="goal-node">
+          <span class="goal-label">Goal</span>
+          <span class="goal-mark"></span>
+        </span>
+        <span class="agent-node lead">Lead</span>
+        <span class="agent-node build">Build</span>
+        <span class="agent-node review">Review</span>
+        <span class="agent-node qa">QA</span>
+      </div>
     </div>
 
     <div class="grid">
@@ -108,23 +126,27 @@ function onSaved(tpl: TeamTemplate) {
           :key="tpl.id"
           class="tpl"
           :class="{ active: tpl.id === selectedId }"
-          role="button"
-          tabindex="0"
-          @click="selectedId = tpl.id ?? null"
-          @keydown.enter="selectedId = tpl.id ?? null"
         >
-          <div class="tpl-head">
-            <span class="tpl-name">{{ tpl.name }}</span>
-            <span v-if="tpl.builtin" class="tpl-tag">built-in</span>
-          </div>
-          <p class="tpl-desc">{{ tpl.description }}</p>
-          <div class="tpl-roles">
-            <span v-for="r in tpl.roles" :key="r.id" class="role-pill">
-              <TeamAgentBadge :tool="r.agent.tool" />
-              {{ r.name }}
-            </span>
-          </div>
-          <div class="tpl-actions" @click.stop>
+          <button
+            type="button"
+            class="tpl-select"
+            :aria-pressed="tpl.id === selectedId"
+            :aria-label="`Select team template ${tpl.name}`"
+            @click="selectedId = tpl.id ?? null"
+          >
+            <div class="tpl-head">
+              <span class="tpl-name">{{ tpl.name }}</span>
+              <span v-if="tpl.builtin" class="tpl-tag">built-in</span>
+            </div>
+            <p class="tpl-desc">{{ tpl.description }}</p>
+            <div class="tpl-roles">
+              <span v-for="r in tpl.roles" :key="r.id" class="role-pill">
+                <TeamAgentBadge :tool="r.agent.tool" />
+                {{ r.name }}
+              </span>
+            </div>
+          </button>
+          <div class="tpl-actions">
             <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{ tpl.builtin ? 'Customize' : 'Edit' }}</BaseButton>
             <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">Duplicate</BaseButton>
             <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">Delete</BaseButton>
@@ -195,16 +217,41 @@ function onSaved(tpl: TeamTemplate) {
 
 <style scoped>
 .launcher {
+  position: relative;
+  isolation: isolate;
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6);
-  max-width: 1100px;
+  max-width: 1180px;
   margin: 0 auto;
   width: 100%;
+}
+.launcher::before {
+  content: '';
+  position: fixed;
+  inset: var(--bar-h) 0 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34%),
+    radial-gradient(circle at 84% 4%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 30%);
+  opacity: 0.78;
+}
+.intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 340px);
+  gap: var(--space-6);
+  align-items: center;
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.intro-copy {
+  min-width: 0;
 }
 .intro h1 {
   margin: 0 0 var(--space-2);
   font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
 }
 .intro p {
   margin: 0;
@@ -212,11 +259,172 @@ function onSaved(tpl: TeamTemplate) {
   max-width: 72ch;
   line-height: var(--leading-normal);
 }
+.assembly-viz {
+  position: relative;
+  min-height: 218px;
+  overflow: hidden;
+}
+.assembly-viz::before {
+  content: '';
+  position: absolute;
+  inset: 26px 28px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 62%, transparent);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 12%, transparent), transparent 38%),
+    radial-gradient(circle at 78% 24%, color-mix(in srgb, var(--blue) 12%, transparent), transparent 24%);
+  opacity: 0.78;
+}
+.assembly-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.72;
+}
+.ring-a {
+  width: 182px;
+  height: 128px;
+}
+.ring-b {
+  width: 260px;
+  height: 174px;
+  opacity: 0.38;
+}
+.goal-node {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  width: 92px;
+  height: 76px;
+  border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border));
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent),
+    var(--bg-elev);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent),
+    0 14px 34px color-mix(in srgb, var(--bg) 42%, transparent);
+  transform: translate(-50%, -50%);
+}
+.goal-label {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.goal-mark {
+  width: 52px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent), var(--green), var(--blue));
+}
+.agent-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 70px;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elev-2) 86%, transparent);
+  color: var(--text-dim);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
+    0 8px 22px color-mix(in srgb, var(--bg) 32%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  animation: assemble-float 5.4s var(--ease-in-out) infinite;
+}
+.agent-node::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.agent-node.lead {
+  top: 14px;
+  left: calc(50% - 35px);
+  color: var(--accent);
+}
+.agent-node.build {
+  right: 8px;
+  top: 94px;
+  color: var(--green);
+  animation-delay: -1.2s;
+}
+.agent-node.build::before {
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent);
+}
+.agent-node.review {
+  left: 4px;
+  top: 96px;
+  color: var(--blue);
+  animation-delay: -2.4s;
+}
+.agent-node.review::before {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 12%, transparent);
+}
+.agent-node.qa {
+  left: calc(50% - 35px);
+  bottom: 10px;
+  color: var(--amber);
+  animation-delay: -3.3s;
+}
+.agent-node.qa::before {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 12%, transparent);
+}
+.link {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 92px;
+  height: 1px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 68%, transparent), transparent);
+  opacity: 0.5;
+  animation: link-breathe 3.8s var(--ease-in-out) infinite;
+}
+.link-lead {
+  width: 74px;
+  transform: rotate(-90deg);
+}
+.link-build {
+  transform: rotate(8deg);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--green) 68%, transparent), transparent);
+  animation-delay: -1s;
+}
+.link-review {
+  transform: rotate(173deg);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--blue) 68%, transparent), transparent);
+  animation-delay: -2s;
+}
+.link-qa {
+  width: 78px;
+  transform: rotate(90deg);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--amber) 68%, transparent), transparent);
+  animation-delay: -3s;
+}
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-5);
   margin-top: var(--space-5);
+  align-items: start;
 }
 h3 {
   margin: 0 0 var(--space-3);
@@ -243,20 +451,54 @@ h3.mt {
   gap: var(--space-2);
 }
 .tpl {
+  position: relative;
+  overflow: hidden;
   text-align: left;
-  background: var(--bg-elev);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 46%),
+    var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-3);
-  cursor: pointer;
-  transition: border-color var(--dur-base) var(--ease-standard), background var(--dur-base) var(--ease-standard);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  transition:
+    border-color var(--dur-base) var(--ease-standard),
+    background-color var(--dur-base) var(--ease-standard);
+}
+.tpl::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
 }
 .tpl:hover {
   border-color: var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
+    0 8px 20px color-mix(in srgb, var(--bg) 28%, transparent);
 }
 .tpl.active {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+.tpl.active::before {
+  opacity: 1;
+}
+.tpl-select {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-align: left;
+}
+.tpl-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .tpl-head {
   display: flex;
@@ -310,6 +552,9 @@ h3.mt {
 .compose {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
 }
 .ws-row {
   display: flex;
@@ -318,6 +563,22 @@ h3.mt {
 .ws-select {
   flex: 1;
   min-width: 0;
+}
+.ws-select,
+.mode-select,
+.goal {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+.ws-select:focus,
+.mode-select:focus,
+.goal:focus {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent),
+    0 0 0 3px var(--accent-soft);
 }
 .ws-path {
   display: block;
@@ -341,6 +602,9 @@ h3.mt {
   border-radius: var(--radius-sm);
   padding: var(--space-3);
   line-height: var(--leading-normal);
+}
+.goal::placeholder {
+  color: var(--text-faint);
 }
 .mode-select {
   width: 100%;
@@ -390,9 +654,158 @@ h3.mt {
   color: var(--text-faint);
   font-size: var(--text-sm);
 }
+@keyframes assemble-float {
+  0%,
+  100% {
+    opacity: 0.86;
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(0, -5px, 0);
+  }
+}
+@keyframes link-breathe {
+  0%,
+  100% {
+    opacity: 0.32;
+  }
+  50% {
+    opacity: 0.76;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-node,
+  .link {
+    animation: none;
+  }
+}
 @media (max-width: 900px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+  .compose {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  .launcher {
+    padding: var(--space-4);
+  }
+  .intro {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+  .assembly-viz {
+    min-height: 124px;
+    max-width: 390px;
+    width: 100%;
+    justify-self: center;
+  }
+  .assembly-viz::before {
+    inset: 14px 26px;
+  }
+  .ring-a {
+    width: 134px;
+    height: 94px;
+  }
+  .ring-b {
+    width: 196px;
+    height: 126px;
+  }
+  .goal-node {
+    width: 74px;
+    height: 52px;
+    gap: 5px;
+  }
+  .goal-mark {
+    width: 42px;
+  }
+  .agent-node.build {
+    right: 24px;
+    top: 50px;
+  }
+  .agent-node.review {
+    left: 24px;
+    top: 52px;
+  }
+  .agent-node.lead {
+    top: 4px;
+  }
+  .agent-node.qa {
+    bottom: 2px;
+  }
+  .link {
+    width: 58px;
+  }
+  .link-lead {
+    width: 48px;
+  }
+  .link-qa {
+    width: 48px;
+  }
+}
+@media (max-width: 520px) {
+  .ws-row {
+    flex-direction: column;
+  }
+  .assembly-viz {
+    min-height: 92px;
+  }
+  .assembly-viz::before {
+    inset: 10px 46px;
+  }
+  .ring-a {
+    width: 104px;
+    height: 70px;
+  }
+  .ring-b {
+    width: 154px;
+    height: 92px;
+  }
+  .goal-node {
+    width: 62px;
+    height: 42px;
+  }
+  .goal-label {
+    font-size: 11px;
+  }
+  .goal-mark {
+    width: 34px;
+  }
+  .agent-node {
+    min-width: 54px;
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  .agent-node::before {
+    width: 6px;
+    height: 6px;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+  }
+  .agent-node.lead {
+    top: 2px;
+    left: calc(50% - 27px);
+  }
+  .agent-node.build {
+    right: 28px;
+    top: 36px;
+  }
+  .agent-node.review {
+    left: 28px;
+    top: 36px;
+  }
+  .agent-node.qa {
+    left: calc(50% - 27px);
+    bottom: 0;
+  }
+  .link {
+    width: 44px;
+  }
+  .link-lead,
+  .link-qa {
+    width: 36px;
   }
 }
 </style>

@@ -1,0 +1,1 @@
+This sentinel intentionally prevents git worktree creation for TASK-0003 so the queued role turn falls back to the canonical shared workspace.
