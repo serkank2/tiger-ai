@@ -39,6 +39,11 @@ export default tseslint.config(
       '**/package-lock.json',
       'apps/frontend/.data/**',
       'apps/frontend/.nuxt/**',
+      // Generated git worktrees and private Tiger team bookkeeping are not
+      // product source — never traverse them (each .kaplan worktree is a full
+      // repo copy, .tiger is gitignored bookkeeping).
+      '.kaplan/**',
+      '.tiger/**',
     ],
   },
 
