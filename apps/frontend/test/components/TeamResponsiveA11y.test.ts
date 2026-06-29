@@ -9,6 +9,24 @@ function source(relativePath: string): string {
   return readFileSync(join(process.cwd(), 'app/components/team', relativePath), 'utf8');
 }
 
+function templateSource(relativePath: string): string {
+  const match = source(relativePath).match(/<template>([\s\S]*?)<\/template>/);
+  return (match?.[1] ?? '').replace(/<!--[\s\S]*?-->/g, '');
+}
+
+function contrast(hexA: string, hexB: string): number {
+  const luminance = (hex: string): number => {
+    const value = hex.replace('#', '');
+    const rgb = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
+    const linear = rgb.map((channel) =>
+      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+    );
+    return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+  };
+  const [lighter, darker] = [luminance(hexA), luminance(hexB)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 function role(overrides: Partial<RoleSnapshot> = {}): RoleSnapshot {
   return {
     id: 'developer',
@@ -33,6 +51,69 @@ describe('Team responsive layout and role tile accessibility', () => {
     expect(teamView).toContain('@media (max-width: 720px)');
     expect(teamView).toMatch(/\.workspace \{\r?\n\s+grid-template-columns: 1fr;\r?\n\s+\}/);
     expect(teamView).toMatch(/\.rail \{[\s\S]*?border-right: 0;[\s\S]*?border-bottom: 1px solid var\(--border\);[\s\S]*?\}/);
+  });
+
+  it('uses accessible Team surface typography, contrast, and non-decorative active backgrounds', () => {
+    const teamView = source('TeamView.vue');
+    expect(teamView).toContain('--text-xs: 16px;');
+    expect(teamView).toContain('--text-sm: 16px;');
+    expect(teamView).toContain('--text-md: 16px;');
+    expect(teamView).not.toContain('radial-gradient');
+
+    const dim = /--text-dim:\s*(#[0-9a-fA-F]{6});/.exec(teamView)?.[1];
+    const faint = /--text-faint:\s*(#[0-9a-fA-F]{6});/.exec(teamView)?.[1];
+    expect(dim).toBeTruthy();
+    expect(faint).toBeTruthy();
+    expect(contrast(dim!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(faint!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('does not render Team mojibake or glyph-only operational labels', () => {
+    const disallowed =
+      /\?\?\s+\{\{|>\?\s|\s\?\s+\{\{|\u2039|\u21e9|\u2192|\u2715|\u2713|\u25b8|\u25be|\uff0b|\u2212|\u2387|\u{1f9d1}|\u2699|\u00d7/u;
+    const files = [
+      'TeamAgentBadge.vue',
+      'TeamAttemptsPanel.vue',
+      'TeamChangesPanel.vue',
+      'TeamChatPanel.vue',
+      'TeamCoordinationPanel.vue',
+      'TeamDoneGate.vue',
+      'TeamMetricsPanel.vue',
+      'TeamRoleTile.vue',
+      'TeamRunHistory.vue',
+      'TeamTerminalPane.vue',
+      'TeamVerifications.vue',
+      'TeamView.vue',
+    ];
+
+    for (const file of files) {
+      expect(templateSource(file), file).not.toMatch(disallowed);
+    }
+  });
+
+  it('does not hard-code sub-16px Team component text', () => {
+    const files = [
+      'TeamAgentBadge.vue',
+      'TeamAttemptsPanel.vue',
+      'TeamChangesPanel.vue',
+      'TeamChatPanel.vue',
+      'TeamCoordinationPanel.vue',
+      'TeamDoneGate.vue',
+      'TeamLauncher.vue',
+      'TeamMetricsPanel.vue',
+      'TeamRoleControls.vue',
+      'TeamRoleTile.vue',
+      'TeamRunHistory.vue',
+      'TeamSteerBar.vue',
+      'TeamTemplateEditor.vue',
+      'TeamTerminalPane.vue',
+      'TeamVerifications.vue',
+      'TeamView.vue',
+    ];
+
+    for (const file of files) {
+      expect(source(file), file).not.toMatch(/font-size:\s*(?:10|11|12|13|14|15)px/);
+    }
   });
 
   it('activates clickable role tiles with Enter or Space from the tile root only', async () => {

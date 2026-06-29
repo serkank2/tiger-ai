@@ -59,7 +59,7 @@ describe('TeamCoordinationPanel', () => {
     expect(wrapper.text()).toContain('No handoffs');
   });
 
-  it('renders a pending handoff dependency with the from→to flow and task id', () => {
+  it('renders a pending handoff dependency with the from-to flow and task id', () => {
     store.roles = [role('lead', 'Lead'), role('tester', 'Tester')];
     store.handoffs = [
       {
@@ -75,7 +75,7 @@ describe('TeamCoordinationPanel', () => {
     const wrapper = mount(TeamCoordinationPanel, mountOpts);
     const pending = wrapper.find('[data-testid="handoff-pending"]');
     expect(pending.exists()).toBe(true);
-    expect(pending.text()).toContain('Lead → Tester');
+    expect(pending.text()).toContain('Lead to Tester');
     expect(pending.text()).toContain('TASK-0001');
     expect(pending.text()).toContain('blocking');
   });

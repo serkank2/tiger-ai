@@ -51,9 +51,9 @@ function blockerLabel(code: string): string {
     >
       <div class="fill" :style="{ width: `${pct}%` }" />
     </div>
-    <p v-if="done" class="state ok">? {{ t('team.doneGate.complete') }}</p>
-    <p v-else-if="status === 'blocked'" class="state warn">? {{ t('team.doneGate.blocked') }}</p>
-    <p v-else-if="status === 'failed'" class="state err">? {{ t('team.doneGate.failed') }}</p>
+    <p v-if="done" class="state ok">{{ t('team.doneGate.complete') }}</p>
+    <p v-else-if="status === 'blocked'" class="state warn">{{ t('team.doneGate.blocked') }}</p>
+    <p v-else-if="status === 'failed'" class="state err">{{ t('team.doneGate.failed') }}</p>
     <p v-else-if="gate.pendingRoleIds.length" class="state">
       {{ t('team.doneGate.waiting', { n: gate.pendingRoleIds.length }) }}
     </p>
@@ -133,7 +133,7 @@ function blockerLabel(code: string): string {
   border-radius: var(--radius-sm);
 }
 .bcode {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;

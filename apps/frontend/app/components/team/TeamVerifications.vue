@@ -16,7 +16,7 @@ const signOffs = computed(() => props.signOffs);
 
 <template>
   <details v-if="verifications.length" class="vlist">
-    <summary>{{ t('team.verifications.title') }} ? {{ verifications.length }}</summary>
+    <summary>{{ t('team.verifications.title') }}: {{ verifications.length }}</summary>
     <ul>
       <li v-for="v in verifications" :key="v.id" class="v" :class="`vs-${v.status}`">
         <span class="vstatus">{{ v.status }}</span>
@@ -28,12 +28,12 @@ const signOffs = computed(() => props.signOffs);
   </details>
 
   <details v-if="signOffs.length" class="vlist">
-    <summary>{{ t('team.verifications.signOffs') }} ? {{ signOffs.length }}</summary>
+    <summary>{{ t('team.verifications.signOffs') }}: {{ signOffs.length }}</summary>
     <ul>
       <li v-for="s in signOffs" :key="s.id" class="s" :class="{ stale: s.stale }">
         <span class="sname">{{ s.roleName }}</span>
         <span v-if="s.stale" class="sstale" :title="s.staleReason ?? t('team.verifications.signoffStale')">{{ t('team.verifications.stale') }}</span>
-        <span v-else class="sok">✓</span>
+        <span v-else class="sok">ok</span>
       </li>
     </ul>
   </details>
@@ -56,7 +56,7 @@ ul { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; fl
 .vstatus {
   font-weight: 700;
   text-transform: uppercase;
-  font-size: 10px;
+  font-size: var(--text-xs);
   flex: none;
 }
 .vs-passed .vstatus { color: var(--green); }
@@ -68,6 +68,6 @@ ul { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; fl
 .vsum { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sok { color: var(--green); }
-.sstale { color: var(--amber); font-size: 10px; }
+.sstale { color: var(--amber); font-size: var(--text-xs); }
 .s.stale .sname { color: var(--text-faint); }
 </style>

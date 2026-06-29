@@ -166,18 +166,18 @@ function loadOlder() {
         >
           <div class="avatar">
             <TeamAgentBadge v-if="senderInfo(m.from).tool" :tool="senderInfo(m.from).tool!" />
-            <span v-else class="glyph">{{ senderInfo(m.from).kind === 'user' ? '🧑' : '⚙' }}</span>
+            <span v-else class="glyph">{{ senderInfo(m.from).kind === 'user' ? 'User' : 'System' }}</span>
           </div>
           <div class="bubble">
             <div class="head">
               <span class="author">{{ senderInfo(m.from).label }}</span>
-              <span v-if="m.to && m.to !== 'all'" class="to">→ {{ roleById.get(m.to)?.name ?? m.to }}</span>
+              <span v-if="m.to && m.to !== 'all'" class="to">to {{ roleById.get(m.to)?.name ?? m.to }}</span>
               <span v-if="KIND_KEY[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ t(KIND_KEY[m.kind]!) }}</span>
               <span
                 v-if="chatLang !== 'original' && !hasTranslation(m.id)"
                 class="pending-tag"
                 :title="t('team.translating')"
-              >…</span>
+              >...</span>
               <span class="time">{{ time(m.createdAt) }}</span>
             </div>
             <p class="text">{{ bodyFor(m) }}</p>
@@ -292,7 +292,7 @@ function loadOlder() {
   flex-direction: row-reverse;
 }
 .avatar {
-  width: 22px;
+  width: 48px;
   height: 22px;
   display: flex;
   align-items: center;
@@ -301,7 +301,8 @@ function loadOlder() {
   margin-top: 2px;
 }
 .glyph {
-  font-size: 14px;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
 }
 .bubble {
   background: var(--bg-elev);
@@ -345,16 +346,16 @@ function loadOlder() {
 }
 .time {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 .pending-tag {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
   letter-spacing: 0.08em;
 }
 .kind-tag {
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border-radius: var(--radius-pill);

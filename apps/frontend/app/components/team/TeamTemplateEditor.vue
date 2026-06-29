@@ -382,7 +382,7 @@ async function save() {
   background: transparent;
   border: none;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--text-xs);
   padding: 2px 6px;
 }
 .rm:hover {
@@ -402,7 +402,7 @@ async function save() {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);

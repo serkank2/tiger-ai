@@ -349,16 +349,16 @@ async function copyPrUrl(): Promise<void> {
       <header class="ch-head">
         <div class="ch-title">
           <strong>{{ t('team.changes.title') }}</strong>
-          <span v-if="changes?.branch" class="branch" :title="changes.head ?? ''">⎇ {{ changes.branch }}</span>
+          <span v-if="changes?.branch" class="branch" :title="changes.head ?? ''">Branch: {{ changes.branch }}</span>
           <span v-if="changes" class="stat">
             <span class="files">{{ t('team.changes.files', { n: changes.summary.files }) }}</span>
             <span class="ins">+{{ changes.summary.insertions }}</span>
-            <span class="del">−{{ changes.summary.deletions }}</span>
+            <span class="del">-{{ changes.summary.deletions }}</span>
           </span>
         </div>
         <div class="ch-actions">
           <BaseButton size="sm" variant="ghost" :loading="loading" @click="refresh">{{ t('team.changes.refresh') }}</BaseButton>
-          <BaseButton size="sm" variant="ghost" icon-only :aria-label="t('team.changes.close')" @click="emit('close')">✕</BaseButton>
+          <BaseButton size="sm" variant="ghost" @click="emit('close')">{{ t('team.changes.close') }}</BaseButton>
         </div>
       </header>
 
@@ -410,7 +410,7 @@ async function copyPrUrl(): Promise<void> {
         <div class="review-scroll">
           <!-- Untracked-only / no-diff fallback keeps the simple file list. -->
           <ul v-if="!fileDiffs.length" class="file-list">
-            <li v-for="f in changes.files" :key="f.path" class="file" :title="f.oldPath ? `${f.oldPath} → ${f.path}` : f.path">
+            <li v-for="f in changes.files" :key="f.path" class="file" :title="f.oldPath ? `${f.oldPath} -> ${f.path}` : f.path">
               <span class="badge" :class="`b-${f.status}`">{{ STATUS_LABEL[f.status] }}</span>
               <span class="fpath">{{ f.path }}</span>
             </li>
@@ -424,7 +424,7 @@ async function copyPrUrl(): Promise<void> {
               :aria-label="t('team.changes.diffToggleAria', { action: collapsed[file.path] ? t('team.changes.expand') : t('team.changes.collapse'), path: file.path })"
               @click="toggle(file.path)"
             >
-              <span class="chev" aria-hidden="true">{{ collapsed[file.path] ? '▸' : '▾' }}</span>
+              <span class="chev" aria-hidden="true">{{ collapsed[file.path] ? '+' : '-' }}</span>
               <span class="badge" :class="`b-${file.status}`">{{ STATUS_LABEL[file.status] }}</span>
               <span class="fpath">{{ file.path }}</span>
             </button>
@@ -438,7 +438,7 @@ async function copyPrUrl(): Promise<void> {
                     :title="t('team.changes.commentOnLine')"
                     :aria-label="t('team.changes.commentOnLine')"
                     @click="startComment(file, line)"
-                  >＋</button>
+                  >+</button>
                   <span class="dl" :class="`d-${line.kind}`">{{ line.text }}</span>
                 </div>
                 <div v-if="draftKey === `${file.path}#${line.n}`" class="comment-draft">
@@ -467,7 +467,7 @@ async function copyPrUrl(): Promise<void> {
             <li v-for="(c, i) in comments" :key="i" class="rc">
               <span class="rc-anchor">{{ c.path }}:{{ c.line }}</span>
               <span class="rc-body">{{ c.body }}</span>
-              <button type="button" class="rc-rm" :aria-label="t('team.changes.removeComment')" @click="removeComment(i)">✕</button>
+              <button type="button" class="rc-rm" :aria-label="t('team.changes.removeComment')" @click="removeComment(i)">Remove</button>
             </li>
           </ul>
           <div class="review-send">
@@ -607,7 +607,7 @@ async function copyPrUrl(): Promise<void> {
   width: 18px;
   height: 18px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   flex: none;
   border: 1px solid var(--border-strong);
@@ -642,7 +642,7 @@ async function copyPrUrl(): Promise<void> {
   color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 .dl-row:hover .add-comment { opacity: 1; }
@@ -653,7 +653,7 @@ async function copyPrUrl(): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.45;
   padding-right: var(--space-3);
 }

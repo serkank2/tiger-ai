@@ -145,8 +145,8 @@ async function reset() {
   <div class="team" :class="status ? `run-${status}` : 'run-empty'">
     <header class="team-header">
       <div class="title-group">
-        <BaseButton variant="ghost" size="sm" :aria-label="t('team.run.backToTerminals')" icon-only @click="emit('back')">‹</BaseButton>
-        <span class="brand">?? {{ t('team.run.brand') }}</span>
+        <BaseButton variant="ghost" size="sm" @click="emit('back')">{{ t('team.run.backToTerminals') }}</BaseButton>
+        <span class="brand">{{ t('team.run.brand') }}</span>
         <span class="conn" :class="{ ok: connected }" :title="connected ? t('common.status.live') : t('common.status.disconnected')" />
       </div>
 
@@ -161,7 +161,7 @@ async function reset() {
           class="progress-meter"
           :title="t('team.run.leadManagedTitle', { turns: turnsLabel })"
         >
-          ? {{ t('team.run.leadManaged') }} ? {{ turnsLabel }}
+          {{ t('team.run.leadManaged') }}: {{ turnsLabel }}
         </span>
       </div>
 
@@ -204,15 +204,15 @@ async function reset() {
           variant="ghost"
           :title="t('team.controls.changesTitle')"
           @click="showChanges = true"
-        >? {{ t('team.controls.changes') }}</BaseButton>
+        >{{ t('team.controls.changes') }}</BaseButton>
         <BaseButton
           size="sm"
           variant="ghost"
           :title="t('team.controls.historyTitle')"
           @click="showHistory = true"
-        >? {{ t('team.controls.history') }}</BaseButton>
-        <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json')">⇩ JSON</BaseButton>
-        <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown')">⇩ MD</BaseButton>
+        >{{ t('team.controls.history') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json')">JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown')">MD</BaseButton>
         <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">{{ t('team.run.newRun') }}</BaseButton>
       </div>
     </header>
@@ -264,7 +264,7 @@ async function reset() {
         <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
 
         <details v-if="team.artifacts.length" class="artifacts">
-          <summary>{{ t('team.run.artifacts') }} ? {{ team.artifacts.length }}</summary>
+          <summary>{{ t('team.run.artifacts') }}: {{ team.artifacts.length }}</summary>
           <ul>
             <li v-for="a in team.artifacts" :key="a.id" :title="a.path">{{ a.name }}</li>
           </ul>
@@ -295,16 +295,18 @@ async function reset() {
 
 <style scoped>
 .team {
+  --text-xs: 16px;
+  --text-sm: 16px;
+  --text-md: 16px;
+  --text-dim: #cfc3b3;
+  --text-faint: #b9ad9d;
   position: relative;
   isolation: isolate;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background:
-    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34%),
-    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--blue) 7%, transparent), transparent 28%),
-    var(--bg);
+  background: var(--bg);
 }
 .team::before {
   content: '';
@@ -540,9 +542,7 @@ async function reset() {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background:
-    radial-gradient(circle at 70% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 30%),
-    color-mix(in srgb, var(--bg) 94%, var(--bg-term) 6%);
+  background: color-mix(in srgb, var(--bg) 94%, var(--bg-term) 6%);
 }
 @media (max-width: 720px) {
   .team-header {

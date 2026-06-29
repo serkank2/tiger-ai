@@ -4,12 +4,12 @@ import type { TeamAgentType } from '~/types';
 
 const props = defineProps<{ tool: TeamAgentType }>();
 
-const GLYPH: Record<TeamAgentType, string> = { claude: '✳', codex: '◆', antigravity: '✦' };
-const glyph = computed(() => GLYPH[props.tool] ?? '◆');
+const LABEL: Record<TeamAgentType, string> = { claude: 'CL', codex: 'CX', antigravity: 'AG' };
+const label = computed(() => LABEL[props.tool] ?? 'AI');
 </script>
 
 <template>
-  <span class="agent-badge" :class="`t-${tool}`" :title="tool">{{ glyph }}</span>
+  <span class="agent-badge" :class="`t-${tool}`" :title="tool">{{ label }}</span>
 </template>
 
 <style scoped>
@@ -17,10 +17,10 @@ const glyph = computed(() => GLYPH[props.tool] ?? '◆');
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 32px;
+  height: 22px;
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 1;
   flex: none;
 }

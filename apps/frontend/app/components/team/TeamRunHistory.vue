@@ -113,7 +113,7 @@ onMounted(() => void team.loadRuns());
         <strong>{{ t('team.history.title') }}</strong>
         <div class="h-actions">
           <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">{{ t('common.refresh') }}</BaseButton>
-          <BaseButton size="sm" variant="ghost" icon-only :aria-label="t('team.history.close')" @click="emit('close')">✕</BaseButton>
+          <BaseButton size="sm" variant="ghost" @click="emit('close')">{{ t('team.history.close') }}</BaseButton>
         </div>
       </header>
 
@@ -204,7 +204,7 @@ onMounted(() => void team.loadRuns());
 .r-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .r-name { font-weight: 600; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .r-status {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -217,7 +217,7 @@ onMounted(() => void team.loadRuns());
 .st-completed { color: var(--green); border-color: var(--green); }
 .st-failed { color: var(--red); border-color: var(--red); }
 .st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
-.r-live { font-size: 10px; color: var(--green); }
+.r-live { font-size: var(--text-xs); color: var(--green); }
 .r-meta { display: flex; gap: var(--space-2); margin-top: 2px; font-size: var(--text-xs); color: var(--text-faint); }
 .r-when { margin-left: auto; }
 .r-controls { display: flex; gap: var(--space-1); flex: none; }
