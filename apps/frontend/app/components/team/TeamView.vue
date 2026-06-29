@@ -119,6 +119,17 @@ async function returnToLive() {
   await team.returnToLive().catch(() => {});
 }
 
+function openChanges(): void {
+  if (readOnly.value) return;
+  showChanges.value = true;
+  void team.loadChanges().catch(() => {});
+}
+
+function openAttemptDiff(): void {
+  if (readOnly.value) return;
+  showChanges.value = true;
+}
+
 const STATUS_KEY: Record<string, string> = {
   running: 'team.status.running',
   paused: 'team.status.paused',
@@ -200,10 +211,11 @@ async function reset() {
           @click="closeRun(state.id)"
         >{{ t('team.controls.close') }}</BaseButton>
         <BaseButton
+          v-if="!readOnly"
           size="sm"
           variant="ghost"
           :title="t('team.controls.changesTitle')"
-          @click="showChanges = true"
+          @click="openChanges"
         >{{ t('team.controls.changes') }}</BaseButton>
         <BaseButton
           size="sm"
@@ -259,7 +271,7 @@ async function reset() {
         </TransitionGroup>
 
         <TeamMetricsPanel :metrics="team.metrics" />
-        <TeamAttemptsPanel @view-diff="showChanges = true" />
+        <TeamAttemptsPanel @view-diff="openAttemptDiff" />
         <TeamCoordinationPanel />
         <TeamVerifications :verifications="team.verifications" :sign-offs="team.signOffs" />
 
@@ -285,7 +297,7 @@ async function reset() {
     />
 
     <Transition name="panel">
-      <TeamChangesPanel v-if="showChanges" @close="showChanges = false" />
+      <TeamChangesPanel v-if="showChanges && !readOnly" @close="showChanges = false" />
     </Transition>
     <Transition name="panel">
       <TeamRunHistory v-if="showHistory" @close="showHistory = false" @opened="showHistory = false" />

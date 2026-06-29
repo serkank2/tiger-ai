@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, reactive } from 'vue';
 import { useTeamStore } from '~/stores/team';
-import type { RoleSnapshot, RoleTemplate, TeamArtifact, TeamMessage, TeamMessagePage, TeamRunState, TeamTemplate } from '~/types';
+import type { RoleSnapshot, RoleTemplate, TeamArtifact, TeamChanges, TeamMessage, TeamMessagePage, TeamRunState, TeamTemplate } from '~/types';
 
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (msg: unknown) => void>();
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
       listTeamArtifacts: vi.fn(),
       getTeamRun: vi.fn(),
       getTeamChanges: vi.fn(),
+      getTeamAttemptDiff: vi.fn(),
       downloadTeamExport: vi.fn(),
     },
     notices: {
@@ -129,6 +130,20 @@ function artifact(overrides: Partial<TeamArtifact> = {}): TeamArtifact {
     name: 'plan.md',
     kind: 'markdown',
     createdAt: '2026-06-18T08:12:00.000Z',
+    ...overrides,
+  };
+}
+
+function changes(overrides: Partial<TeamChanges> = {}): TeamChanges {
+  return {
+    isGitRepo: true,
+    head: 'abc123',
+    branch: 'main',
+    files: [{ path: 'src/app.ts', status: 'modified' }],
+    diff: 'diff --git a/src/app.ts b/src/app.ts',
+    diffTruncated: false,
+    summary: { files: 1, insertions: 2, deletions: 1 },
+    generatedAt: '2026-06-18T08:14:00.000Z',
     ...overrides,
   };
 }
@@ -318,6 +333,56 @@ describe('useTeamStore', () => {
     // Without quiet it still toasts.
     await expect(store.loadChanges('run-1')).rejects.toBeTruthy();
     expect(mocks.notices.push).toHaveBeenCalledWith('Team changes: diff failed', 'error');
+  });
+
+  it('clears stale changes when opening history and never fetches active-only changes while read-only', async () => {
+    const store = useTeamStore();
+    store.applyState(state());
+    mocks.api.getTeamChanges.mockResolvedValue(changes({ branch: 'live-main' }));
+
+    await store.loadChanges('run-1');
+    expect(store.changes?.branch).toBe('live-main');
+
+    await openReadOnly(store);
+    expect(store.readOnly).toBe(true);
+    expect(store.changes).toBeNull();
+
+    await store.loadChanges('run-1');
+    expect(mocks.api.getTeamChanges).toHaveBeenCalledTimes(1);
+    expect(store.changes).toBeNull();
+  });
+
+  it('clears stale changes when returning to live and allows a fresh live diff fetch', async () => {
+    const store = useTeamStore();
+    await openReadOnly(store);
+    store.changes = changes({ branch: 'stale-history' });
+
+    mocks.api.getTeamState.mockResolvedValue({ state: state({ id: 'live-run' }) });
+    mocks.api.listTeamMessages.mockResolvedValue(page([]));
+    mocks.api.listTeamArtifacts.mockResolvedValue([]);
+
+    await store.returnToLive();
+    expect(store.readOnly).toBe(false);
+    expect(store.activeRunId).toBe('live-run');
+    expect(store.changes).toBeNull();
+
+    mocks.api.getTeamChanges.mockResolvedValue(changes({ branch: 'fresh-live' }));
+    await store.loadChanges('live-run');
+
+    expect(mocks.api.getTeamChanges).toHaveBeenCalledWith('live-run');
+    expect(store.changes?.branch).toBe('fresh-live');
+  });
+
+  it('keeps active attempt diffs independent from the active run changes route', async () => {
+    const store = useTeamStore();
+    store.applyState(state());
+    mocks.api.getTeamAttemptDiff.mockResolvedValue(changes({ branch: 'attempt-branch' }));
+
+    await store.loadAttemptDiff('attempt-1');
+
+    expect(mocks.api.getTeamAttemptDiff).toHaveBeenCalledWith('run-1', 'attempt-1');
+    expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
+    expect(store.changes?.branch).toBe('attempt-branch');
   });
 
   it('exports through the authenticated API download helper and a blob URL', async () => {

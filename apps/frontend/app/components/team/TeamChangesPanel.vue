@@ -145,6 +145,7 @@ async function sendReview(): Promise<void> {
 }
 
 function refresh(): void {
+  if (readOnly.value) return;
   void team.loadChanges();
 }
 
@@ -196,7 +197,6 @@ function onDrawerKeydown(e: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  refresh();
   opener = (document.activeElement as HTMLElement | null) ?? null;
   (focusables()[0] ?? drawerRef.value)?.focus();
 });

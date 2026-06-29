@@ -15,6 +15,16 @@ const mocks = vi.hoisted(() => ({
     listTeamMessages: vi.fn(async () => ({ items: [], nextCursor: null, hasMore: false })),
     listTeamArtifacts: vi.fn(async () => []),
     listTeamProjects: vi.fn(async () => ({ projects: [], lastWorkspace: null })),
+    getTeamChanges: vi.fn(async () => ({
+      isGitRepo: true,
+      head: 'abc123',
+      branch: 'main',
+      files: [],
+      diff: '',
+      diffTruncated: false,
+      summary: { files: 0, insertions: 0, deletions: 0 },
+      generatedAt: '2026-06-18T08:10:00.000Z',
+    })),
     resumeTeamRun: vi.fn(),
   },
   notices: { push: vi.fn() },
@@ -37,6 +47,14 @@ vi.mock('~/components/team/TeamChatPanel.vue', () => ({ default: { name: 'TeamCh
 vi.mock('~/components/team/TeamDoneGate.vue', () => ({ default: { name: 'TeamDoneGate', inheritAttrs: false, template: '<div />' } }));
 vi.mock('~/components/team/TeamSteerBar.vue', () => ({ default: { name: 'TeamSteerBar', inheritAttrs: false, template: '<div />' } }));
 vi.mock('~/components/team/TeamTerminalPane.vue', () => ({ default: { name: 'TeamTerminalPane', inheritAttrs: false, template: '<div />' } }));
+vi.mock('~/components/team/TeamAttemptsPanel.vue', () => ({
+  default: {
+    name: 'TeamAttemptsPanel',
+    inheritAttrs: false,
+    emits: ['view-diff'],
+    template: '<button type="button" data-testid="attempt-diff" @click="$emit(\'view-diff\', \'attempt-1\')">Attempt diff</button>',
+  },
+}));
 
 // A slot-rendering BaseButton stub (the real one relies on Nuxt's auto-imported `computed`).
 // Rendering the label slot lets the control tests assert which buttons are offered, and the
@@ -168,5 +186,43 @@ describe('TeamView run controls', () => {
     await resume!.trigger('click');
     await flushPromises();
     expect(mocks.api.resumeTeamRun).toHaveBeenCalledWith('run-1');
+  });
+
+  it('loads the active run diff only when the live Changes control is used', async () => {
+    const wrapper = await mountControls(state({ status: 'running', turnCount: 1 }));
+
+    const changes = wrapper.findAll('.controls button').find((b) => b.text() === 'Changes');
+    expect(changes).toBeTruthy();
+
+    await changes!.trigger('click');
+    await flushPromises();
+
+    expect(mocks.api.getTeamChanges).toHaveBeenCalledTimes(1);
+    expect(mocks.api.getTeamChanges).toHaveBeenCalledWith('run-1');
+    expect(wrapper.findComponent({ name: 'TeamChangesPanel' }).exists()).toBe(true);
+  });
+
+  it('hides the Changes control and drawer while a read-only history run is open', async () => {
+    const store = useTeamStore();
+    const wrapper = await mountControls(state({ status: 'completed', turnCount: 4 }));
+
+    store.viewingRunId = 'run-1';
+    await flushPromises();
+
+    const labels = controlLabels(wrapper);
+    expect(labels).toContain('Back to live');
+    expect(labels).not.toContain('Changes');
+    expect(wrapper.findComponent({ name: 'TeamChangesPanel' }).exists()).toBe(false);
+    expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
+  });
+
+  it('opens an already-loaded attempt diff without refreshing the active run changes route', async () => {
+    const wrapper = await mountControls(state({ status: 'running', turnCount: 1 }));
+
+    await wrapper.find('[data-testid="attempt-diff"]').trigger('click');
+    await flushPromises();
+
+    expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
+    expect(wrapper.findComponent({ name: 'TeamChangesPanel' }).exists()).toBe(true);
   });
 });

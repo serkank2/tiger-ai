@@ -426,6 +426,10 @@ export const useTeamStore = defineStore('team', () => {
    * run still update internal state but never raise a user-facing error toast.
    */
   async function loadChanges(runId = activeRunId.value, options: { quiet?: boolean } = {}): Promise<void> {
+    if (readOnly.value) {
+      changes.value = null;
+      return;
+    }
     if (!runId) {
       changes.value = null;
       return;
@@ -577,6 +581,7 @@ export const useTeamStore = defineStore('team', () => {
     try {
       const { state: next } = await api.getTeamRun(runId);
       if (!next) throw new Error('Run not found');
+      changes.value = null;
       viewingRunId.value = runId;
       applyState(next);
       const [page, nextArtifacts] = await Promise.all([
@@ -595,6 +600,7 @@ export const useTeamStore = defineStore('team', () => {
 
   /** Leave the read-only history view and re-load the live active run. */
   async function returnToLive(): Promise<void> {
+    changes.value = null;
     viewingRunId.value = null;
     await loadState();
     const runId = activeRunId.value;
