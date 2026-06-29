@@ -951,7 +951,8 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
 
       const result = await runRoleTurn({
         manager: options.manager,
-        paths: new TigerPaths(input.workspace),
+        workspace: input.workspace,
+        paths: new TigerPaths(input.paths.workspace),
         config: options.config,
         runId: input.runId,
         turnId: input.turn.id,
