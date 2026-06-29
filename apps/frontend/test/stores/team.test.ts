@@ -385,6 +385,45 @@ describe('useTeamStore', () => {
     expect(store.changes?.branch).toBe('attempt-branch');
   });
 
+  it('clears live changes while an attempt diff is pending', async () => {
+    const store = useTeamStore();
+    store.applyState(state());
+    store.changes = changes({ branch: 'live-main', files: [{ path: 'src/live.ts', status: 'modified' }] });
+    let resolveAttempt!: (value: TeamChanges) => void;
+    const pending = new Promise<TeamChanges>((resolve) => {
+      resolveAttempt = resolve;
+    });
+    mocks.api.getTeamAttemptDiff.mockReturnValue(pending);
+
+    const request = store.loadAttemptDiff('attempt-1');
+
+    expect(store.changes).toBeNull();
+    expect(store.changesLoading).toBe(true);
+    expect(mocks.api.getTeamAttemptDiff).toHaveBeenCalledWith('run-1', 'attempt-1');
+    expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
+
+    resolveAttempt(changes({ branch: 'attempt-branch' }));
+    await request;
+
+    expect(store.changesLoading).toBe(false);
+    expect(store.changes?.branch).toBe('attempt-branch');
+  });
+
+  it('keeps changes null when an attempt diff rejects after live changes were loaded', async () => {
+    const store = useTeamStore();
+    store.applyState(state());
+    store.changes = changes({ branch: 'live-main', files: [{ path: 'src/live.ts', status: 'modified' }] });
+    const error = { data: { error: { message: 'attempt diff unavailable' } } };
+    mocks.api.getTeamAttemptDiff.mockRejectedValue(error);
+
+    await expect(store.loadAttemptDiff('attempt-1')).rejects.toBe(error);
+
+    expect(store.changes).toBeNull();
+    expect(store.changesLoading).toBe(false);
+    expect(store.actionError).toBe('attempt diff unavailable');
+    expect(mocks.notices.push).toHaveBeenCalledWith('Attempt diff failed: attempt diff unavailable', 'error');
+  });
+
   it('exports through the authenticated API download helper and a blob URL', async () => {
     const createObjectURL = vi.fn(() => 'blob:team-export');
     const revokeObjectURL = vi.fn();

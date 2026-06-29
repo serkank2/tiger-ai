@@ -726,10 +726,13 @@ export const useTeamStore = defineStore('team', () => {
   /** Load a single attempt's diff (same shape as `changes`) for side-by-side comparison. */
   async function loadAttemptDiff(attemptId: string, runId?: string): Promise<void> {
     const id = currentRunOrThrow(runId);
+    changes.value = null;
     changesLoading.value = true;
+    actionError.value = null;
     try {
       changes.value = await api.getTeamAttemptDiff(id, attemptId);
     } catch (error) {
+      changes.value = null;
       recordFailure('Attempt diff failed', error);
       throw error;
     } finally {

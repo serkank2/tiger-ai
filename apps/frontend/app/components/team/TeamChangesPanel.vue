@@ -18,6 +18,7 @@ const { t } = useT();
 const changes = computed(() => team.changes);
 const loading = computed(() => team.changesLoading);
 const readOnly = computed(() => team.readOnly);
+const error = computed(() => team.actionError);
 
 const STATUS_LABEL: Record<TeamChangeStatus, string> = {
   added: 'A',
@@ -395,6 +396,10 @@ async function copyPrUrl(): Promise<void> {
         <Spinner :size="20" /><span>{{ t('team.changes.computing') }}</span>
       </section>
 
+      <section v-else-if="!changes && error" class="ch-state empty" role="alert">
+        <p>{{ error }}</p>
+      </section>
+
       <section v-else-if="changes && !changes.isGitRepo" class="ch-state empty">
         <p>{{ changes.note ?? t('team.changes.notGitRepo') }}</p>
       </section>
@@ -483,6 +488,10 @@ async function copyPrUrl(): Promise<void> {
           </div>
         </footer>
       </template>
+
+      <section v-else class="ch-state empty">
+        <p>{{ t('team.changes.noChanges') }}</p>
+      </section>
     </div>
 
     <!-- Commit message prompt (app modal pattern; no window.prompt). -->

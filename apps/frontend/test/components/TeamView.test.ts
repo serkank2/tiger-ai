@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import TeamView from '~/components/team/TeamView.vue';
 import { useTeamStore } from '~/stores/team';
-import type { TeamRunState } from '~/types';
+import type { TeamChanges, TeamRunState } from '~/types';
 
 // The store and the view reach for the API, socket, connection, and notices at setup/mount.
 // Mock them so mounting never touches the network; the view's onMounted hydrate is then a
@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
       summary: { files: 0, insertions: 0, deletions: 0 },
       generatedAt: '2026-06-18T08:10:00.000Z',
     })),
+    getTeamAttemptDiff: vi.fn(),
     resumeTeamRun: vi.fn(),
   },
   notices: { push: vi.fn() },
@@ -79,6 +80,20 @@ function state(overrides: Partial<TeamRunState> = {}): TeamRunState {
     messageCount: 0,
     recentMessages: [],
     pendingSteering: [],
+    ...overrides,
+  };
+}
+
+function changes(overrides: Partial<TeamChanges> = {}): TeamChanges {
+  return {
+    isGitRepo: true,
+    head: 'abc123',
+    branch: 'main',
+    files: [{ path: 'src/app.ts', status: 'modified' }],
+    diff: '',
+    diffTruncated: false,
+    summary: { files: 1, insertions: 2, deletions: 1 },
+    generatedAt: '2026-06-18T08:10:00.000Z',
     ...overrides,
   };
 }
@@ -224,5 +239,49 @@ describe('TeamView run controls', () => {
 
     expect(mocks.api.getTeamChanges).not.toHaveBeenCalled();
     expect(wrapper.findComponent({ name: 'TeamChangesPanel' }).exists()).toBe(true);
+  });
+
+  it('shows loading instead of stale live changes while an attempt diff is pending', async () => {
+    const store = useTeamStore();
+    const wrapper = await mountControls(state({ status: 'running', turnCount: 1 }));
+    store.changes = changes({ branch: 'live-main', files: [{ path: 'src/live.ts', status: 'modified' }] });
+    let resolveAttempt!: (value: TeamChanges) => void;
+    const pending = new Promise<TeamChanges>((resolve) => {
+      resolveAttempt = resolve;
+    });
+    mocks.api.getTeamAttemptDiff.mockReturnValue(pending);
+
+    const request = store.loadAttemptDiff('attempt-1');
+    await wrapper.find('[data-testid="attempt-diff"]').trigger('click');
+    await flushPromises();
+
+    expect(store.changes).toBeNull();
+    expect(wrapper.text()).toContain('Computing changes');
+    expect(wrapper.text()).not.toContain('live-main');
+    expect(wrapper.text()).not.toContain('src/live.ts');
+
+    resolveAttempt(changes({ branch: 'attempt-branch', files: [{ path: 'src/attempt.ts', status: 'modified' }] }));
+    await request;
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('attempt-branch');
+    expect(wrapper.text()).toContain('src/attempt.ts');
+  });
+
+  it('shows the attempt diff error instead of stale live changes after a rejection', async () => {
+    const store = useTeamStore();
+    const wrapper = await mountControls(state({ status: 'running', turnCount: 1 }));
+    store.changes = changes({ branch: 'live-main', files: [{ path: 'src/live.ts', status: 'modified' }] });
+    const error = { data: { error: { message: 'attempt diff unavailable' } } };
+    mocks.api.getTeamAttemptDiff.mockRejectedValue(error);
+
+    await expect(store.loadAttemptDiff('attempt-1')).rejects.toBe(error);
+    await wrapper.find('[data-testid="attempt-diff"]').trigger('click');
+    await flushPromises();
+
+    expect(store.changes).toBeNull();
+    expect(wrapper.text()).toContain('attempt diff unavailable');
+    expect(wrapper.text()).not.toContain('live-main');
+    expect(wrapper.text()).not.toContain('src/live.ts');
   });
 });
