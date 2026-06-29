@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
       listTeamArtifacts: vi.fn(),
       getTeamRun: vi.fn(),
       getTeamChanges: vi.fn(),
+      downloadTeamExport: vi.fn(),
     },
     notices: {
       push: vi.fn(),
@@ -255,12 +256,16 @@ describe('useTeamStore', () => {
     expect(store.readOnly).toBe(true);
   }
 
-  it('ignores live role/done/steering/changes frames while a read-only run is open (even on id match)', async () => {
+  it('ignores live message/role/done/steering/changes frames while a read-only run is open (even on id match)', async () => {
     const store = useTeamStore();
     store.bindSocket();
     await openReadOnly(store);
 
     // Frames target the same id as the viewed run — they must be dropped, not applied.
+    mocks.listeners.get('team.message')?.({
+      type: 'team.message',
+      message: message('m2', { seq: 2 }),
+    });
     mocks.listeners.get('team.role')?.({
       type: 'team.role',
       runId: 'run-1',
@@ -282,6 +287,7 @@ describe('useTeamStore', () => {
       changes: { isGitRepo: true, head: 'abc', branch: 'main', summary: {}, generatedAt: 'now' },
     });
 
+    expect(store.messages.map((item) => item.id)).toEqual(['m1']);
     expect(store.roles[0]?.status).toBe('working');
     expect(store.activeRun?.doneGate.satisfied).toBe(false);
     expect(store.directives).toHaveLength(0);
@@ -312,5 +318,20 @@ describe('useTeamStore', () => {
     // Without quiet it still toasts.
     await expect(store.loadChanges('run-1')).rejects.toBeTruthy();
     expect(mocks.notices.push).toHaveBeenCalledWith('Team changes: diff failed', 'error');
+  });
+
+  it('exports through the authenticated API download helper and a blob URL', async () => {
+    const createObjectURL = vi.fn(() => 'blob:team-export');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    mocks.api.downloadTeamExport.mockResolvedValue(new Blob(['{}'], { type: 'application/json' }));
+
+    const store = useTeamStore();
+    await store.exportRun('json', 'run/1');
+
+    expect(mocks.api.downloadTeamExport).toHaveBeenCalledWith('run/1', 'json');
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:team-export');
   });
 });

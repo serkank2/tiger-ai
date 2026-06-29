@@ -28,6 +28,7 @@ describe('useApi Team methods', () => {
     await api.listTeamMessages('run/1', { cursor: 'abc', limit: 25 });
     await api.listTeamArtifacts('run/1');
     await api.readTeamArtifact('run/1', 'reports/plan.md');
+    await api.downloadTeamExport('run/1', 'json');
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://api.test/api/team/templates', undefined);
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://api.test/api/team/state', undefined);
@@ -49,5 +50,8 @@ describe('useApi Team methods', () => {
       'http://api.test/api/team/runs/run%2F1/artifacts/file?path=reports%2Fplan.md',
       undefined,
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(11, 'http://api.test/api/team/runs/run%2F1/export?format=json', {
+      responseType: 'blob',
+    });
   });
 });

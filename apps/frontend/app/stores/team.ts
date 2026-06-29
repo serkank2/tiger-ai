@@ -601,18 +601,36 @@ export const useTeamStore = defineStore('team', () => {
     if (runId) await Promise.all([loadMessages({ runId }), loadArtifacts(runId)]);
   }
 
+  function exportFilename(runId: string, format: 'json' | 'markdown'): string {
+    const safeId = runId.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'run';
+    return `team-${safeId}.${format === 'markdown' ? 'md' : 'json'}`;
+  }
+
   /** Trigger a browser download of the run transcript/artifacts as JSON or markdown. */
-  function exportRun(format: 'json' | 'markdown', runId = activeRunId.value): void {
+  async function exportRun(format: 'json' | 'markdown', runId = activeRunId.value): Promise<void> {
     const id = runId;
     if (!id) return;
-    const url = api.teamExportUrl(id, format);
     if (typeof document === 'undefined') return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const key = `export:${id}:${format}`;
+    setBusy(key, true);
+    actionError.value = null;
+    try {
+      const blob = await api.downloadTeamExport(id, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = exportFilename(id, format);
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      recordFailure('Team export failed', error);
+      throw error;
+    } finally {
+      setBusy(key, false);
+    }
   }
 
   // --- Single-role control + mid-run role management -----------------------
@@ -803,6 +821,7 @@ export const useTeamStore = defineStore('team', () => {
         applyState(next);
       });
       unbindTeamMessage = socket.onServerEvent('team.message', (msg) => {
+        if (readOnly.value) return;
         const message = (msg as unknown as TeamMessageEvent).message;
         if (message) appendMessage(message);
       });

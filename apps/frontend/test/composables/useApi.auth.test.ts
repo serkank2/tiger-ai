@@ -49,6 +49,12 @@ describe('useApi auth token + git-write routes', () => {
       method: 'POST',
       headers: { Authorization: 'Bearer sekret' },
     });
+
+    await api.downloadTeamExport('run/1', 'markdown');
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/runs/run%2F1/export?format=markdown', {
+      responseType: 'blob',
+      headers: { Authorization: 'Bearer sekret' },
+    });
   });
 
   it('wires the git stage/commit/pr routes', async () => {
