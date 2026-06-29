@@ -276,9 +276,11 @@ export function useApi() {
     // Run history + read-only rehydrate.
     listTeamRuns: () => req<TeamRunsResponse>('/api/team/runs'),
     getTeamRun: (id: string) => req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}`),
-    /** Absolute URL of the export download (json|markdown); the browser fetches it directly. */
+    /** Absolute export URL for non-authenticated callers that explicitly need an href. */
     teamExportUrl: (id: string, format: 'json' | 'markdown') =>
       `${base}/api/team/runs/${encodeURIComponent(id)}/export?format=${format}`,
+    downloadTeamExport: (id: string, format: 'json' | 'markdown') =>
+      req<Blob>(`/api/team/runs/${encodeURIComponent(id)}/export?format=${format}`, { responseType: 'blob' }),
 
     // Single-role control + mid-run role management.
     pauseTeamRole: (id: string, roleId: string) =>

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     listTeamMessages: vi.fn(async () => ({ items: [], nextCursor: null, hasMore: false })),
     listTeamArtifacts: vi.fn(async () => []),
     teamExportUrl: vi.fn((id: string, fmt: string) => `http://api.test/api/team/runs/${id}/export?format=${fmt}`),
+    downloadTeamExport: vi.fn(async () => new Blob(['{}'], { type: 'application/json' })),
   },
   notices: { push: vi.fn() },
 }));
@@ -69,6 +70,8 @@ describe('TeamRunHistory', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:team-export') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
   });
 
   it('lists past runs newest-first with role/turn/message counts', async () => {
@@ -119,6 +122,7 @@ describe('TeamRunHistory', () => {
 
     const md = wrapper.findAll('.run .bb').find((b) => b.text() === 'MD');
     await md!.trigger('click');
-    expect(mocks.api.teamExportUrl).toHaveBeenCalledWith('run-9', 'markdown');
+    await flushPromises();
+    expect(mocks.api.downloadTeamExport).toHaveBeenCalledWith('run-9', 'markdown');
   });
 });
