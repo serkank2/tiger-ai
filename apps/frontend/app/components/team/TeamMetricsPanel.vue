@@ -22,7 +22,7 @@ function fmtDuration(ms: number | undefined): string {
 
 const tokensLabel = computed(() => (m.value?.tokens == null ? 'n/a' : String(m.value.tokens)));
 const costLabel = computed(() => (m.value?.cost == null ? 'n/a' : `$${m.value.cost.toFixed(2)}`));
-const naTip = 'Token/cost totals need a usage-reporting runner — the CLIs run as interactive PTYs and do not self-report usage.';
+const naTip = 'Token/cost totals need a usage-reporting runner; the CLIs run as interactive PTYs and do not self-report usage.';
 </script>
 
 <template>
@@ -42,7 +42,7 @@ const naTip = 'Token/cost totals need a usage-reporting runner — the CLIs run 
         <tbody>
           <tr v-for="r in m.perRole" :key="r.roleId">
             <td class="rn" :title="r.roleName">{{ r.roleName }}</td>
-            <td class="prov">{{ r.provider ?? '—' }}</td>
+            <td class="prov">{{ r.provider ?? 'n/a' }}</td>
             <td class="num">{{ r.turnCount }}</td>
             <td class="num">{{ fmtDuration(r.durationMs) }}</td>
           </tr>
@@ -71,7 +71,7 @@ summary {
 .m-body { margin-top: var(--space-2); }
 .totals { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .kv { display: flex; flex-direction: column; }
-.k { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.k { font-size: var(--text-xs); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
 .v { font-variant-numeric: tabular-nums; color: var(--text); }
 .v.na { color: var(--text-faint); font-style: italic; }
 .per-role { width: 100%; margin-top: var(--space-2); border-collapse: collapse; }

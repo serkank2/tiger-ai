@@ -77,7 +77,7 @@ describe('TeamAttemptsPanel', () => {
     expect(rows[0]!.text()).toContain('Completed');
     expect(rows[0]!.text()).toContain('2 files');
     expect(rows[0]!.text()).toContain('+10');
-    expect(rows[0]!.text()).toContain('−3');
+    expect(rows[0]!.text()).toContain('-3');
     // The current attempt is tagged.
     expect(rows[1]!.text()).toContain('current');
   });

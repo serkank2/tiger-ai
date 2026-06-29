@@ -264,7 +264,7 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
 }
 .rc-line { display: flex; align-items: center; gap: var(--space-2); }
 .rc-name { font-weight: 600; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.rc-status { font-size: 10px; color: var(--text-faint); text-transform: uppercase; }
+.rc-status { font-size: var(--text-xs); color: var(--text-faint); text-transform: uppercase; }
 .rc-btns { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
 .rc-form { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
 .rc-input {

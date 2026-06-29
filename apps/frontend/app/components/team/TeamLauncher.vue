@@ -768,7 +768,7 @@ h3.mt {
     height: 42px;
   }
   .goal-label {
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .goal-mark {
     width: 34px;
@@ -776,7 +776,7 @@ h3.mt {
   .agent-node {
     min-width: 54px;
     padding: 4px 6px;
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
   .agent-node::before {
     width: 6px;

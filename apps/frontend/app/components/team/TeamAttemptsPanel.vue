@@ -39,7 +39,7 @@ function canPromote(a: TeamAttemptSnapshot): boolean {
 function summaryLabel(a: TeamAttemptSnapshot): string {
   if (!a.summary) return t('team.attempts.noDiff');
   const { files, insertions, deletions } = a.summary;
-  return `${files} file${files === 1 ? '' : 's'} · +${insertions} −${deletions}`;
+  return `${files} file${files === 1 ? '' : 's'}; +${insertions}; -${deletions}`;
 }
 
 async function startNewAttempt(): Promise<void> {
@@ -76,7 +76,7 @@ function viewDiff(a: TeamAttemptSnapshot): void {
           </div>
           <div class="a-meta">
             <span class="a-sum">{{ summaryLabel(a) }}</span>
-            <span v-if="a.branch" class="a-branch" :title="a.branch">⎇ {{ a.branch }}</span>
+            <span v-if="a.branch" class="a-branch" :title="a.branch">Branch: {{ a.branch }}</span>
           </div>
           <div class="a-actions">
             <BaseButton size="sm" variant="ghost" :title="t('team.attempts.viewDiffTitle')" @click="viewDiff(a)">{{ t('team.attempts.diff') }}</BaseButton>
@@ -150,7 +150,7 @@ summary .n { color: var(--text-faint); }
 .st-failed { color: var(--red); }
 .st-superseded { color: var(--slate); }
 .a-tag {
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 1px 6px;

@@ -59,13 +59,13 @@ async function discard(taskId: string): Promise<void> {
       <ul class="coord-list">
         <li v-for="h in pendingHandoffs" :key="h.id" class="coord-row pending" data-testid="handoff-pending">
           <span class="badge b-pending">{{ t('team.coordination.blocking') }}</span>
-          <span class="flow">{{ roleName(h.fromRoleId) }} → {{ roleName(h.toRoleId) }}</span>
+          <span class="flow">{{ roleName(h.fromRoleId) }} to {{ roleName(h.toRoleId) }}</span>
           <span class="task">{{ h.taskId }}</span>
           <span class="ttl">{{ h.title }}</span>
         </li>
         <li v-for="h in resolvedHandoffs" :key="h.id" class="coord-row done" data-testid="handoff-done">
           <span class="badge b-done">{{ t('team.coordination.done') }}</span>
-          <span class="flow">{{ roleName(h.fromRoleId) }} → {{ roleName(h.toRoleId) }}</span>
+          <span class="flow">{{ roleName(h.fromRoleId) }} to {{ roleName(h.toRoleId) }}</span>
           <span class="task">{{ h.taskId }}</span>
           <span class="ttl">{{ h.title }}</span>
         </li>
@@ -91,7 +91,7 @@ async function discard(taskId: string): Promise<void> {
         <li v-for="w in worktrees" :key="w.branch" class="coord-row" data-testid="worktree-row">
           <span class="badge" :class="`wt-${w.status}`">{{ w.status }}</span>
           <span class="task">{{ w.taskId }}</span>
-          <span class="branch">⎇ {{ w.branch }}</span>
+          <span class="branch">Branch: {{ w.branch }}</span>
           <span v-if="w.note" class="note">{{ w.note }}</span>
           <span class="spacer" />
           <template v-if="!readOnly && (w.status === 'conflict' || w.status === 'failed')">
@@ -113,7 +113,7 @@ async function discard(taskId: string): Promise<void> {
         </li>
       </ul>
       <p v-if="keptWorktrees.length" class="coord-hint">
-        {{ keptWorktrees.length }} worktree(s) were kept un-merged after a conflict — resolve manually, then Merge back or Discard.
+        {{ keptWorktrees.length }} worktree(s) were kept un-merged after a conflict. Resolve manually, then Merge back or Discard.
       </p>
     </div>
   </section>
@@ -153,7 +153,7 @@ async function discard(taskId: string): Promise<void> {
   display: inline-flex; align-items: center; justify-content: center;
   flex: none;
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-sm);
-  font-size: 11px; font-weight: 700; border: 1px solid var(--border-strong);
+  font-size: var(--text-xs); font-weight: 700; border: 1px solid var(--border-strong);
 }
 .b-pending { color: var(--amber); border-color: var(--amber); }
 .b-done { color: var(--green); border-color: var(--green); }

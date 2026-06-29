@@ -50,10 +50,8 @@ onBeforeUnmount(() => {
           class="close"
           size="sm"
           variant="ghost"
-          icon-only
-          :aria-label="t('team.terminal.close')"
           @click="emit('close')"
-        >✕</BaseButton>
+        >{{ t('team.terminal.close') }}</BaseButton>
       </div>
       <div ref="host" class="host" />
     </div>
