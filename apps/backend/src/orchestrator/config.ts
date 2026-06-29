@@ -36,10 +36,12 @@ export const TIGER_TIMING_LIMITS = {
 } satisfies Record<keyof TigerConfig['timing'], NumberLimit>;
 
 export const TIGER_EXECUTION_LIMITS = {
-  maxConcurrent: { min: 1, max: 64 },
+  // 0 = UNLIMITED: launch every selected agent at once (no per-stage concurrency cap).
+  maxConcurrent: { min: 0, max: 64 },
+  maxAttempts: { min: 1, max: 10 },
   lockTtlMs: { min: 1_000, max: 24 * 60 * 60_000 },
   maxCorrectionCycles: { min: 0, max: 20 },
-} satisfies Record<'maxConcurrent' | 'lockTtlMs' | 'maxCorrectionCycles', NumberLimit>;
+} satisfies Record<'maxConcurrent' | 'maxAttempts' | 'lockTtlMs' | 'maxCorrectionCycles', NumberLimit>;
 
 const DEFAULT_AGENT_TIMEOUT_MS = 60 * 60 * 1000;
 
@@ -133,8 +135,13 @@ export function defaultTigerConfig(): TigerConfig {
     execution: {
       parallel: true,
       locking: true,
-      maxConcurrent: 4,
+      // 0 = unlimited: every selected agent starts at once (the user already picks how many run).
+      maxConcurrent: 0,
       lockTtlMs: 30 * 60 * 1000,
+      // One automatic retry of a failed agent run before it is left failed.
+      maxAttempts: 2,
+      // Skip a failed-but-partially-successful stage and keep the auto-run going.
+      continueOnFailure: true,
       maxCorrectionCycles: 2,
       deleteTigerOnComplete: false,
     },
@@ -161,6 +168,10 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
     execution: {
       parallel: typeof p.execution?.parallel === 'boolean' ? p.execution.parallel : def.execution.parallel,
       locking: typeof p.execution?.locking === 'boolean' ? p.execution.locking : def.execution.locking,
+      continueOnFailure:
+        typeof p.execution?.continueOnFailure === 'boolean'
+          ? p.execution.continueOnFailure
+          : def.execution.continueOnFailure,
       deleteTigerOnComplete:
         typeof p.execution?.deleteTigerOnComplete === 'boolean'
           ? p.execution.deleteTigerOnComplete
@@ -168,6 +179,7 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
       ...normalizeNumberRecord(
         {
           maxConcurrent: def.execution.maxConcurrent,
+          maxAttempts: def.execution.maxAttempts,
           lockTtlMs: def.execution.lockTtlMs,
           maxCorrectionCycles: def.execution.maxCorrectionCycles,
         },
@@ -319,10 +331,10 @@ function validateCliToolPatch(provider: Provider, raw: unknown): string | null {
 
 function validateExecutionPatch(raw: unknown): string | null {
   if (!isPlainRecord(raw)) return 'execution must be an object';
-  const allowed = ['parallel', 'locking', 'deleteTigerOnComplete', ...Object.keys(TIGER_EXECUTION_LIMITS)];
+  const allowed = ['parallel', 'locking', 'continueOnFailure', 'deleteTigerOnComplete', ...Object.keys(TIGER_EXECUTION_LIMITS)];
   const unknown = unknownKey(raw, allowed);
   if (unknown) return `unknown execution field: ${unknown}`;
-  for (const field of ['parallel', 'locking', 'deleteTigerOnComplete'] as const) {
+  for (const field of ['parallel', 'locking', 'continueOnFailure', 'deleteTigerOnComplete'] as const) {
     if (field in raw && typeof raw[field] !== 'boolean') return `execution.${field} must be a boolean`;
   }
   const numeric: Record<string, unknown> = {};

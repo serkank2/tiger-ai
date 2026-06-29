@@ -236,7 +236,7 @@ test('PUT /api/tiger/config rejects invalid timing, execution, executable, and p
       { name: 'non-numeric timing', body: { timing: { ...defaults.timing, markerPollMs: 'fast' as never } } },
       { name: 'negative timing', body: { timing: { ...defaults.timing, readyIdleMs: -1 } } },
       { name: 'out-of-range timing', body: { timing: { ...defaults.timing, agentTimeoutMs: 999_999_999 } } },
-      { name: 'invalid execution number', body: { execution: { ...defaults.execution, maxConcurrent: 0 } } },
+      { name: 'invalid execution number', body: { execution: { ...defaults.execution, maxConcurrent: 65 } } },
       { name: 'unknown executable', body: { cli: { ...defaults.cli, claude: { ...defaults.cli.claude, executable: 'node' } } } },
       {
         name: 'unknown permission mode',

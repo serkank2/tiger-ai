@@ -521,3 +521,36 @@ test('an all-blocked execute stage is reported failed (not completed), so auto-a
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
+
+test('a failed agent run is retried once (maxAttempts=2) before the stage is left failed (#3)', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-retry-'));
+  try {
+    const manager = new TerminalManager();
+    const orch = new Orchestrator(manager);
+    await orch.initialize(workspace, 'Project prompt');
+    // 'missing' mode produces no marker and no output. Under the orchestrator's shell-hosted PTY the
+    // CLI exit does not end the terminal, so each attempt fails via the agent timeout — shortened here
+    // to keep the (two-attempt) test fast. The default execution.maxAttempts is 2 → exactly one retry.
+    installFakeCliConfig(orch, 'missing');
+    const internals = orch as unknown as { config: TigerConfig };
+    internals.config = { ...internals.config, timing: { ...internals.config.timing, agentTimeoutMs: 1500 } };
+
+    await orch.startStage('brainstorming', fakeAgentConfig(orch));
+    // Two attempts, each ending on the (shortened) agent timeout after a fresh shell+PTY spawn, so
+    // allow generous headroom for slow CI shell startup.
+    const deadline = Date.now() + 30000;
+    while (orch.getState().busy) {
+      if (Date.now() > deadline) assert.fail('brainstorming stage did not finish');
+      await delay(10);
+    }
+
+    const stage = orch.getState().stages['brainstorming']!;
+    assert.equal(stage.status, 'failed');
+    assert.equal(stage.runs.length, 1);
+    // The single run was attempted exactly twice: the original plus one automatic retry.
+    assert.equal(stage.runs[0]!.attempts, 2);
+    assert.equal(stage.runs[0]!.state, 'failed');
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});

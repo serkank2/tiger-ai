@@ -518,10 +518,25 @@ export class Orchestrator extends EventEmitter {
     if (!this.autoAdvance) return;
     const stage = this.stages[stageId];
     if (stage.status !== 'completed') {
-      this.autoAdvance = false; // stop the chain on failure/stop
-      void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`).catch(() => {});
-      this.emitState();
-      return;
+      // A user stop/interrupt always halts. Otherwise, when continue-on-failure is enabled and the
+      // stage FAILED but still produced some output, mark it `continued` (downstream agents then get
+      // the upstream-continued warning) and push forward instead of halting the whole auto-run. The
+      // upstream-artifacts check below still stops a chain whose next stage would have nothing to run.
+      const userHalted =
+        stage.status === 'stopped' || stage.status === 'interrupted' || !!this.abort?.signal.aborted;
+      const producedSome = stage.runs.some((r) => r.state === 'completed');
+      if (this.config.execution.continueOnFailure && stage.status === 'failed' && producedSome && !userHalted) {
+        this.stages[stageId].continued = true;
+        void logNote(
+          this.paths!.runLogFile,
+          `Auto-continuing past failed stage ${stageId} (partial success); proceeding to the next stage.`,
+        ).catch(() => {});
+      } else {
+        this.autoAdvance = false; // stop the chain on a user stop, or a stage that produced nothing
+        void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`).catch(() => {});
+        this.emitState();
+        return;
+      }
     }
     const idx = STAGE_ORDER.indexOf(stageId);
     const next = STAGE_ORDER[idx + 1];
@@ -818,7 +833,7 @@ export class Orchestrator extends EventEmitter {
     }
     await runPool(runs, this.concurrency(stageId, runs.length, cfg.parallel), async (run) => {
       if (signal.aborted) return;
-      await this.executeAgentRun(run, await this.composeExtrasFor(run), signal);
+      await this.executeAgentRunWithRetry(run, await this.composeExtrasFor(run), signal);
     });
   }
 
@@ -915,7 +930,7 @@ export class Orchestrator extends EventEmitter {
       void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`).catch(() => {});
       this.emitState();
 
-      await this.executeAgentRun(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
+      await this.executeAgentRunWithRetry(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
 
       // Semantic completion gate: a finished run that did NOT emit an EXECUTION_RESULT self-report
       // (or reported blocked) is treated as blocked, never silently done.
@@ -1468,6 +1483,36 @@ export class Orchestrator extends EventEmitter {
     this.emitState();
   }
 
+  /**
+   * Run an agent, automatically retrying a FAILED run up to `execution.maxAttempts` total attempts.
+   * A success, a user stop/interrupt, or an aborted signal ends the loop immediately; only a genuine
+   * `failed` state with attempts remaining triggers a retry. `executeAgentRun` already re-increments
+   * `run.attempts` and clears the prior marker/output, so each retry starts clean. Used by the
+   * auto-run stage workers; the manual `retryStage` path stays a single explicit pass.
+   */
+  private async executeAgentRunWithRetry(
+    run: AgentRun,
+    extras: Partial<ComposeOptions>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const maxAttempts = Math.max(1, this.config.execution.maxAttempts);
+    for (;;) {
+      await this.executeAgentRun(run, extras, signal);
+      if (run.state === 'completed') return;
+      if (signal.aborted || run.state === 'stopped' || run.state === 'interrupted') return;
+      if (run.attempts >= maxAttempts) return; // retries exhausted — leave it failed
+      void logNote(
+        this.paths!.runLogFile,
+        `${run.label} failed (attempt ${run.attempts}/${maxAttempts}); retrying.`,
+      ).catch(() => {});
+      // Drop the exited PTY before retrying: TerminalSession.start() does NOT relaunch an
+      // already-started/exited session (that is what restart() is for), so reusing the same terminal
+      // would hang waiting for a banner that never comes. remove() disposes the session, and
+      // executeAgentRun's registerRun re-creates a fresh definition so the next attempt spawns a new PTY.
+      await this.manager.remove(run.terminalId).catch(() => {});
+    }
+  }
+
   // --- helpers ---
 
   private makeRun(
@@ -1497,7 +1542,12 @@ export class Orchestrator extends EventEmitter {
       outputRel: this.paths!.rel(outputPath),
       markerPath: this.paths!.markerFile(stage, id),
       promptPath: this.paths!.promptFileFor(stage, id),
-      command: buildLaunchCommand(this.config, type, { model, effort, permission }),
+      // Honor the stage's explicitly-selected permission mode (yolo/dangerous/full). Without this
+      // opt-in the launch builder strips the blanket `--dangerously-*` flag and the agent would open
+      // in the CLI's restricted prompt-for-everything default. Mirrors the Team runner.
+      command: buildLaunchCommand(this.config, type, { model, effort, permission }, {
+        allowDangerous: config.tiger.honorDangerousPermissions,
+      }),
       state: 'pending',
       attempts: 0,
       taskId,
@@ -1508,14 +1558,18 @@ export class Orchestrator extends EventEmitter {
     if (!parallel) return 1;
     // Cap parallel fan-out at execution.maxConcurrent so a stage with many agents never
     // launches an unbounded number of PTYs at once; the rest queue behind the pool.
-    const cap = boundedConcurrency(this.config.execution.maxConcurrent);
+    // maxConcurrent <= 0 means UNLIMITED: every selected agent starts at once (cap = count).
+    const max = this.config.execution.maxConcurrent;
+    const cap = max <= 0 ? count : boundedConcurrency(max);
     return Math.max(1, Math.min(cap, count));
   }
 
   /** Concurrency for the claim-draining stages (executing-plan / task-review FIX). */
   private drainConcurrency(parallel: boolean, slots: number): number {
     if (!parallel) return 1;
-    const cap = boundedConcurrency(this.config.execution.maxConcurrent);
+    // maxConcurrent <= 0 means UNLIMITED: run one worker per configured slot (no extra cap).
+    const max = this.config.execution.maxConcurrent;
+    const cap = max <= 0 ? Math.max(1, slots) : boundedConcurrency(max);
     return Math.max(1, Math.min(cap, Math.max(1, slots)));
   }
 
