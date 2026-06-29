@@ -29,6 +29,9 @@ import type { TeamMessage } from './types.js';
 
 export interface RunRoleTurnOptions {
   manager: TerminalManager;
+  /** Execution cwd for the role process. Defaults to the workspace that owns `paths`. */
+  workspace?: string;
+  /** Canonical Tiger paths for run bookkeeping (prompt/output/marker/artifact files). */
   paths: TigerPaths;
   config: TigerConfig;
   runId: string;
@@ -94,10 +97,9 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
   // id so the live terminal id is deterministic and known to the UI before the turn
   // finishes); otherwise generate one for standalone callers.
   const turnId = opts.turnId ?? nanoid();
-  // The team works on the REAL project, so the agent's working directory is the
-  // workspace (project root), not the .tiger metadata root. Team bookkeeping (prompt,
-  // output, marker) still lives under .tiger via the absolute paths below.
-  const workspace = path.dirname(runOpts.paths.root);
+  // The team works on the REAL project (or an isolated per-task worktree), so the
+  // agent's cwd is separate from the canonical .tiger run bookkeeping path.
+  const workspace = opts.workspace ?? path.dirname(runOpts.paths.root);
   const runtimeDir = teamRuntimeDir(runOpts.paths, runOpts.runId);
   const promptPath = path.join(runtimeDir, `${turnId}.prompt.md`);
   const outputPath = path.join(runtimeDir, `${turnId}.output.md`);

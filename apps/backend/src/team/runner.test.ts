@@ -14,6 +14,13 @@ import { composeRoleTurnPrompt, type TeamRole } from './compose-turn.js';
 import { appendTranscriptMessages, readTranscriptMessages, systemBlockerMessage } from './message-bus.js';
 import { runRoleTurn } from './runner.js';
 import { RoleCliSession } from './role-session.js';
+import {
+  createTeamTurnRunner,
+  TeamPaths,
+  type TeamRoleInstance,
+  type TeamRunState,
+  type TeamTurnRecord,
+} from './TeamOrchestrator.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'orchestrator', 'fake-cli.mjs');
 
@@ -191,6 +198,146 @@ test('runRoleTurn completes recoverable malformed output and appends a parse-war
   } finally {
     await manager.killAll();
     await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runRoleTurn keeps run artifacts under canonical paths when executing in an isolated workspace', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-canonical-'));
+  const isolated = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-worktree-'));
+  const manager = new TerminalManager();
+  try {
+    const paths = await ensureScaffold(workspace, 'Build the AI team feature.');
+    const session = {
+      isAlive: false,
+      noteFed() {
+        /* no-op */
+      },
+      async runPrompt(input: { outputPath: string; markerPath: string }) {
+        await fs.writeFile(
+          input.outputPath,
+          [
+            '```TeamMessage',
+            JSON.stringify({ kind: 'chat', to: 'all', body: 'Wrote from isolated cwd.' }, null, 2),
+            '```',
+            '',
+          ].join('\n'),
+          'utf8',
+        );
+        await fs.writeFile(input.markerPath, 'done', 'utf8');
+        return { state: 'completed' as const, completion: 'marker' as const, alive: false };
+      },
+    } as unknown as RoleCliSession;
+
+    const result = await runRoleTurn({
+      manager,
+      workspace: isolated,
+      paths,
+      config: fakeConfig('team'),
+      runId: 'team-run-canonical',
+      turnId: 'turn-iso',
+      role,
+      session,
+    });
+
+    assert.equal(result.outcome.state, 'completed');
+    assert.equal(manager.getDefinition(result.terminalId)?.cwd, isolated);
+    assert.equal(result.promptPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.prompt.md'));
+    assert.equal(result.outputPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.output.md'));
+    assert.equal(result.markerPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.done'));
+
+    const artifactLog = await fs.readFile(path.join(paths.root, 'team', 'team-run-canonical', 'artifacts.ndjson'), 'utf8');
+    assert.match(artifactLog, /turn-iso\.prompt\.md/);
+    assert.equal(await fs.stat(path.join(isolated, '.tiger')).then(() => true, () => false), false);
+  } finally {
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(isolated, { recursive: true, force: true });
+  }
+});
+
+test('createTeamTurnRunner preserves canonical run paths while using the scheduled execution workspace', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-adapter-canonical-'));
+  const isolated = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-adapter-worktree-'));
+  const manager = new TerminalManager();
+  const runId = 'team-run-adapter-canonical';
+  const now = new Date().toISOString();
+  const engineRole: TeamRoleInstance = {
+    id: 'developer',
+    name: 'Developer',
+    tool: 'codex',
+    responsibilities: ['Implement the assigned task.'],
+    canWriteCode: true,
+    requiredForSignoff: false,
+    status: 'idle',
+  };
+  const state: TeamRunState = {
+    runId,
+    workspace,
+    tigerRoot: path.join(workspace, '.tiger'),
+    status: 'running',
+    projectComplete: false,
+    goal: 'Build the AI team feature.',
+    roles: [engineRole],
+    kindQueuedTasks: [],
+    round: 1,
+    turnCount: 0,
+    currentTurn: null,
+    turns: [],
+    directives: [],
+    signoffs: [],
+    verifications: [],
+    tasks: null,
+    findings: null,
+    messageCount: 0,
+    pendingSteeringCount: 0,
+    leadReviewPending: false,
+    consecutiveIdleLeadTurns: 0,
+    handoffs: [],
+    inboxes: {},
+    taskWorktrees: [],
+    materialChangeAt: now,
+    createdAt: now,
+  };
+  const turn: TeamTurnRecord = {
+    id: 'turn-adapter',
+    runId,
+    roleId: engineRole.id,
+    roleName: engineRole.name,
+    status: 'running',
+    round: 1,
+    startedAt: now,
+    messageSeqs: [],
+    appliedDirectiveIds: [],
+    terminalId: `team-${runId}-${engineRole.id}`,
+  };
+  const runner = createTeamTurnRunner({ manager, config: fakeConfig('team') });
+
+  try {
+    await ensureScaffold(workspace, 'Build the AI team feature.');
+    const paths = new TeamPaths(workspace, runId);
+    const result = await runner.runRoleTurn({
+      workspace: isolated,
+      paths,
+      runId,
+      role: engineRole,
+      turn,
+      state,
+      messages: [],
+      appliedSteering: [],
+      signal: new AbortController().signal,
+      completionHints: [],
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(manager.getDefinition(`team-${runId}-${engineRole.id}`)?.cwd, isolated);
+    const artifactLog = await fs.readFile(path.join(paths.runDir, 'artifacts.ndjson'), 'utf8');
+    assert.match(artifactLog, /turn-adapter\.prompt\.md/);
+    assert.equal(await fs.stat(path.join(isolated, '.tiger')).then(() => true, () => false), false);
+  } finally {
+    await runner.disposeRun?.(runId, { kill: true });
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(isolated, { recursive: true, force: true });
   }
 });
 
