@@ -22,6 +22,7 @@ const log = logger.child({ mod: 'git/write' });
 
 const GIT_TIMEOUT_MS = 30_000;
 const GH_TIMEOUT_MS = 60_000;
+const SAFE_STAGE_PATHS = ['.', ':(exclude).kaplan', ':(exclude).kaplan/**'] as const;
 
 interface RunResult {
   ok: boolean;
@@ -114,7 +115,7 @@ export async function hasStagedOrUnstagedChanges(repoDir: string, run: CommandRu
 /** Stage everything (`git add -A`). Throws `HttpError` if not a repo or git fails. */
 export async function stageAll(repoDir: string, run: CommandRunner = defaultRunner): Promise<void> {
   await assertRepo(repoDir);
-  const res = await git(run, repoDir, ['add', '-A']);
+  const res = await git(run, repoDir, ['add', '-A', '--', ...SAFE_STAGE_PATHS]);
   if (!res.ok) {
     throw new HttpError(500, 'internal', 'git add failed', res.stderr.trim() || `exit ${res.code}`);
   }

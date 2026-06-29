@@ -7,9 +7,10 @@ import path from 'node:path';
 import { HttpError } from '../http/errors.js';
 import { commit, createPullRequest, currentBranch, hasStagedOrUnstagedChanges, stageAll, type CommandRunner } from './write.js';
 
-function git(cwd: string, args: string[]): void {
+function git(cwd: string, args: string[]): string {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr || r.stdout}`);
+  return r.stdout.trim();
 }
 
 function gitAvailable(): boolean {
@@ -48,6 +49,54 @@ test('stageAll + commit happy path returns a sha and summary', async (t) => {
 
     const branch = await currentBranch(dir);
     assert.ok(branch, 'has a branch after commit');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('stageAll does not stage managed .kaplan worktree files even without an ignore rule', async (t) => {
+  if (!gitAvailable()) return t.skip('git not available');
+  const dir = await tmpDir();
+  try {
+    await initRepo(dir);
+    await fs.mkdir(path.join(dir, '.kaplan', 'worktrees', 'TASK-001'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.kaplan', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
+    await fs.writeFile(path.join(dir, 'feature.ts'), 'export const y = 2;\n', 'utf8');
+
+    await stageAll(dir);
+
+    const staged = git(dir, ['diff', '--cached', '--name-only']);
+    assert.match(staged, /feature\.ts/);
+    assert.doesNotMatch(staged, /\.kaplan\//);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('stageAll git add dry-run pathspec excludes managed .kaplan worktree files', async (t) => {
+  if (!gitAvailable()) return t.skip('git not available');
+  const dir = await tmpDir();
+  const addArgs: string[][] = [];
+  try {
+    await initRepo(dir);
+    const dryRun: CommandRunner = async (cmd, args, cwd, timeoutMs) => {
+      if (cmd === 'git' && args[0] === 'add') {
+        addArgs.push(args);
+        const r = spawnSync(cmd, ['add', '--dry-run', ...args.slice(1)], { cwd, encoding: 'utf8', timeout: timeoutMs });
+        return { ok: r.status === 0, code: r.status, spawnFailed: false, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+      }
+      const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs });
+      return { ok: r.status === 0, code: r.status, spawnFailed: false, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+    };
+
+    await fs.mkdir(path.join(dir, '.kaplan', 'worktrees', 'TASK-001'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.kaplan', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
+    await fs.writeFile(path.join(dir, 'feature.ts'), 'export const z = 3;\n', 'utf8');
+
+    await stageAll(dir, dryRun);
+
+    assert.deepEqual(addArgs, [['add', '-A', '--', '.', ':(exclude).kaplan', ':(exclude).kaplan/**']]);
+    assert.equal(git(dir, ['diff', '--cached', '--name-only']), '');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
