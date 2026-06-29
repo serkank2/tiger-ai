@@ -202,6 +202,11 @@ function requireActiveRun(ctx: AppCtx, id: string): EngineTeamRunState {
   return state;
 }
 
+/** Resolve the active live run's workspace only after validating the path id. */
+function requireActiveRunWorkspace(ctx: AppCtx, id: string): string {
+  return requireActiveRun(ctx, id).workspace;
+}
+
 interface ArtifactLine {
   runId?: string;
   turnId?: string;
@@ -450,44 +455,26 @@ export function createTeamRouter(ctx: AppCtx): Router {
   // The real product changes the team made in its workspace (git working-tree diff vs HEAD).
   // This is the "what did the agents actually change?" view — distinct from `/artifacts`,
   // which lists the run's .tiger bookkeeping files.
-  router.get('/runs/:id/changes', async (_req, res) => {
-    const state = orch.tryGetState();
-    const workspace = state?.workspace ?? knownWorkspace(ctx);
-    if (!workspace) {
-      res.json({
-        isGitRepo: false,
-        head: null,
-        branch: null,
-        files: [],
-        diff: '',
-        diffTruncated: false,
-        summary: { files: 0, insertions: 0, deletions: 0 },
-        generatedAt: new Date().toISOString(),
-        note: 'No team workspace is known yet.',
-      });
-      return;
-    }
+  router.get('/runs/:id/changes', async (req, res) => {
+    const workspace = requireActiveRunWorkspace(ctx, req.params.id);
     res.json(await computeTeamChanges(workspace, new Date().toISOString()));
   });
 
   // ----------------------------------------------------------------------------
   // Git WRITE actions (Stage / Commit / Create-PR). These are sensitive, outward
-  // operations on the run's workspace, so each resolves the workspace exactly like
-  // `/changes` and 404s when no workspace is known. Helpers throw `HttpError`, which
+  // operations on the live run's workspace, so each validates `:id` against the
+  // active run before touching git. Helpers throw `HttpError`, which
   // Express 5 forwards to the central error middleware for a stable `{ code }`.
   // ----------------------------------------------------------------------------
 
-  /** Resolve the workspace dir for a git-write action, or 404 when none is known. */
-  function requireGitWorkspace(): string {
-    const state = orch.tryGetState();
-    const workspace = state?.workspace ?? knownWorkspace(ctx);
-    if (!workspace) throw notFound('no team workspace is known yet');
-    return workspace;
+  /** Resolve the workspace dir for a git-write action after active-run validation. */
+  function requireGitWorkspace(id: string): string {
+    return requireActiveRunWorkspace(ctx, id);
   }
 
   // POST /api/team/runs/:id/git/stage → `git add -A`; return the updated changeset.
-  router.post('/runs/:id/git/stage', async (_req, res) => {
-    const workspace = requireGitWorkspace();
+  router.post('/runs/:id/git/stage', async (req, res) => {
+    const workspace = requireGitWorkspace(req.params.id);
     await stageAll(workspace);
     res.json(await computeTeamChanges(workspace, new Date().toISOString()));
   });
@@ -495,7 +482,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
   // POST /api/team/runs/:id/git/commit { message } → commit; 422 on empty message;
   // returns { committed, sha, summary } (committed:false for "nothing to commit").
   router.post('/runs/:id/git/commit', async (req, res) => {
-    const workspace = requireGitWorkspace();
+    const workspace = requireGitWorkspace(req.params.id);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const result = await gitCommit(workspace, asString(body.message));
     res.json({ ...result, changes: await computeTeamChanges(workspace, new Date().toISOString()) });
@@ -504,7 +491,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
   // POST /api/team/runs/:id/git/pr { title, body?, base? } → open a PR via `gh`;
   // returns { url } or an actionable HttpError (missing/unauth gh, no branch, …).
   router.post('/runs/:id/git/pr', async (req, res) => {
-    const workspace = requireGitWorkspace();
+    const workspace = requireGitWorkspace(req.params.id);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const result = await createPullRequest(workspace, {
       title: asString(body.title),

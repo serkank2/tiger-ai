@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -100,9 +101,43 @@ function runState(input: CreateTeamRunInput, mode: TeamOrchestrationMode): Engin
   };
 }
 
+function runInput(workspace: string): CreateTeamRunInput {
+  return {
+    workspace,
+    goal: 'Build the feature',
+    roles: [{ id: 'lead', name: 'Lead', tool: 'codex' }],
+  };
+}
+
+function gitAvailable(): boolean {
+  return spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
+}
+
+function git(cwd: string, args: string[]): string {
+  const res = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  if (res.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${res.stderr || res.stdout}`);
+  return res.stdout.trim();
+}
+
+async function makeGitRepo(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-route-git-'));
+  git(dir, ['init', '-q']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+  git(dir, ['config', 'commit.gpgsign', 'false']);
+  await fs.writeFile(path.join(dir, 'README.md'), '# Test\n', 'utf8');
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '-m', 'initial']);
+  return dir;
+}
+
 function fakeCtx(defaultMode: TeamOrchestrationMode) {
   const createdInputs: CreateTeamRunInput[] = [];
   let current: EngineTeamRunState | null = null;
+  const setCurrent = (input: CreateTeamRunInput, mode: TeamOrchestrationMode = defaultMode): EngineTeamRunState => {
+    current = runState(input, mode);
+    return current;
+  };
   const ctx = {
     state: { tiger: {}, team: {} },
     orchestrator: { getState: () => ({ initialized: false, workspace: null }) },
@@ -139,7 +174,7 @@ function fakeCtx(defaultMode: TeamOrchestrationMode) {
     },
     save: async () => {},
   } as unknown as AppCtx;
-  return { ctx, createdInputs };
+  return { ctx, createdInputs, setCurrent };
 }
 
 test('POST /api/team/runs passes selected orchestrationMode through to createTeamRun and response state', async () => {
@@ -177,6 +212,126 @@ test('POST /api/team/runs leaves orchestrationMode undefined when the client cho
     assert.equal(res.status, 200);
     assert.equal(createdInputs[0]?.orchestrationMode, undefined);
     assert.equal(res.json<{ state: { orchestrationMode?: string } }>().state.orchestrationMode, 'company');
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('GET /api/team/runs/:id/changes rejects a different active run without using the active workspace', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-route-'));
+  const { ctx, setCurrent } = fakeCtx('company');
+  setCurrent(runInput(workspace));
+  const srv = await listen(ctx);
+  try {
+    const res = await srv.req('GET', '/api/team/runs/not-run-1/changes');
+
+    assert.equal(res.status, 409);
+    const body = res.json<{ error: { message: string; code: string } }>();
+    assert.equal(body.error.code, 'conflict');
+    assert.match(body.error.message, /not the active run/i);
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('GET /api/team/runs/:id/changes rejects non-active run ids even when a last workspace is known', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-route-'));
+  const { ctx } = fakeCtx('company');
+  ctx.state.team = { lastWorkspace: workspace, projects: [workspace] };
+  const srv = await listen(ctx);
+  try {
+    const res = await srv.req('GET', '/api/team/runs/historical-run/changes');
+
+    assert.equal(res.status, 404);
+    const body = res.json<{ error: { message: string; code: string } }>();
+    assert.equal(body.error.code, 'not_found');
+    assert.match(body.error.message, /no active team run/i);
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('GET /api/team/runs/:id/changes still works for the active run', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-route-'));
+  const { ctx, setCurrent } = fakeCtx('company');
+  setCurrent(runInput(workspace));
+  const srv = await listen(ctx);
+  try {
+    const res = await srv.req('GET', '/api/team/runs/run-1/changes');
+
+    assert.equal(res.status, 200);
+    const body = res.json<{ isGitRepo: boolean; note?: string }>();
+    assert.equal(body.isGitRepo, false);
+    assert.match(body.note ?? '', /not a git repository/i);
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('Team git write routes reject non-active run ids before git-specific validation', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-route-'));
+  const { ctx, setCurrent } = fakeCtx('company');
+  setCurrent(runInput(workspace));
+  const srv = await listen(ctx);
+  try {
+    for (const [verb, body] of [
+      ['stage', undefined],
+      ['commit', { message: 'wrong run commit' }],
+      ['pr', { title: 'Wrong run PR' }],
+    ] as const) {
+      const res = await srv.req('POST', `/api/team/runs/not-run-1/git/${verb}`, body);
+
+      assert.equal(res.status, 409);
+      const payload = res.json<{ error: { message: string; code: string } }>();
+      assert.equal(payload.error.code, 'conflict');
+      assert.match(payload.error.message, /not the active run/i);
+    }
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/team/runs/:id/git/stage rejects a different active run without staging files', async (t) => {
+  if (!gitAvailable()) return t.skip('git not available');
+  const workspace = await makeGitRepo();
+  const { ctx, setCurrent } = fakeCtx('company');
+  setCurrent(runInput(workspace));
+  await fs.writeFile(path.join(workspace, 'feature.txt'), 'work\n', 'utf8');
+  const srv = await listen(ctx);
+  try {
+    const res = await srv.req('POST', '/api/team/runs/not-run-1/git/stage');
+
+    assert.equal(res.status, 409);
+    const body = res.json<{ error: { message: string; code: string } }>();
+    assert.equal(body.error.code, 'conflict');
+    assert.match(body.error.message, /not the active run/i);
+    assert.equal(git(workspace, ['diff', '--cached', '--name-only']), '');
+  } finally {
+    await srv.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/team/runs/:id/git/stage still works for the active run', async (t) => {
+  if (!gitAvailable()) return t.skip('git not available');
+  const workspace = await makeGitRepo();
+  const { ctx, setCurrent } = fakeCtx('company');
+  setCurrent(runInput(workspace));
+  await fs.writeFile(path.join(workspace, 'feature.txt'), 'work\n', 'utf8');
+  const srv = await listen(ctx);
+  try {
+    const res = await srv.req('POST', '/api/team/runs/run-1/git/stage');
+
+    assert.equal(res.status, 200);
+    assert.match(git(workspace, ['diff', '--cached', '--name-only']), /feature\.txt/);
+    const body = res.json<{ isGitRepo: boolean; files: Array<{ path: string; status: string }> }>();
+    assert.equal(body.isGitRepo, true);
+    assert.ok(body.files.some((file) => file.path === 'feature.txt' && file.status === 'added'));
   } finally {
     await srv.close();
     await fs.rm(workspace, { recursive: true, force: true });
