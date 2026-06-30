@@ -1913,6 +1913,127 @@ test('a non-Lead role cannot delegate laterally; the attempt is blocked and re-r
   }
 });
 
+test('a Lead coordination enqueue failure is surfaced as a blocker instead of silently dropping work', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-coordination-enqueue-'));
+  try {
+    let enqueueAttempts = 0;
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: neverComplete(),
+      maxIdleLeadTurns: 1,
+      maxTurns: 4,
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
+    });
+    const created = await orch.createTeamRun({ workspace, goal: 'Collect competitor links.', roles: leadTeam() });
+    const lead = orch.getState().roles.find((role) => role.id === 'lead');
+    assert.ok(lead, 'the test team has a Lead role');
+    const internals = orch as unknown as {
+      state: TeamRunState;
+      taskBoard: { enqueue: TaskBoard['enqueue'] };
+      applyCoordinationDirectives(
+        turn: TeamTurnRecord,
+        role: TeamRunState['roles'][number],
+        directives: NonNullable<TeamRoleTurnResult['coordinationDirectives']>,
+      ): Promise<number>;
+    };
+    const beforeChange = '2020-01-01T00:00:00.000Z';
+    const verifiedAt = '2020-01-01T00:01:00.000Z';
+    const signedAt = '2020-01-01T00:02:00.000Z';
+    internals.state.directives = internals.state.directives.map((directive) => ({
+      ...directive,
+      createdAt: beforeChange,
+      status: 'applied',
+      acknowledgedAt: verifiedAt,
+      appliedAt: verifiedAt,
+    }));
+    internals.state.pendingSteeringCount = 0;
+    internals.state.materialChangeAt = beforeChange;
+    internals.state.verifications = [
+      {
+        id: 'VER-1',
+        roleId: 'tester',
+        status: 'passed',
+        command: 'npm test',
+        exitCode: 0,
+        summary: 'green before failed delegation',
+        createdAt: verifiedAt,
+        completedAt: verifiedAt,
+      },
+    ];
+    internals.state.signoffs = [
+      { id: 'SIGN-1', roleId: 'lead', roleName: 'Lead', createdAt: signedAt, stale: false },
+      { id: 'SIGN-2', roleId: 'developer', roleName: 'Developer', createdAt: signedAt, stale: false },
+    ];
+    const before = TeamOrchestrator.computeDoneGate(internals.state);
+    assert.equal(
+      before.satisfied,
+      true,
+      `fixture must be green before the failed delegation; blockers=${JSON.stringify(before.openBlockers)}`,
+    );
+    const turn: TeamTurnRecord = {
+      id: 'turn-coordination-enqueue-failure',
+      runId: created.runId,
+      roleId: 'lead',
+      roleName: 'Lead',
+      status: 'running',
+      round: 1,
+      startedAt: '2020-01-01T00:00:00.000Z',
+      messageSeqs: [],
+      appliedDirectiveIds: [],
+    };
+    internals.taskBoard.enqueue = async () => {
+      enqueueAttempts += 1;
+      throw new Error('simulated task-board write failure');
+    };
+
+    const applied = await internals.applyCoordinationDirectives(turn, lead, [
+      {
+        verb: 'assign',
+        fromRoleId: 'lead',
+        toRoleId: 'developer',
+        title: 'Collect competitor links',
+        body: 'Find open-source competitor repositories and report GitHub links.',
+      },
+    ]);
+
+    assert.equal(applied, 1);
+    assert.equal(enqueueAttempts, 1);
+    const after = TeamOrchestrator.computeDoneGate(internals.state);
+    assert.equal(after.satisfied, false, 'failed delegation should keep done-gate blocked');
+    assert.equal(
+      internals.state.signoffs.every((signoff) => signoff.stale),
+      true,
+      'failed delegation should stale existing sign-offs',
+    );
+    assert.ok(
+      after.openBlockers.some((blocker) => blocker.code === 'signoff_missing'),
+      `failed delegation should require fresh sign-offs; actual blockers=${JSON.stringify(after.openBlockers)}`,
+    );
+    const messages = await orch.listMessages();
+    assert.ok(
+      messages.some(
+        (message) =>
+          message.from === 'system' &&
+          message.to === 'lead' &&
+          message.kind === 'blocker' &&
+          /could not queue assign work for developer/i.test(message.body) &&
+          /task-board write failed/i.test(message.body),
+      ),
+      'a system blocker explains that the Lead coordination assignment was not queued',
+    );
+    const developerTodo = await fs
+      .readdir(path.join(workspace, '.tiger', 'team', created.runId, 'agents', 'developer', 'todo'))
+      .catch(() => [] as string[]);
+    assert.equal(developerTodo.filter((name) => name.endsWith('.json')).length, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Lead prompt priority (TASK-0002): a pending user prompt (or Lead review) must take
 // strict priority over claiming the next queued worker task. A queued worker task may

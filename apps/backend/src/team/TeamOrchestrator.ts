@@ -3672,8 +3672,22 @@ export class TeamOrchestrator extends EventEmitter {
           relationship,
           handoffId,
         })
-        .catch(() => null);
-      if (!task) continue;
+        .catch(async () => {
+          state.materialChangeAt = nowIso();
+          this.staleSignoffs('A coordination delegation failed and requires Lead re-plan.');
+          await this.appendMessage({
+            turnId: turn.id,
+            from: SYSTEM_SENDER,
+            to: leadId ?? undefined,
+            kind: 'blocker',
+            body: `${role.name} could not queue ${directive.verb} work for ${to}; the task-board write failed. The Lead must re-plan or retry the delegation.`,
+          }).catch(() => undefined);
+          return null;
+        });
+      if (!task) {
+        applied += 1;
+        continue;
+      }
 
       if (relationship === 'handoff' && handoffId) {
         // Register the blocking dependency: the delegator's done-gate stays open until the
