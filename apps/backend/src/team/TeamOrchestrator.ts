@@ -753,8 +753,8 @@ export class FileTeamPersistence implements TeamPersistence {
 const DISABLED_GUARD = -1;
 
 /**
- * Default scheduler: Lead-owned sequencing. The Lead is the single decision-maker and
- * executor of the run — round/round-robin progression no longer drives work. The engine
+ * Default scheduler: Lead-owned sequencing. The Lead is the single coordinator and
+ * decision-maker for the run — round/round-robin progression no longer drives work. The engine
  * claims a Lead-approved worker task from the per-role board only when NO Lead work is
  * pending; otherwise it consults this scheduler, which always gives the Lead the turn so
  * the Lead handles it first (process the next user prompt, review the latest role result,
@@ -1987,7 +1987,7 @@ export class TeamOrchestrator extends EventEmitter {
     const patchRes = await runGit(state.workspace, ['diff', baseRef]);
     if (!patchRes.ok) return false; // could not even read the diff — treat as NOT snapshotted
     if (!patchRes.stdout.trim()) return true; // nothing tracked-changed: there is no work to lose
-    const patchFile = path.join(worktreePath, `.kaplan-attempt-${attempt.attemptNumber}.patch`);
+    const patchFile = path.join(worktreePath, `.tiger-attempt-${attempt.attemptNumber}.patch`);
     const wrote = await fs.writeFile(patchFile, patchRes.stdout, 'utf8').then(
       () => true,
       () => false,
@@ -2919,6 +2919,7 @@ export class TeamOrchestrator extends EventEmitter {
     const leadHadPendingWork = isLeadTurn && (turn.appliedDirectiveIds.length > 0 || state.leadReviewPending === true);
     const materialBefore = state.materialChangeAt;
     const authorityAllowed = result.status === 'completed';
+    const verificationAllowed = authorityAllowed && !isLeadTurn;
     const messages = result.messages ?? [];
     const appended: TeamMessage[] = [];
     // Ids of the prose-inferred verification records created by THIS turn, so a structured
@@ -2949,7 +2950,7 @@ export class TeamOrchestrator extends EventEmitter {
       // to record one). This is the FALLBACK path: the outcome is inferred from the prose
       // when the role did not emit a structured `VerificationDirective` (item 9). A
       // structured directive for the same turn takes precedence and supersedes this below.
-      if (authorityAllowed && message.kind === 'verification') {
+      if (verificationAllowed && message.kind === 'verification') {
         const id = nanoid();
         inferredVerificationIds.push(id);
         const inferredStatus = inferVerificationOutcome(message.body);
@@ -2968,7 +2969,7 @@ export class TeamOrchestrator extends EventEmitter {
     // authoritative path — they replace the regex inference for this turn. When a turn emits
     // a structured directive we drop the prose-inferred record(s) it created above so the
     // explicit evidence is what the done-gate evaluates, not a guessed duplicate.
-    const structuredVerifications = authorityAllowed ? (result.verifications ?? []) : [];
+    const structuredVerifications = verificationAllowed ? (result.verifications ?? []) : [];
     if (structuredVerifications.length > 0) {
       if (inferredVerificationIds.length > 0) {
         const drop = new Set(inferredVerificationIds);
@@ -2992,7 +2993,7 @@ export class TeamOrchestrator extends EventEmitter {
       // regression signal is recomputed from them: only a non-passing structured check reopens work.
       verificationRegressed = structuredVerifications.some((v) => v.outcome !== 'passed');
     }
-    if (authorityAllowed && result.verification) {
+    if (verificationAllowed && result.verification) {
       const verification: TeamVerificationRecord = {
         id: result.verification.id ?? nanoid(),
         roleId: result.verification.roleId ?? role.id,

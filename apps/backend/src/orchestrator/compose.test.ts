@@ -156,7 +156,7 @@ test('composeWorkdir returns the tiger root by default and the worktree path whe
     assert.equal(composeWorkdir({ paths }), paths.root);
     assert.equal(composeWorkdir({ paths, workdir: paths.root }), paths.root);
     // A distinct worktree path -> that worktree path.
-    const wt = path.join(dir, '.kaplan', 'worktrees', 'TASK-001');
+    const wt = path.join(dir, '.tiger', 'worktrees', 'TASK-001');
     assert.equal(composeWorkdir({ paths, workdir: wt }), wt);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
@@ -167,7 +167,7 @@ test('executing-plan prompt rebases working dir + boundary onto the worktree whe
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-wt-'));
   try {
     const paths = await ensureScaffold(dir, 'Build something.');
-    const worktree = path.join(dir, '.kaplan', 'worktrees', 'TASK-007');
+    const worktree = path.join(dir, '.tiger', 'worktrees', 'TASK-007');
     const outputPath = paths.outputFile('executing-plan', 'codex', 1);
     const markerPath = paths.markerFile('executing-plan', 'run-wt');
 

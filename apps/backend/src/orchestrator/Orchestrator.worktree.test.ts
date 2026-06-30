@@ -30,7 +30,7 @@ const GIT_AVAILABLE = (() => {
 
 test('decideRunCwd returns the worktree path only when fully enabled, else the tiger root', () => {
   const root = '/repo/.tiger';
-  const wt = '/repo/.kaplan/worktrees/TASK-001';
+  const wt = '/repo/.tiger/worktrees/TASK-001';
   // Fully enabled + worktree present -> worktree.
   assert.equal(decideRunCwd({ tigerRoot: root, enabled: true, isRepo: true, worktreePath: wt }), wt);
   // Disabled -> shared root (byte-for-byte default behavior).
@@ -201,7 +201,7 @@ test(
       for (const c of cwds) assert.equal(path.resolve(c), path.resolve(paths.root), 'cwd must be the shared tiger root');
       // No managed worktrees were ever created.
       assert.equal(
-        await fs.stat(path.join(workspace, '.kaplan', 'worktrees')).then(() => true, () => false),
+        await fs.stat(path.join(workspace, '.tiger', 'worktrees')).then(() => true, () => false),
         false,
         'no worktrees directory should exist when the flag is off',
       );
@@ -237,13 +237,13 @@ test(
       await orch.startStage('executing-plan', fakeAgentConfig(orch));
       await waitForIdle(orch, 'executing-plan');
 
-      // The agent's cwd was a per-task worktree under .kaplan/worktrees/, not the tiger root.
+      // The agent's cwd was a per-task worktree under .tiger/worktrees/, not the tiger root.
       assert.ok(cwds.length >= 1, 'an agent terminal should have been registered');
       const agentCwd = path.resolve(cwds[0]!);
       assert.notEqual(agentCwd, path.resolve(paths.root), 'cwd must NOT be the shared tiger root when isolating');
       assert.ok(
-        agentCwd.includes(path.join('.kaplan', 'worktrees')),
-        `cwd should be under .kaplan/worktrees, got ${agentCwd}`,
+        agentCwd.includes(path.join('.tiger', 'worktrees')),
+        `cwd should be under .tiger/worktrees, got ${agentCwd}`,
       );
 
       // The task completed and was merged back: the task branch exists and the worktree was pruned.
@@ -258,7 +258,7 @@ test(
         encoding: 'utf8',
       }).stdout;
       assert.ok(
-        !wtList.includes(path.join('.kaplan', 'worktrees', 'TASK-001')),
+        !wtList.includes(path.join('.tiger', 'worktrees', 'TASK-001')),
         'a clean merge should prune the task worktree',
       );
 

@@ -41,7 +41,7 @@ export interface CreateWorktreeOptions {
   taskId: string;
   /** Ref to branch from. Defaults to the repo's current HEAD. */
   baseRef?: string;
-  /** Where managed worktrees live. Defaults to `<repoRoot>/.kaplan/worktrees`. */
+  /** Where managed worktrees live. Defaults to `<repoRoot>/.tiger/worktrees`. */
   rootDir?: string;
 }
 
@@ -194,7 +194,7 @@ async function branchExists(dir: string, branch: string): Promise<boolean> {
 /**
  * Create an isolated worktree for `taskId` off `baseRef` (default: current HEAD).
  *
- * The worktree lives at `<rootDir|repoRoot/.kaplan/worktrees>/<taskId>` on a new
+ * The worktree lives at `<rootDir|repoRoot/.tiger/worktrees>/<taskId>` on a new
  * branch `kaplan/<taskId>`. Idempotent-ish: if a worktree already exists at the
  * target path on the expected branch it is reused; a path/branch collision that
  * does NOT match the expectation throws a clear `WorktreeError`.
@@ -208,7 +208,7 @@ export async function createWorktree(opts: CreateWorktreeOptions): Promise<Workt
   const taskId = sanitizeTaskId(opts.taskId);
   const branch = `kaplan/${taskId}`;
   const repoRoot = await repoToplevel(repoDir);
-  const rootDir = opts.rootDir ? path.resolve(opts.rootDir) : path.join(repoRoot, '.kaplan', 'worktrees');
+  const rootDir = opts.rootDir ? path.resolve(opts.rootDir) : path.join(repoRoot, '.tiger', 'worktrees');
   const worktreePath = path.join(rootDir, taskId);
 
   // Resolve the base ref to a concrete commit so the returned baseRef is a stable
@@ -295,7 +295,7 @@ function parsePorcelainList(out: string, repoRoot: string): Worktree[] {
     if (cur.path) {
       const branchRef = cur.branch ?? '';
       const branch = branchRef.replace(/^refs\/heads\//, '') || (cur.head ? `(detached:${cur.head.slice(0, 12)})` : '(bare)');
-      // Derive taskId from a managed path under `.kaplan/worktrees/<taskId>`.
+      // Derive taskId from a managed path under `.tiger/worktrees/<taskId>`.
       const base = path.basename(cur.path);
       worktrees.push({ taskId: base, path: path.resolve(cur.path), branch, baseRef: cur.head ?? '' });
     }

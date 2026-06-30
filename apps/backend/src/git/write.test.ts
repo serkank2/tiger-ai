@@ -54,26 +54,26 @@ test('stageAll + commit happy path returns a sha and summary', async (t) => {
   }
 });
 
-test('stageAll does not stage managed .kaplan worktree files even without an ignore rule', async (t) => {
+test('stageAll does not stage managed .tiger worktree files even without an ignore rule', async (t) => {
   if (!gitAvailable()) return t.skip('git not available');
   const dir = await tmpDir();
   try {
     await initRepo(dir);
-    await fs.mkdir(path.join(dir, '.kaplan', 'worktrees', 'TASK-001'), { recursive: true });
-    await fs.writeFile(path.join(dir, '.kaplan', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
+    await fs.mkdir(path.join(dir, '.tiger', 'worktrees', 'TASK-001'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.tiger', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
     await fs.writeFile(path.join(dir, 'feature.ts'), 'export const y = 2;\n', 'utf8');
 
     await stageAll(dir);
 
     const staged = git(dir, ['diff', '--cached', '--name-only']);
     assert.match(staged, /feature\.ts/);
-    assert.doesNotMatch(staged, /\.kaplan\//);
+    assert.doesNotMatch(staged, /\.tiger\//);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
 
-test('stageAll git add dry-run pathspec excludes managed .kaplan worktree files', async (t) => {
+test('stageAll git add dry-run pathspec excludes managed .tiger worktree files', async (t) => {
   if (!gitAvailable()) return t.skip('git not available');
   const dir = await tmpDir();
   const addArgs: string[][] = [];
@@ -89,13 +89,13 @@ test('stageAll git add dry-run pathspec excludes managed .kaplan worktree files'
       return { ok: r.status === 0, code: r.status, spawnFailed: false, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     };
 
-    await fs.mkdir(path.join(dir, '.kaplan', 'worktrees', 'TASK-001'), { recursive: true });
-    await fs.writeFile(path.join(dir, '.kaplan', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
+    await fs.mkdir(path.join(dir, '.tiger', 'worktrees', 'TASK-001'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.tiger', 'worktrees', 'TASK-001', 'internal.txt'), 'internal\n', 'utf8');
     await fs.writeFile(path.join(dir, 'feature.ts'), 'export const z = 3;\n', 'utf8');
 
     await stageAll(dir, dryRun);
 
-    assert.deepEqual(addArgs, [['add', '-A', '--', '.', ':(exclude).kaplan', ':(exclude).kaplan/**']]);
+    assert.deepEqual(addArgs, [['add', '-A', '--', '.', ':(exclude).tiger', ':(exclude).tiger/**', ':(exclude).kaplan', ':(exclude).kaplan/**']]);
     assert.equal(git(dir, ['diff', '--cached', '--name-only']), '');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

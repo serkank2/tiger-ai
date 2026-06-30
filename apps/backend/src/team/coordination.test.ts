@@ -74,8 +74,8 @@ test('computeDoneGate does NOT block on a resolved handoff', () => {
 
 test('decideTeamTurnCwd uses the worktree path only when enabled + git repo + worktree created', () => {
   assert.equal(
-    decideTeamTurnCwd({ workspace: '/ws', enabled: true, isRepo: true, worktreePath: '/ws/.kaplan/worktrees/x' }),
-    '/ws/.kaplan/worktrees/x',
+    decideTeamTurnCwd({ workspace: '/ws', enabled: true, isRepo: true, worktreePath: '/ws/.tiger/worktrees/x' }),
+    '/ws/.tiger/worktrees/x',
   );
   // Feature off → shared workspace (byte-for-byte default behavior).
   assert.equal(decideTeamTurnCwd({ workspace: '/ws', enabled: false, isRepo: true, worktreePath: '/wt' }), '/ws');

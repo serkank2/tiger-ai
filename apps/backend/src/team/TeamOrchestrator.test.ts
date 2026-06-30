@@ -601,7 +601,7 @@ test('restart reconciliation interrupts in-flight turns, reclaims stale claims, 
 test('out of the box the engine composes the real scheduler and completion gate to a clean completion', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-compose-'));
   try {
-    let turnNo = 0;
+    let assigned = false;
     // Only the runner is faked; the scheduler and completion gate are the engine's
     // real defaults (selectNextTurns + evaluateRunGate). The run must complete only
     // once a verification has passed AND the required role holds a fresh sign-off.
@@ -610,24 +610,27 @@ test('out of the box the engine composes the real scheduler and completion gate 
       maxTurns: 8,
       runner: {
         async runRoleTurn(input) {
-          turnNo += 1;
-          if (turnNo === 1) {
+          if (input.role.id === 'lead' && !assigned) {
+            assigned = true;
             return {
               status: 'completed',
-              messages: [{ from: input.role.id, kind: 'chat', body: 'verified the build' }],
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Verify the build.\nAcceptance: report evidence.' }],
+            };
+          }
+          if (input.role.id === 'developer') {
+            return {
+              status: 'completed',
+              messages: [{ from: 'developer', kind: 'signoff', body: 'all work is done' }],
               verification: {
                 status: 'passed',
                 summary: 'build and tests passed',
                 createdAt: '2020-01-01T00:00:00.000Z',
                 completedAt: '2020-01-01T00:00:00.000Z',
               },
+              signoffs: [{}],
             };
           }
-          return {
-            status: 'completed',
-            messages: [{ from: input.role.id, kind: 'signoff', body: 'all work is done' }],
-            signoffs: [{}],
-          };
+          return { status: 'completed' };
         },
       },
     });
@@ -635,7 +638,8 @@ test('out of the box the engine composes the real scheduler and completion gate 
       workspace,
       goal: 'Compose the dedicated team modules.',
       roles: [
-        { id: 'coordinator', name: 'Coordinator', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
+        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
+        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
       ],
     });
     await orch.start();
@@ -645,7 +649,7 @@ test('out of the box the engine composes the real scheduler and completion gate 
     assert.equal(final.turnCount, 2);
     assert.equal(final.verifications.length, 1);
     assert.equal(final.verifications[0]?.status, 'passed');
-    assert.ok(final.signoffs.some((signoff) => signoff.roleId === 'coordinator' && !signoff.stale));
+    assert.ok(final.signoffs.some((signoff) => signoff.roleId === 'developer' && !signoff.stale));
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -805,7 +809,7 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
 });
 
 // ---------------------------------------------------------------------------
-// Lead-owned flow (TASK-0001): the Lead is the single decision-maker and executor.
+// Lead-owned flow (TASK-0001): the Lead is the single coordinator and decision-maker.
 // Every user prompt routes to the Lead first; the Lead sequences one unit of work at a
 // time; after any worker turn the Lead reviews before the next role task; no
 // round/round-robin progression; idle/wait when there is no Lead-assigned work.
@@ -1714,35 +1718,36 @@ test('the snapshot done-gate exposes the open blockers keeping a run from comple
 test('a structured VerificationDirective is recorded with its command/exitCode and supersedes prose inference', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-structverify-'));
   try {
-    let turnNo = 0;
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
+      completionGate: completeWhenSignedOff('developer'),
       maxTurns: 6,
       runner: {
         async runRoleTurn(input) {
-          turnNo += 1;
-          if (turnNo === 1) {
+          if (input.role.id === 'lead') {
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Run verification.\nAcceptance: report command evidence.' }],
+            };
+          }
+          if (input.role.id === 'developer') {
             return {
               status: 'completed',
               // A verification chat message that READS like a failure ("error"), but the
               // structured directive is the source of truth: passed, exit 0.
-              messages: [{ from: input.role.id, kind: 'verification', body: 'ran the suite; no error remained' }],
+              messages: [
+                { from: 'developer', kind: 'verification', body: 'ran the suite; no error remained' },
+                { from: 'developer', kind: 'signoff', body: 'done' },
+              ],
               verifications: [{ command: 'npm test', exitCode: 0, outcome: 'passed', summary: 'all green' }],
+              signoffs: [{}],
             };
           }
-          return {
-            status: 'completed',
-            messages: [{ from: input.role.id, kind: 'signoff', body: 'done' }],
-            signoffs: [{}],
-          };
+          return { status: 'completed' };
         },
       },
     });
-    await orch.createTeamRun({
-      workspace,
-      goal: 'Record structured verification.',
-      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
-    });
+    await orch.createTeamRun({ workspace, goal: 'Record structured verification.', roles: leadTeam() });
     await orch.start();
     const final = await waitForTerminal(orch);
 
@@ -1752,6 +1757,46 @@ test('a structured VerificationDirective is recorded with its command/exitCode a
     assert.equal(final.verifications[0]?.status, 'passed');
     assert.equal(final.verifications[0]?.command, 'npm test');
     assert.equal(final.verifications[0]?.exitCode, 0);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
+test('Lead-originated verification is ignored for completion-gate evidence', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-leadverify-'));
+  try {
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxIdleLeadTurns: 1,
+      maxTurns: 4,
+      completionGate: {
+        evaluate(state) {
+          return state.verifications.length > 0
+            ? { complete: true, reasons: [] }
+            : { complete: false, reasons: ['No accepted worker verification has been recorded.'] };
+        },
+      },
+      runner: {
+        async runRoleTurn() {
+          return {
+            status: 'completed',
+            messages: [{ from: 'lead', kind: 'verification', body: 'Lead says npm test passed.' }],
+            verifications: [{ command: 'npm test', exitCode: 0, outcome: 'passed', summary: 'Lead-reported green' }],
+          };
+        },
+      },
+    });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Lead must not verify directly.',
+      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+    });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    assert.equal(final.status, 'blocked');
+    assert.equal(final.verifications.length, 0);
+    assert.ok((await orch.listMessages()).some((message) => message.kind === 'verification' && message.from === 'lead'));
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1903,32 +1948,42 @@ test('listRuns and exportRun surface a persisted run read-only', async () => {
 test('an ambiguous prose verification is recorded inconclusive (skipped) and keeps the done-gate open', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-infer-'));
   try {
-    let turnNo = 0;
+    let assigned = false;
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
-      maxTurns: 4,
+      maxTurns: 6,
+      maxIdleLeadTurns: 1,
       runner: {
         async runRoleTurn(input) {
-          turnNo += 1;
-          if (turnNo === 1) {
+          if (input.role.id === 'lead' && !assigned) {
+            assigned = true;
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Verify ambiguously.\nAcceptance: report evidence.' }],
+            };
+          }
+          if (input.role.id === 'developer') {
             // Prose with NO clear pass/fail signal — must NOT be inferred as passed.
             return {
               status: 'completed',
-              messages: [{ from: input.role.id, kind: 'verification', body: 'I looked at the code and ran some things.' }],
+              messages: [
+                { from: 'developer', kind: 'verification', body: 'I looked at the code and ran some things.' },
+                { from: 'developer', kind: 'signoff', body: 'done' },
+              ],
+              signoffs: [{}],
             };
           }
-          return {
-            status: 'completed',
-            messages: [{ from: input.role.id, kind: 'signoff', body: 'done' }],
-            signoffs: [{}],
-          };
+          return { status: 'completed' };
         },
       },
     });
     await orch.createTeamRun({
       workspace,
       goal: 'Infer ambiguous verification.',
-      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+      roles: [
+        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
+        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+      ],
     });
     await orch.start();
     const final = await waitForTerminal(orch);

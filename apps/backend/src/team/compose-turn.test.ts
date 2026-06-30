@@ -147,6 +147,9 @@ test('composeRoleTurnPrompt renders the role-system prompt improvements for comp
     assert.match(lead.prompt, /CLI-first autonomous coding agent/);
     assert.match(lead.prompt, /There are NO model API keys/);
     assert.match(lead.prompt, /keep every idle non-Lead role instance busy/);
+    assert.match(lead.prompt, /DELEGATE EVERY NON-COORDINATION ACTION/);
+    assert.match(lead.prompt, /do NOT inspect source files, diffs, logs, artifacts, or external references/);
+    assert.match(lead.prompt, /do NOT research answers yourself/);
     assert.match(lead.prompt, /address a role KIND/);
     assert.match(lead.prompt, /project-complete/);
     assert.match(lead.prompt, /Passing gates is necessary but not sufficient/);

@@ -22,7 +22,7 @@ const log = logger.child({ mod: 'git/write' });
 
 const GIT_TIMEOUT_MS = 30_000;
 const GH_TIMEOUT_MS = 60_000;
-const SAFE_STAGE_PATHS = ['.', ':(exclude).kaplan', ':(exclude).kaplan/**'] as const;
+const SAFE_STAGE_PATHS = ['.', ':(exclude).tiger', ':(exclude).tiger/**', ':(exclude).kaplan', ':(exclude).kaplan/**'] as const;
 
 interface RunResult {
   ok: boolean;
