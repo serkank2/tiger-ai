@@ -159,7 +159,8 @@ export class RoleCliSession {
     if (start !== 'completed') {
       return { state: start, error: start === 'failed' ? 'the CLI failed to start' : undefined, alive: false };
     }
-    if (this.currentExit()) return { state: 'failed', error: 'the CLI exited before the prompt could be delivered', alive: false };
+    if (this.currentExit())
+      return { state: 'failed', error: 'the CLI exited before the prompt could be delivered', alive: false };
     if (signal.aborted) return { state: 'stopped', alive: this.isAlive };
 
     const { manager, termId, timing } = this.o;
@@ -207,7 +208,8 @@ export class RoleCliSession {
         if (chk.ok) {
           const now = Date.now();
           if (idleCandidate && idleCandidate.size === chk.size && idleCandidate.lastOutputTs === this.st.lastOutputTs) {
-            if (now - idleCandidate.stableSince >= timing.doneIdleMs) return { state: 'completed', alive: this.isAlive };
+            if (now - idleCandidate.stableSince >= timing.doneIdleMs)
+              return { state: 'completed', alive: this.isAlive };
           } else {
             idleCandidate = { size: chk.size, stableSince: now, lastOutputTs: this.st.lastOutputTs };
           }

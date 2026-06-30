@@ -56,14 +56,22 @@ function resolvePromptsDir(): string {
 
 function parseOrigins(): string[] {
   const raw = process.env.KAPLAN_CORS_ORIGINS;
-  if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (raw && raw.trim())
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   return ['http://localhost:3000', 'http://127.0.0.1:3000'];
 }
 
 /** Comma-separated absolute directories agents/runs may use as workspaces. */
 function parseList(name: string): string[] {
   const raw = process.env[name];
-  if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (raw && raw.trim())
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   return [];
 }
 
@@ -140,11 +148,7 @@ export const config = {
 
   // Structured logging. JSON in production, human-friendly otherwise; level gates output.
   log: {
-    level: (process.env.KAPLAN_LOG_LEVEL?.trim() || (isProd ? 'info' : 'debug')) as
-      | 'debug'
-      | 'info'
-      | 'warn'
-      | 'error',
+    level: (process.env.KAPLAN_LOG_LEVEL?.trim() || (isProd ? 'info' : 'debug')) as 'debug' | 'info' | 'warn' | 'error',
     json: envBool('KAPLAN_LOG_JSON', isProd),
   },
 

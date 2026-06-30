@@ -24,10 +24,7 @@ test('validateRoleConfig accepts a well-formed Claude role', () => {
 });
 
 test('validateRoleConfig accepts a Codex role using CLI-default model and effort', () => {
-  const result = validateRoleConfig(
-    role({ tool: 'codex', model: '', effort: '', permission: 'yolo' }),
-    config,
-  );
+  const result = validateRoleConfig(role({ tool: 'codex', model: '', effort: '', permission: 'yolo' }), config);
   assert.equal(result, null);
 });
 

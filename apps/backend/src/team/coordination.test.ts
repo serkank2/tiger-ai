@@ -14,9 +14,20 @@ import type { HandoffDependency } from './types.js';
 test('openHandoffs returns only unresolved (still-blocking) dependencies', () => {
   const handoffs: HandoffDependency[] = [
     { id: 'h1', fromRoleId: 'lead', toRoleId: 'tester', taskId: 'TASK-0001', title: 'a', createdAt: 't0' },
-    { id: 'h2', fromRoleId: 'lead', toRoleId: 'dev', taskId: 'TASK-0002', title: 'b', createdAt: 't0', resolvedAt: 't1' },
+    {
+      id: 'h2',
+      fromRoleId: 'lead',
+      toRoleId: 'dev',
+      taskId: 'TASK-0002',
+      title: 'b',
+      createdAt: 't0',
+      resolvedAt: 't1',
+    },
   ];
-  assert.deepEqual(openHandoffs(handoffs).map((h) => h.id), ['h1']);
+  assert.deepEqual(
+    openHandoffs(handoffs).map((h) => h.id),
+    ['h1'],
+  );
   assert.deepEqual(openHandoffs(undefined), []);
 });
 
@@ -30,7 +41,15 @@ function baseState(overrides: Partial<TeamRunState>): TeamRunState {
     status: 'running',
     goal: 'do it',
     roles: [
-      { id: 'lead', name: 'Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: false, status: 'idle' },
+      {
+        id: 'lead',
+        name: 'Lead',
+        tool: 'codex',
+        responsibilities: [],
+        canWriteCode: false,
+        requiredForSignoff: false,
+        status: 'idle',
+      },
     ],
     round: 1,
     turnCount: 1,
@@ -63,11 +82,22 @@ test('computeDoneGate surfaces an open handoff as a blocking dependency (handoff
 test('computeDoneGate does NOT block on a resolved handoff', () => {
   const state = baseState({
     handoffs: [
-      { id: 'h1', fromRoleId: 'lead', toRoleId: 'tester', taskId: 'TASK-0001', title: 'Verify', createdAt: 't0', resolvedAt: 't1' },
+      {
+        id: 'h1',
+        fromRoleId: 'lead',
+        toRoleId: 'tester',
+        taskId: 'TASK-0001',
+        title: 'Verify',
+        createdAt: 't0',
+        resolvedAt: 't1',
+      },
     ],
   });
   const gate = TeamOrchestrator.computeDoneGate(state);
-  assert.equal(gate.openBlockers.some((b) => b.code === 'handoff_pending'), false);
+  assert.equal(
+    gate.openBlockers.some((b) => b.code === 'handoff_pending'),
+    false,
+  );
 });
 
 // --- Pure per-task worktree cwd / merge decision helpers ---------------------
@@ -90,7 +120,11 @@ test('classifyTeamMerge distinguishes fast-forward, merged, conflict, and failed
   assert.equal(classifyTeamMerge({ ok: true, stdout: 'Already up to date.', stderr: '' }), 'fast-forward');
   assert.equal(classifyTeamMerge({ ok: true, stdout: 'Merge made by the recursive strategy.', stderr: '' }), 'merged');
   assert.equal(
-    classifyTeamMerge({ ok: false, stdout: 'CONFLICT (content): Merge conflict in a.txt', stderr: 'Automatic merge failed' }),
+    classifyTeamMerge({
+      ok: false,
+      stdout: 'CONFLICT (content): Merge conflict in a.txt',
+      stderr: 'Automatic merge failed',
+    }),
     'conflict',
   );
   assert.equal(classifyTeamMerge({ ok: false, stdout: '', stderr: 'fatal: not something we can merge' }), 'failed');

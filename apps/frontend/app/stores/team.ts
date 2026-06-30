@@ -65,11 +65,7 @@ function uniqueMessages(items: TeamMessage[]): TeamMessage[] {
 }
 
 type TemplateResponse = TeamTemplatesResponse | TeamTemplate[];
-type StateResponse =
-  | TeamRunState
-  | TeamRunStateResponse
-  | CreateTeamRunResponse
-  | { activeRun?: TeamRunState | null };
+type StateResponse = TeamRunState | TeamRunStateResponse | CreateTeamRunResponse | { activeRun?: TeamRunState | null };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -203,10 +199,7 @@ export const useTeamStore = defineStore('team', () => {
 
   function mergeMessages(runId: string, incoming: TeamMessage[]): void {
     ensureTranscriptRun(runId);
-    messages.value = uniqueMessages([
-      ...messages.value,
-      ...incoming.filter((message) => message.runId === runId),
-    ]);
+    messages.value = uniqueMessages([...messages.value, ...incoming.filter((message) => message.runId === runId)]);
   }
 
   function replaceMessages(runId: string, page: TeamMessagePage): void {
@@ -235,7 +228,8 @@ export const useTeamStore = defineStore('team', () => {
     const nextRunId = next.id;
     if (nextRunId && transcriptRunId.value && transcriptRunId.value !== nextRunId) resetTranscript(nextRunId);
     if (nextRunId && !transcriptRunId.value) transcriptRunId.value = nextRunId;
-    if (previousRunId && previousRunId !== nextRunId && transcriptRunId.value === previousRunId) resetTranscript(nextRunId);
+    if (previousRunId && previousRunId !== nextRunId && transcriptRunId.value === previousRunId)
+      resetTranscript(nextRunId);
 
     if (Array.isArray(next.recentMessages)) mergeMessages(nextRunId, next.recentMessages);
   }
@@ -257,7 +251,7 @@ export const useTeamStore = defineStore('team', () => {
     if (templatesLoaded.value && !force) return;
     templatesLoading.value = true;
     try {
-      const next = normalizeTemplatesResponse(await api.listTeamTemplates() as TemplateResponse);
+      const next = normalizeTemplatesResponse((await api.listTeamTemplates()) as TemplateResponse);
       templates.value = next.teams;
       roleTemplates.value = next.roles;
       templatesLoaded.value = true;
@@ -343,7 +337,7 @@ export const useTeamStore = defineStore('team', () => {
   async function loadState(): Promise<void> {
     loading.value = true;
     try {
-      const next = normalizeStateResponse(await api.getTeamState() as StateResponse);
+      const next = normalizeStateResponse((await api.getTeamState()) as StateResponse);
       if (next) {
         applyState(next);
       } else {
@@ -363,12 +357,14 @@ export const useTeamStore = defineStore('team', () => {
     }
   }
 
-  async function loadMessages(options: {
-    runId?: string;
-    cursor?: string | null;
-    limit?: number;
-    append?: boolean;
-  } = {}): Promise<void> {
+  async function loadMessages(
+    options: {
+      runId?: string;
+      cursor?: string | null;
+      limit?: number;
+      append?: boolean;
+    } = {},
+  ): Promise<void> {
     const runId = options.runId ?? activeRunId.value ?? transcriptRunId.value;
     if (!runId) {
       resetTranscript(null);
@@ -489,16 +485,13 @@ export const useTeamStore = defineStore('team', () => {
     setBusy('start', true);
     actionError.value = null;
     try {
-      const next = normalizeStateResponse(await api.startTeamRun(input) as StateResponse);
+      const next = normalizeStateResponse((await api.startTeamRun(input)) as StateResponse);
       if (!next) throw new Error('Team start did not return a run state');
       applyState(next);
       const runId = activeRunId.value;
       if (runId) {
         resetTranscript(runId);
-        await Promise.all([
-          loadMessages({ runId }),
-          loadArtifacts(runId),
-        ]);
+        await Promise.all([loadMessages({ runId }), loadArtifacts(runId)]);
       }
       notices.push('Team run started', 'info');
       return next;
@@ -695,7 +688,7 @@ export const useTeamStore = defineStore('team', () => {
     setBusy('attempt-new', true);
     actionError.value = null;
     try {
-      const next = normalizeStateResponse(await api.createTeamAttempt(id) as TeamRunStateResponse);
+      const next = normalizeStateResponse((await api.createTeamAttempt(id)) as TeamRunStateResponse);
       if (next) applyState(next);
       notices.push('Started a new attempt', 'info');
     } catch (error) {
@@ -712,7 +705,7 @@ export const useTeamStore = defineStore('team', () => {
     setBusy(`attempt-promote:${attemptId}`, true);
     actionError.value = null;
     try {
-      const next = normalizeStateResponse(await api.promoteTeamAttempt(id, attemptId) as TeamRunStateResponse);
+      const next = normalizeStateResponse((await api.promoteTeamAttempt(id, attemptId)) as TeamRunStateResponse);
       if (next) applyState(next);
       notices.push('Attempt promoted', 'info');
     } catch (error) {
@@ -747,7 +740,7 @@ export const useTeamStore = defineStore('team', () => {
     setBusy(`worktree:${taskId}`, true);
     actionError.value = null;
     try {
-      const next = normalizeStateResponse(await api.mergeTeamWorktree(id, taskId, cleanup) as TeamRunStateResponse);
+      const next = normalizeStateResponse((await api.mergeTeamWorktree(id, taskId, cleanup)) as TeamRunStateResponse);
       if (next) applyState(next);
       notices.push(cleanup ? 'Worktree discarded' : 'Worktree merged back', 'info');
     } catch (error) {

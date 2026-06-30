@@ -108,7 +108,9 @@ export class PromptGenerationService extends EventEmitter {
       options.runtimeRoot ??
       (() => {
         const tigerRoot = this.getProjectContext().tigerRoot;
-        return tigerRoot ? path.join(tigerRoot, 'prompt-generations') : path.join(appConfig.dataDir, 'prompt-generations');
+        return tigerRoot
+          ? path.join(tigerRoot, 'prompt-generations')
+          : path.join(appConfig.dataDir, 'prompt-generations');
       });
     this.terminalFactory = options.terminalFactory ?? defaultTerminalFactory;
   }
@@ -169,7 +171,10 @@ export class PromptGenerationService extends EventEmitter {
     return generation;
   }
 
-  toState(generation: PromptGenerationRecord, progress: PromptGenerationState['progress'] = 'idle'): PromptGenerationState {
+  toState(
+    generation: PromptGenerationRecord,
+    progress: PromptGenerationState['progress'] = 'idle',
+  ): PromptGenerationState {
     return {
       generation,
       progress,
@@ -247,7 +252,8 @@ export class PromptGenerationService extends EventEmitter {
       if (result.state !== 'completed') {
         await this.failGeneration(
           generation.id,
-          result.error ?? (abort.signal.aborted ? 'prompt generation timed out' : 'agent failed before producing output'),
+          result.error ??
+            (abort.signal.aborted ? 'prompt generation timed out' : 'agent failed before producing output'),
           'failed',
         );
         return;
@@ -409,11 +415,17 @@ function resolveEffort(provider: AgentType, cfg: TigerConfig, requested: string 
 function resolvePermission(provider: AgentType, cfg: TigerConfig, requested: string | null | undefined): string {
   if (typeof requested === 'string') return requested.trim();
   const d = cfg.defaults;
-  return provider === 'claude' ? d.claudePermission : provider === 'codex' ? d.codexPermission : d.antigravityPermission;
+  return provider === 'claude'
+    ? d.claudePermission
+    : provider === 'codex'
+      ? d.codexPermission
+      : d.antigravityPermission;
 }
 
 function totalTimeoutMs(timing: TigerTiming): number {
-  return timing.readyMaxWaitMs + timing.settleMaxWaitMs + timing.agentTimeoutMs + Math.max(10_000, timing.markerPollMs * 4);
+  return (
+    timing.readyMaxWaitMs + timing.settleMaxWaitMs + timing.agentTimeoutMs + Math.max(10_000, timing.markerPollMs * 4)
+  );
 }
 
 function httpErr(status: number, message: string): Error & { status: number } {

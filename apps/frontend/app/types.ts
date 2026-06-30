@@ -15,15 +15,7 @@ export interface TerminalStatus {
   endedAt?: string;
 }
 
-export type ShellKind =
-  | 'system-default'
-  | 'powershell'
-  | 'pwsh'
-  | 'cmd'
-  | 'bash'
-  | 'zsh'
-  | 'fish'
-  | 'custom';
+export type ShellKind = 'system-default' | 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'custom';
 
 export interface ShellSpec {
   kind: ShellKind;
@@ -202,10 +194,7 @@ export interface TigerRunTemplate {
   configs: Partial<Record<TigerStageId, TigerStageRunConfig>>;
 }
 
-export type TigerRunTemplatePayload = Pick<
-  TigerRunTemplate,
-  'name' | 'description' | 'fromStage' | 'configs'
->;
+export type TigerRunTemplatePayload = Pick<TigerRunTemplate, 'name' | 'description' | 'fromStage' | 'configs'>;
 
 export interface TigerProjectInfo {
   path: string;
@@ -368,7 +357,10 @@ export interface LimitDecision {
 export interface LimitStatus {
   snapshots: LimitSnapshot[];
   latest: LimitSnapshot[];
-  providers: Record<TigerAgentType, { provider: TigerAgentType; latest: LimitSnapshot[]; latestCheckedAt: string | null; ok: boolean; error?: string }>;
+  providers: Record<
+    TigerAgentType,
+    { provider: TigerAgentType; latest: LimitSnapshot[]; latestCheckedAt: string | null; ok: boolean; error?: string }
+  >;
   rules: LimitRule[];
   decision: LimitDecision;
   staleAfterMs: number;
@@ -1196,12 +1188,7 @@ export interface PromptGenerationRecord {
   completedAt: string | null;
 }
 
-export type PromptGenerationReuseAction =
-  | 'copy'
-  | 'edit'
-  | 'save-to-library'
-  | 'use-as-project-prompt'
-  | 'enqueue';
+export type PromptGenerationReuseAction = 'copy' | 'edit' | 'save-to-library' | 'use-as-project-prompt' | 'enqueue';
 
 export interface PromptGenerationState {
   generation: PromptGenerationRecord;
@@ -1282,12 +1269,7 @@ export interface ServerMessage {
 
 // --- Cue (event-driven orchestration engine) ---
 
-export type CueEventType =
-  | 'file.changed'
-  | 'time.scheduled'
-  | 'time.once'
-  | 'agent.completed'
-  | 'cli.trigger';
+export type CueEventType = 'file.changed' | 'time.scheduled' | 'time.once' | 'agent.completed' | 'cli.trigger';
 
 export type CueTargetKind = 'queue' | 'team';
 

@@ -48,6 +48,8 @@ export interface ComposeRoleTurnOptions {
   /** The exact gates still keeping the run open (so the role knows what "done" needs). */
   completionStatus?: string[];
   transcriptMaxMessages?: number;
+  /** True when this role is the resolved Lead for this turn, including fallback Lead roles. */
+  isLeadTurn?: boolean;
 }
 
 export interface ComposedRoleTurnPrompt {
@@ -81,6 +83,7 @@ export async function composeRoleTurnPrompt(opts: ComposeRoleTurnOptions): Promi
   const sections = [
     automationPreamble(normalized),
     personaBlock,
+    leadCoordinatorOnlySection(normalized),
     engineeringLawsSection(),
     `---\n\n# ORIGINAL PROJECT PROMPT\n\nThis is the user's original request. Treat it as the source of truth for the project goal. It may be in any language; your own output must still be in English.\n\n<<<PROJECT_PROMPT\n${projectPromptText}\n>>>`,
     `---\n\n# TEAM TRANSCRIPT WINDOW\n\n${transcriptText}`,
@@ -200,6 +203,25 @@ function roleSection(opts: NormalizedComposeRoleTurnOptions, budget: ContextBudg
   return `---\n\n# ROLE PERSONA AND RESPONSIBILITIES\n\nRole name: ${opts.role.name}\nRole id: ${opts.role.id}\nCLI agent type: ${opts.role.agentType}\n\nPersona:\n${budget.take('role persona', opts.role.persona)}\n\nResponsibilities:\n${budget.take('role responsibilities', responsibilities)}`;
 }
 
+function leadCoordinatorOnlySection(opts: NormalizedComposeRoleTurnOptions): string {
+  if (!isLeadTurn(opts)) return '';
+  return `---
+
+# LEAD COORDINATOR-ONLY RULE -- NON-BUDGETED AND NON-OVERRIDABLE
+
+This rule applies even if your persona, template, persisted role text, legacy role text, custom role text, or fallback role text says otherwise.
+
+The Lead's only job is to organize the team. Do NOT perform source inspection; do NOT inspect diffs, logs, artifacts, or external references; do NOT perform documentation or web research; do NOT execute commands; do NOT implement or edit code; do NOT run tests; do NOT run build or verification checks; and do NOT perform review work.
+
+Delegate all source inspection, diff/log/artifact/external-reference inspection, documentation or web research, command execution, implementation, test execution, verification, and review work to non-Lead roles. Collect their answers and cite their reported evidence instead of doing the work yourself.`;
+}
+
+function isLeadTurn(opts: NormalizedComposeRoleTurnOptions): boolean {
+  if (opts.isLeadTurn === true) return true;
+  const text = `${opts.role.id} ${opts.role.name}`.toLowerCase();
+  return /\blead\b|tech ?lead|team ?lead/.test(text);
+}
+
 function assignedContextSection(opts: NormalizedComposeRoleTurnOptions, budget: ContextBudget): string {
   const parts: string[] = ['---\n\n# ASSIGNED TURN CONTEXT'];
   if (opts.assignedTask) {
@@ -217,7 +239,9 @@ function assignedContextSection(opts: NormalizedComposeRoleTurnOptions, budget: 
   }
 
   if (opts.steering?.length) {
-    parts.push(`## User/Lead Steering\n\n${budget.take('steering context', opts.steering.map((s) => `- ${s}`).join('\n'))}`);
+    parts.push(
+      `## User/Lead Steering\n\n${budget.take('steering context', opts.steering.map((s) => `- ${s}`).join('\n'))}`,
+    );
   }
 
   if (opts.verification?.length) {

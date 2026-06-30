@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import type { PromptFile, TeamTemplate, TigerRunTemplate, TigerRunTemplatePayload, TigerStageId, TigerStageRunConfig } from '~/types';
+import type {
+  PromptFile,
+  TeamTemplate,
+  TigerRunTemplate,
+  TigerRunTemplatePayload,
+  TigerStageId,
+  TigerStageRunConfig,
+} from '~/types';
 import { TIGER_STAGES } from '~/lib/tigerStages';
 import { cloneStageConfigs, fullStageConfigs } from '~/lib/tigerTemplateConfig';
 import { useTeamStore } from '~/stores/team';
@@ -21,32 +28,34 @@ const { t } = useT();
 type TemplateCategory = 'team-structure' | 'prompt-library' | 'cue-config' | 'tiger-run-templates';
 type RunTemplateEditorMode = 'new' | 'edit';
 
-const categories = computed<Array<{ key: TemplateCategory; title: string; description: string; ready: boolean }>>(() => [
-  {
-    key: 'team-structure',
-    title: t('templates.categories.teamStructure.title'),
-    description: t('templates.categories.teamStructure.description'),
-    ready: true,
-  },
-  {
-    key: 'prompt-library',
-    title: t('templates.categories.promptLibrary.title'),
-    description: t('templates.categories.promptLibrary.description'),
-    ready: true,
-  },
-  {
-    key: 'cue-config',
-    title: t('templates.categories.cueConfig.title'),
-    description: t('templates.categories.cueConfig.description'),
-    ready: true,
-  },
-  {
-    key: 'tiger-run-templates',
-    title: t('templates.categories.tigerRunTemplates.title'),
-    description: t('templates.categories.tigerRunTemplates.description'),
-    ready: true,
-  },
-]);
+const categories = computed<Array<{ key: TemplateCategory; title: string; description: string; ready: boolean }>>(
+  () => [
+    {
+      key: 'team-structure',
+      title: t('templates.categories.teamStructure.title'),
+      description: t('templates.categories.teamStructure.description'),
+      ready: true,
+    },
+    {
+      key: 'prompt-library',
+      title: t('templates.categories.promptLibrary.title'),
+      description: t('templates.categories.promptLibrary.description'),
+      ready: true,
+    },
+    {
+      key: 'cue-config',
+      title: t('templates.categories.cueConfig.title'),
+      description: t('templates.categories.cueConfig.description'),
+      ready: true,
+    },
+    {
+      key: 'tiger-run-templates',
+      title: t('templates.categories.tigerRunTemplates.title'),
+      description: t('templates.categories.tigerRunTemplates.description'),
+      ready: true,
+    },
+  ],
+);
 
 const team = useTeamStore();
 const prompts = usePromptsStore();
@@ -76,7 +85,9 @@ const runTemplateForm = reactive<{
   configs: fullStageConfigs(null),
 });
 
-const activeCategoryMeta = computed(() => categories.value.find((category) => category.key === activeCategory.value) ?? categories.value[0]!);
+const activeCategoryMeta = computed(
+  () => categories.value.find((category) => category.key === activeCategory.value) ?? categories.value[0]!,
+);
 const selectedTemplate = computed(
   () => team.templates.find((template) => template.id === selectedTemplateId.value) ?? team.templates[0] ?? null,
 );
@@ -355,20 +366,11 @@ onMounted(() => {
   void loadTeamTemplates();
 });
 
-watch(
-  () => team.templates.map((template) => template.id).join('\0'),
-  ensureSelectedTemplate,
-);
+watch(() => team.templates.map((template) => template.id).join('\0'), ensureSelectedTemplate);
 
-watch(
-  () => prompts.items.map((prompt) => prompt.path).join('\0'),
-  ensureSelectedPrompt,
-);
+watch(() => prompts.items.map((prompt) => prompt.path).join('\0'), ensureSelectedPrompt);
 
-watch(
-  () => runTemplates.items.map((template) => templateRef(template)).join('\0'),
-  ensureSelectedRunTemplate,
-);
+watch(() => runTemplates.items.map((template) => templateRef(template)).join('\0'), ensureSelectedRunTemplate);
 </script>
 
 <template>
@@ -411,7 +413,9 @@ watch(
               <span>{{ t('templates.team.intro') }}</span>
             </div>
             <div class="pane-actions">
-              <BaseButton variant="secondary" :loading="team.templatesLoading" @click="loadTeamTemplates(true)">{{ t('common.refresh') }}</BaseButton>
+              <BaseButton variant="secondary" :loading="team.templatesLoading" @click="loadTeamTemplates(true)">{{
+                t('common.refresh')
+              }}</BaseButton>
               <BaseButton variant="primary" @click="openCreate()">{{ t('templates.team.new') }}</BaseButton>
             </div>
           </header>
@@ -442,7 +446,9 @@ watch(
               >
                 <span>
                   <b>{{ template.name }}</b>
-                  <small>{{ template.description || t('templates.team.roleCount', { n: template.roles.length }) }}</small>
+                  <small>{{
+                    template.description || t('templates.team.roleCount', { n: template.roles.length })
+                  }}</small>
                 </span>
                 <em>{{ template.builtin ? t('templates.builtin') : t('templates.custom') }}</em>
               </button>
@@ -467,8 +473,12 @@ watch(
               </div>
 
               <div class="detail-actions">
-                <BaseButton v-if="selectedTemplate.builtin" variant="secondary" @click="openCreate(selectedTemplate)">{{ t('templates.team.newFromBuiltin') }}</BaseButton>
-                <BaseButton v-else variant="secondary" @click="openEdit(selectedTemplate)">{{ t('common.edit') }}</BaseButton>
+                <BaseButton v-if="selectedTemplate.builtin" variant="secondary" @click="openCreate(selectedTemplate)">{{
+                  t('templates.team.newFromBuiltin')
+                }}</BaseButton>
+                <BaseButton v-else variant="secondary" @click="openEdit(selectedTemplate)">{{
+                  t('common.edit')
+                }}</BaseButton>
                 <BaseButton
                   variant="secondary"
                   :loading="team.isBusy('template')"
@@ -504,7 +514,9 @@ watch(
               <span>{{ t('templates.prompt.intro') }}</span>
             </div>
             <div class="pane-actions">
-              <BaseButton variant="secondary" :loading="prompts.loading" @click="loadPromptLibrary">{{ t('common.refresh') }}</BaseButton>
+              <BaseButton variant="secondary" :loading="prompts.loading" @click="loadPromptLibrary">{{
+                t('common.refresh')
+              }}</BaseButton>
             </div>
           </header>
 
@@ -519,7 +531,9 @@ watch(
           <div v-else-if="prompts.loaded && !prompts.items.length" class="empty-state">
             <b>{{ t('templates.prompt.emptyTitle') }}</b>
             <span>{{ t('templates.prompt.emptyDesc') }}</span>
-            <BaseButton variant="secondary" :loading="prompts.loading" @click="loadPromptLibrary">{{ t('templates.prompt.refreshLibrary') }}</BaseButton>
+            <BaseButton variant="secondary" :loading="prompts.loading" @click="loadPromptLibrary">{{
+              t('templates.prompt.refreshLibrary')
+            }}</BaseButton>
           </div>
 
           <div v-else class="prompt-library-layout">
@@ -545,7 +559,11 @@ watch(
                   <span>{{ selectedPrompt.path }}</span>
                 </header>
                 <p v-if="selectedPrompt.description" class="prompt-description">{{ selectedPrompt.description }}</p>
-                <div v-if="selectedPrompt.tags?.length" class="prompt-tags" :aria-label="t('templates.prompt.tagsLabel')">
+                <div
+                  v-if="selectedPrompt.tags?.length"
+                  class="prompt-tags"
+                  :aria-label="t('templates.prompt.tagsLabel')"
+                >
                   <span v-for="tag in selectedPrompt.tags" :key="tag">{{ tag }}</span>
                 </div>
                 <pre>{{ selectedPrompt.body }}</pre>
@@ -568,8 +586,12 @@ watch(
             </div>
             <div class="pane-actions">
               <span v-if="cue.running" class="cue-status running">{{ t('templates.cue.running') }}</span>
-              <span v-else-if="cue.loaded && !cue.disabled" class="cue-status stopped">{{ t('templates.cue.stopped') }}</span>
-              <BaseButton variant="secondary" :loading="cue.loading" @click="loadCueConfig">{{ t('templates.cue.refreshStatus') }}</BaseButton>
+              <span v-else-if="cue.loaded && !cue.disabled" class="cue-status stopped">{{
+                t('templates.cue.stopped')
+              }}</span>
+              <BaseButton variant="secondary" :loading="cue.loading" @click="loadCueConfig">{{
+                t('templates.cue.refreshStatus')
+              }}</BaseButton>
               <BaseButton
                 variant="secondary"
                 :loading="cue.isBusy('reload')"
@@ -588,7 +610,9 @@ watch(
           <div v-else-if="cue.disabled" class="empty-state cue-disabled">
             <b>{{ t('templates.cue.disabledTitle') }}</b>
             <span>{{ t('templates.cue.disabledDesc') }}</span>
-            <BaseButton variant="secondary" :loading="cue.loading" @click="loadCueConfig">{{ t('templates.cue.refreshCueStatus') }}</BaseButton>
+            <BaseButton variant="secondary" :loading="cue.loading" @click="loadCueConfig">{{
+              t('templates.cue.refreshCueStatus')
+            }}</BaseButton>
           </div>
 
           <div v-else-if="cue.loadError" class="feedback error" role="alert">
@@ -598,14 +622,20 @@ watch(
           <div v-else-if="cue.loaded && !cue.subscriptions.length" class="empty-state">
             <b>{{ t('templates.cue.emptyTitle') }}</b>
             <span>{{ t('templates.cue.emptyDesc') }}</span>
-            <BaseButton variant="secondary" :loading="cue.isBusy('reload')" @click="reloadCueConfig">{{ t('cue.actions.reloadConfig') }}</BaseButton>
+            <BaseButton variant="secondary" :loading="cue.isBusy('reload')" @click="reloadCueConfig">{{
+              t('cue.actions.reloadConfig')
+            }}</BaseButton>
           </div>
 
           <div v-else class="cue-config-layout">
             <p class="cue-context">
-              <span v-if="cue.workspace">{{ t('cue.context.workspace') }}: <code>{{ cue.workspace }}</code></span>
+              <span v-if="cue.workspace"
+                >{{ t('cue.context.workspace') }}: <code>{{ cue.workspace }}</code></span
+              >
               <span v-else>{{ t('cue.context.noWorkspace') }}</span>
-              <span v-if="cue.configPath"> / {{ t('cue.context.config') }}: <code>{{ cue.configPath }}</code></span>
+              <span v-if="cue.configPath">
+                / {{ t('cue.context.config') }}: <code>{{ cue.configPath }}</code></span
+              >
             </p>
             <div class="cue-card-grid" :aria-label="t('templates.cue.subscriptionsLabel')">
               <CueSubscriptionCard
@@ -627,8 +657,15 @@ watch(
               <span>{{ t('templates.runTemplates.intro') }}</span>
             </div>
             <div class="pane-actions">
-              <BaseButton variant="secondary" :loading="runTemplates.loading || tiger.loading" @click="loadTigerTemplates(true)">{{ t('common.refresh') }}</BaseButton>
-              <BaseButton variant="primary" @click="openNewRunTemplate">{{ t('templates.runTemplates.new') }}</BaseButton>
+              <BaseButton
+                variant="secondary"
+                :loading="runTemplates.loading || tiger.loading"
+                @click="loadTigerTemplates(true)"
+                >{{ t('common.refresh') }}</BaseButton
+              >
+              <BaseButton variant="primary" @click="openNewRunTemplate">{{
+                t('templates.runTemplates.new')
+              }}</BaseButton>
             </div>
           </header>
 
@@ -639,16 +676,39 @@ watch(
             {{ runTemplates.operationError }}
           </div>
 
-          <section v-if="runTemplateEditorMode" class="run-template-editor" :aria-label="t('templates.runTemplates.editorLabel')">
+          <section
+            v-if="runTemplateEditorMode"
+            class="run-template-editor"
+            :aria-label="t('templates.runTemplates.editorLabel')"
+          >
             <header>
-              <p class="eyebrow">{{ runTemplateEditorMode === 'new' ? t('templates.runTemplates.newTemplate') : t('templates.runTemplates.editTemplate') }}</p>
-              <h3>{{ runTemplateEditorMode === 'new' ? t('templates.runTemplates.createTitle') : t('templates.runTemplates.editTitle', { name: runTemplateEditorTemplate?.name ?? t('templates.runTemplates.fallbackName') }) }}</h3>
+              <p class="eyebrow">
+                {{
+                  runTemplateEditorMode === 'new'
+                    ? t('templates.runTemplates.newTemplate')
+                    : t('templates.runTemplates.editTemplate')
+                }}
+              </p>
+              <h3>
+                {{
+                  runTemplateEditorMode === 'new'
+                    ? t('templates.runTemplates.createTitle')
+                    : t('templates.runTemplates.editTitle', {
+                        name: runTemplateEditorTemplate?.name ?? t('templates.runTemplates.fallbackName'),
+                      })
+                }}
+              </h3>
             </header>
 
             <div class="run-template-form-grid">
               <label class="form-field">
                 <span>{{ t('templates.runTemplates.name') }}</span>
-                <input v-model="runTemplateForm.name" data-testid="run-template-name" maxlength="160" :placeholder="t('templates.placeholders.name')" />
+                <input
+                  v-model="runTemplateForm.name"
+                  data-testid="run-template-name"
+                  maxlength="160"
+                  :placeholder="t('templates.placeholders.name')"
+                />
               </label>
               <label class="form-field">
                 <span>{{ t('templates.runTemplates.startFrom') }}</span>
@@ -672,10 +732,19 @@ watch(
             <div v-if="!tiger.config" class="empty-state run-template-config-missing">
               <b>{{ t('templates.runTemplates.loadingConfig') }}</b>
               <span>{{ t('templates.runTemplates.configMissingDesc') }}</span>
-              <BaseButton variant="secondary" :loading="runTemplates.loading || tiger.loading" @click="loadTigerTemplates(true)">{{ t('templates.runTemplates.refreshConfig') }}</BaseButton>
+              <BaseButton
+                variant="secondary"
+                :loading="runTemplates.loading || tiger.loading"
+                @click="loadTigerTemplates(true)"
+                >{{ t('templates.runTemplates.refreshConfig') }}</BaseButton
+              >
             </div>
 
-            <div v-else class="run-stage-list editor-run-stage-list" :aria-label="t('templates.runTemplates.editableStagesLabel')">
+            <div
+              v-else
+              class="run-stage-list editor-run-stage-list"
+              :aria-label="t('templates.runTemplates.editableStagesLabel')"
+            >
               <details v-for="stage in TIGER_STAGES" :key="stage.id" :open="stage.id === runTemplateForm.fromStage">
                 <summary>
                   <span class="stage-number">{{ stage.number }}</span>
@@ -694,7 +763,9 @@ watch(
             </div>
 
             <div class="detail-actions">
-              <BaseButton variant="ghost" :disabled="runTemplates.saving" @click="closeRunTemplateEditor">{{ t('common.cancel') }}</BaseButton>
+              <BaseButton variant="ghost" :disabled="runTemplates.saving" @click="closeRunTemplateEditor">{{
+                t('common.cancel')
+              }}</BaseButton>
               <BaseButton
                 variant="primary"
                 :loading="runTemplates.saving"
@@ -717,7 +788,12 @@ watch(
           <div v-else-if="runTemplates.loaded && !runTemplates.items.length" class="empty-state">
             <b>{{ t('templates.runTemplates.emptyTitle') }}</b>
             <span>{{ t('templates.runTemplates.emptyDesc') }}</span>
-            <BaseButton variant="secondary" :loading="runTemplates.loading || tiger.loading" @click="loadTigerTemplates(true)">{{ t('templates.runTemplates.refreshTemplates') }}</BaseButton>
+            <BaseButton
+              variant="secondary"
+              :loading="runTemplates.loading || tiger.loading"
+              @click="loadTigerTemplates(true)"
+              >{{ t('templates.runTemplates.refreshTemplates') }}</BaseButton
+            >
           </div>
 
           <div v-else class="run-template-layout">
@@ -729,12 +805,17 @@ watch(
                   :key="templateRef(template)"
                   type="button"
                   class="template-row run-template-row"
-                  :class="{ selected: selectedRunTemplate && templateRef(selectedRunTemplate) === templateRef(template) }"
+                  :class="{
+                    selected: selectedRunTemplate && templateRef(selectedRunTemplate) === templateRef(template),
+                  }"
                   @click="selectRunTemplate(template)"
                 >
                   <span>
                     <b>{{ template.name }}</b>
-                    <small>{{ template.description || t('templates.runTemplates.startsFrom', { stage: runStageTitle(template.fromStage) }) }}</small>
+                    <small>{{
+                      template.description ||
+                      t('templates.runTemplates.startsFrom', { stage: runStageTitle(template.fromStage) })
+                    }}</small>
                   </span>
                   <em>{{ template.builtin ? t('templates.builtin') : t('templates.custom') }}</em>
                 </button>
@@ -743,14 +824,23 @@ watch(
 
             <article v-if="selectedRunTemplate" class="template-detail run-template-detail">
               <header>
-                <p class="eyebrow">{{ selectedRunTemplate.builtin ? t('templates.builtin') : t('templates.custom') }}</p>
+                <p class="eyebrow">
+                  {{ selectedRunTemplate.builtin ? t('templates.builtin') : t('templates.custom') }}
+                </p>
                 <h3>{{ selectedRunTemplate.name }}</h3>
                 <span>{{ selectedRunTemplate.description || t('templates.noDescription') }}</span>
               </header>
 
               <div class="run-template-meta">
-                <span>{{ t('templates.runTemplates.startsFromLabel') }} <b>{{ runStageTitle(selectedRunTemplate.fromStage) }}</b></span>
-                <span>{{ selectedRunTemplate.builtin ? t('templates.runTemplates.builtinTemplate') : t('templates.runTemplates.customTemplate') }}</span>
+                <span
+                  >{{ t('templates.runTemplates.startsFromLabel') }}
+                  <b>{{ runStageTitle(selectedRunTemplate.fromStage) }}</b></span
+                >
+                <span>{{
+                  selectedRunTemplate.builtin
+                    ? t('templates.runTemplates.builtinTemplate')
+                    : t('templates.runTemplates.customTemplate')
+                }}</span>
               </div>
 
               <div class="detail-actions">
@@ -782,7 +872,11 @@ watch(
                 <details
                   v-for="stage in TIGER_STAGES"
                   :key="stage.id"
-                  :open="selectedRunTemplate.fromStage ? stage.id === selectedRunTemplate.fromStage : stage.id === 'brainstorming'"
+                  :open="
+                    selectedRunTemplate.fromStage
+                      ? stage.id === selectedRunTemplate.fromStage
+                      : stage.id === 'brainstorming'
+                  "
                 >
                   <summary>
                     <span class="stage-number">{{ stage.number }}</span>

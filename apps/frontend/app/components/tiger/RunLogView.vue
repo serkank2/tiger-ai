@@ -36,7 +36,9 @@ watch(
     <div class="head">
       <span class="t">{{ t('tiger.runLog.title') }}</span>
       <span class="spacer" />
-      <BaseButton variant="ghost" size="sm" :loading="loading" @click="refresh">{{ t('tiger.runLog.refresh') }}</BaseButton>
+      <BaseButton variant="ghost" size="sm" :loading="loading" @click="refresh">{{
+        t('tiger.runLog.refresh')
+      }}</BaseButton>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
     <pre v-else class="body">{{ content || t('tiger.runLog.empty') }}</pre>

@@ -113,10 +113,7 @@ function saveComment(file: FileDiff, line: DiffLine): void {
     draftKey.value = null;
     return;
   }
-  comments.value = [
-    ...comments.value,
-    { path: file.path, line: line.n, excerpt: line.text.slice(0, 200), body },
-  ];
+  comments.value = [...comments.value, { path: file.path, line: line.n, excerpt: line.text.slice(0, 200), body }];
   draftKey.value = null;
   draftBody.value = '';
 }
@@ -130,9 +127,7 @@ const canSend = computed(() => comments.value.length > 0 && !readOnly.value && !
 /** Bundle the inline comments into a single steering directive sent back to the run. */
 async function sendReview(): Promise<void> {
   if (!canSend.value) return;
-  const lines = comments.value.map(
-    (c) => `- ${c.path}:${c.line}\n  > ${c.excerpt.trim()}\n  ${c.body}`,
-  );
+  const lines = comments.value.map((c) => `- ${c.path}:${c.line}\n  > ${c.excerpt.trim()}\n  ${c.body}`);
   const body = `Code review feedback (please address these comments):\n${lines.join('\n')}`;
   sending.value = true;
   try {
@@ -207,9 +202,7 @@ onBeforeUnmount(() => {
 
 // --- Stage / commit / PR (backend git-write routes) -----------------------
 // Read-only history views and non-git workspaces can't perform writes.
-const writeRoutesAvailable = computed(
-  () => !readOnly.value && !!changes.value?.isGitRepo,
-);
+const writeRoutesAvailable = computed(() => !readOnly.value && !!changes.value?.isGitRepo);
 const hasChanges = computed(() => (changes.value?.files.length ?? 0) > 0);
 
 /** Pull the run id directly off the store; writes target the live active run. */
@@ -265,7 +258,10 @@ async function doCommit(): Promise<void> {
     const result = await api.commitTeamChanges(runId, message);
     team.changes = result.changes;
     if (result.committed) {
-      notices.push(t('team.changes.committedNotice', { sha: result.sha?.slice(0, 7) ?? '', summary: result.summary }).trim(), 'info');
+      notices.push(
+        t('team.changes.committedNotice', { sha: result.sha?.slice(0, 7) ?? '', summary: result.summary }).trim(),
+        'info',
+      );
       commitOpen.value = false;
     } else {
       // "nothing to commit" is a non-error outcome: keep the modal open with the note.
@@ -358,7 +354,9 @@ async function copyPrUrl(): Promise<void> {
           </span>
         </div>
         <div class="ch-actions">
-          <BaseButton size="sm" variant="ghost" :loading="loading" @click="refresh">{{ t('team.changes.refresh') }}</BaseButton>
+          <BaseButton size="sm" variant="ghost" :loading="loading" @click="refresh">{{
+            t('team.changes.refresh')
+          }}</BaseButton>
           <BaseButton size="sm" variant="ghost" @click="emit('close')">{{ t('team.changes.close') }}</BaseButton>
         </div>
       </header>
@@ -372,21 +370,24 @@ async function copyPrUrl(): Promise<void> {
           :disabled="!writeRoutesAvailable || !hasChanges"
           :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.stageAllTitle')"
           @click="stageAll"
-        >{{ t('team.changes.stageAll') }}</BaseButton>
+          >{{ t('team.changes.stageAll') }}</BaseButton
+        >
         <BaseButton
           size="sm"
           variant="ghost"
           :disabled="!writeRoutesAvailable || !hasChanges"
           :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.commitTitle')"
           @click="openCommit"
-        >{{ t('team.changes.commit') }}</BaseButton>
+          >{{ t('team.changes.commit') }}</BaseButton
+        >
         <BaseButton
           size="sm"
           variant="ghost"
           :disabled="!writeRoutesAvailable"
           :title="readOnly ? t('team.changes.liveRunOnly') : t('team.changes.createPrTitle')"
           @click="openPr"
-        >{{ t('team.changes.createPr') }}</BaseButton>
+          >{{ t('team.changes.createPr') }}</BaseButton
+        >
         <span v-if="!writeRoutesAvailable" class="pr-note">
           {{ readOnly ? t('team.changes.liveRunOnly') : t('team.changes.notGitRepo') }}
         </span>
@@ -415,7 +416,12 @@ async function copyPrUrl(): Promise<void> {
         <div class="review-scroll">
           <!-- Untracked-only / no-diff fallback keeps the simple file list. -->
           <ul v-if="!fileDiffs.length" class="file-list">
-            <li v-for="f in changes.files" :key="f.path" class="file" :title="f.oldPath ? `${f.oldPath} -> ${f.path}` : f.path">
+            <li
+              v-for="f in changes.files"
+              :key="f.path"
+              class="file"
+              :title="f.oldPath ? `${f.oldPath} -> ${f.path}` : f.path"
+            >
               <span class="badge" :class="`b-${f.status}`">{{ STATUS_LABEL[f.status] }}</span>
               <span class="fpath">{{ f.path }}</span>
             </li>
@@ -426,7 +432,12 @@ async function copyPrUrl(): Promise<void> {
               type="button"
               class="file-head"
               :aria-expanded="!collapsed[file.path]"
-              :aria-label="t('team.changes.diffToggleAria', { action: collapsed[file.path] ? t('team.changes.expand') : t('team.changes.collapse'), path: file.path })"
+              :aria-label="
+                t('team.changes.diffToggleAria', {
+                  action: collapsed[file.path] ? t('team.changes.expand') : t('team.changes.collapse'),
+                  path: file.path,
+                })
+              "
               @click="toggle(file.path)"
             >
               <span class="chev" aria-hidden="true">{{ collapsed[file.path] ? '+' : '-' }}</span>
@@ -443,7 +454,9 @@ async function copyPrUrl(): Promise<void> {
                     :title="t('team.changes.commentOnLine')"
                     :aria-label="t('team.changes.commentOnLine')"
                     @click="startComment(file, line)"
-                  >+</button>
+                  >
+                    +
+                  </button>
                   <span class="dl" :class="`d-${line.kind}`">{{ line.text }}</span>
                 </div>
                 <div v-if="draftKey === `${file.path}#${line.n}`" class="comment-draft">
@@ -455,7 +468,9 @@ async function copyPrUrl(): Promise<void> {
                     :aria-label="t('team.changes.reviewComment')"
                   />
                   <div class="comment-actions">
-                    <BaseButton size="sm" variant="primary" @click="saveComment(file, line)">{{ t('team.changes.addComment') }}</BaseButton>
+                    <BaseButton size="sm" variant="primary" @click="saveComment(file, line)">{{
+                      t('team.changes.addComment')
+                    }}</BaseButton>
                     <BaseButton size="sm" variant="ghost" @click="draftKey = null">{{ t('common.cancel') }}</BaseButton>
                   </div>
                 </div>
@@ -472,7 +487,14 @@ async function copyPrUrl(): Promise<void> {
             <li v-for="(c, i) in comments" :key="i" class="rc">
               <span class="rc-anchor">{{ c.path }}:{{ c.line }}</span>
               <span class="rc-body">{{ c.body }}</span>
-              <button type="button" class="rc-rm" :aria-label="t('team.changes.removeComment')" @click="removeComment(i)">Remove</button>
+              <button
+                type="button"
+                class="rc-rm"
+                :aria-label="t('team.changes.removeComment')"
+                @click="removeComment(i)"
+              >
+                Remove
+              </button>
             </li>
           </ul>
           <div class="review-send">
@@ -484,7 +506,8 @@ async function copyPrUrl(): Promise<void> {
               :disabled="!canSend"
               :title="readOnly ? t('team.changes.readOnlyReviewTitle') : t('team.changes.sendReviewTitle')"
               @click="sendReview"
-            >{{ t('team.changes.sendReview') }}</BaseButton>
+              >{{ t('team.changes.sendReview') }}</BaseButton
+            >
           </div>
         </footer>
       </template>
@@ -509,7 +532,9 @@ async function copyPrUrl(): Promise<void> {
       <p v-if="commitError" class="modal-err" role="alert" aria-live="polite">{{ commitError }}</p>
       <template #footer>
         <BaseButton variant="ghost" @click="commitOpen = false">{{ t('common.cancel') }}</BaseButton>
-        <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">{{ t('team.changes.commitAction') }}</BaseButton>
+        <BaseButton variant="primary" :loading="committing" :disabled="!commitMessage.trim()" @click="doCommit">{{
+          t('team.changes.commitAction')
+        }}</BaseButton>
       </template>
     </BaseModal>
 
@@ -518,15 +543,33 @@ async function copyPrUrl(): Promise<void> {
       <template v-if="!prUrl">
         <label class="modal-field">
           <span>{{ t('team.changes.prTitle') }}</span>
-          <input v-model="prTitle" :placeholder="t('team.changes.prTitlePlaceholder')" :aria-label="t('team.changes.prTitle')" @input="prError = ''" />
+          <input
+            v-model="prTitle"
+            :placeholder="t('team.changes.prTitlePlaceholder')"
+            :aria-label="t('team.changes.prTitle')"
+            @input="prError = ''"
+          />
         </label>
         <label class="modal-field">
-          <span>{{ t('team.changes.prBody') }} <i>({{ t('team.changes.optional') }})</i></span>
-          <textarea v-model="prBody" rows="3" :placeholder="t('team.changes.prBodyPlaceholder')" :aria-label="t('team.changes.prBody')" />
+          <span
+            >{{ t('team.changes.prBody') }} <i>({{ t('team.changes.optional') }})</i></span
+          >
+          <textarea
+            v-model="prBody"
+            rows="3"
+            :placeholder="t('team.changes.prBodyPlaceholder')"
+            :aria-label="t('team.changes.prBody')"
+          />
         </label>
         <label class="modal-field">
-          <span>{{ t('team.changes.baseBranch') }} <i>({{ t('team.changes.optional') }})</i></span>
-          <input v-model="prBase" :placeholder="t('team.changes.baseBranchPlaceholder')" :aria-label="t('team.changes.baseBranch')" />
+          <span
+            >{{ t('team.changes.baseBranch') }} <i>({{ t('team.changes.optional') }})</i></span
+          >
+          <input
+            v-model="prBase"
+            :placeholder="t('team.changes.baseBranchPlaceholder')"
+            :aria-label="t('team.changes.baseBranch')"
+          />
         </label>
         <p v-if="prError" class="modal-err" role="alert" aria-live="polite">{{ prError }}</p>
       </template>
@@ -537,7 +580,9 @@ async function copyPrUrl(): Promise<void> {
       <template #footer>
         <template v-if="!prUrl">
           <BaseButton variant="ghost" @click="prOpen = false">{{ t('common.cancel') }}</BaseButton>
-          <BaseButton variant="primary" :loading="creatingPr" :disabled="!prTitle.trim()" @click="doCreatePr">{{ t('team.changes.createPr') }}</BaseButton>
+          <BaseButton variant="primary" :loading="creatingPr" :disabled="!prTitle.trim()" @click="doCreatePr">{{
+            t('team.changes.createPr')
+          }}</BaseButton>
         </template>
         <template v-else>
           <BaseButton variant="ghost" @click="copyPrUrl">{{ t('team.changes.copyUrl') }}</BaseButton>
@@ -576,12 +621,32 @@ async function copyPrUrl(): Promise<void> {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
-.ch-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.branch { font-size: var(--text-xs); color: var(--text-dim); }
-.stat { display: flex; gap: var(--space-2); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.stat .ins { color: var(--green); }
-.stat .del { color: var(--red); }
-.ch-actions { display: flex; gap: var(--space-1); }
+.ch-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.branch {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.stat {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.stat .ins {
+  color: var(--green);
+}
+.stat .del {
+  color: var(--red);
+}
+.ch-actions {
+  display: flex;
+  gap: var(--space-1);
+}
 .pr-bar {
   display: flex;
   align-items: center;
@@ -590,7 +655,10 @@ async function copyPrUrl(): Promise<void> {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.pr-note { font-size: var(--text-xs); color: var(--text-faint); }
+.pr-note {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
 .ch-state {
   display: flex;
   align-items: center;
@@ -598,17 +666,39 @@ async function copyPrUrl(): Promise<void> {
   padding: var(--space-4);
   color: var(--text-dim);
 }
-.ch-state.empty { flex-direction: column; align-items: flex-start; }
-.note { color: var(--text-dim); font-size: var(--text-xs); }
-.note.inline { padding: var(--space-2) var(--space-3) 0; }
-.review-scroll { flex: 1; min-height: 0; overflow: auto; }
+.ch-state.empty {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.note {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+.note.inline {
+  padding: var(--space-2) var(--space-3) 0;
+}
+.review-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .file-list {
   list-style: none;
   margin: 0;
   padding: var(--space-2) var(--space-3);
 }
-.file { display: flex; align-items: center; gap: var(--space-2); padding: 2px 0; font-size: var(--text-sm); }
-.fpath { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 0;
+  font-size: var(--text-sm);
+}
+.fpath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .badge {
   display: inline-flex;
   align-items: center;
@@ -621,11 +711,27 @@ async function copyPrUrl(): Promise<void> {
   flex: none;
   border: 1px solid var(--border-strong);
 }
-.b-added, .b-untracked { color: var(--green); border-color: var(--green); }
-.b-deleted { color: var(--red); border-color: var(--red); }
-.b-modified, .b-renamed, .b-copied { color: var(--amber); border-color: var(--amber); }
-.b-unknown { color: var(--text-dim); }
-.file-diff { border-bottom: 1px solid var(--border); }
+.b-added,
+.b-untracked {
+  color: var(--green);
+  border-color: var(--green);
+}
+.b-deleted {
+  color: var(--red);
+  border-color: var(--red);
+}
+.b-modified,
+.b-renamed,
+.b-copied {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.b-unknown {
+  color: var(--text-dim);
+}
+.file-diff {
+  border-bottom: 1px solid var(--border);
+}
 .file-head {
   display: flex;
   align-items: center;
@@ -639,10 +745,21 @@ async function copyPrUrl(): Promise<void> {
   font-size: var(--text-sm);
   text-align: left;
 }
-.file-head:hover { background: var(--bg-elev-2); }
-.chev { color: var(--text-faint); width: 12px; flex: none; }
-.diff { padding: var(--space-1) 0; }
-.dl-row { display: flex; align-items: flex-start; }
+.file-head:hover {
+  background: var(--bg-elev-2);
+}
+.chev {
+  color: var(--text-faint);
+  width: 12px;
+  flex: none;
+}
+.diff {
+  padding: var(--space-1) 0;
+}
+.dl-row {
+  display: flex;
+  align-items: flex-start;
+}
 .add-comment {
   flex: none;
   width: 18px;
@@ -654,8 +771,12 @@ async function copyPrUrl(): Promise<void> {
   font-size: var(--text-xs);
   line-height: 1.45;
 }
-.dl-row:hover .add-comment { opacity: 1; }
-.add-comment:hover { color: var(--accent); }
+.dl-row:hover .add-comment {
+  opacity: 1;
+}
+.add-comment:hover {
+  color: var(--accent);
+}
 .dl {
   display: block;
   flex: 1;
@@ -666,11 +787,23 @@ async function copyPrUrl(): Promise<void> {
   line-height: 1.45;
   padding-right: var(--space-3);
 }
-.d-add { background: var(--green-soft); color: var(--green); }
-.d-del { background: var(--red-soft); color: var(--red); }
-.d-hunk { color: var(--accent); }
-.d-meta { color: var(--text-dim); }
-.comment-draft { padding: var(--space-2) var(--space-3) var(--space-2) 22px; }
+.d-add {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.d-del {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.d-hunk {
+  color: var(--accent);
+}
+.d-meta {
+  color: var(--text-dim);
+}
+.comment-draft {
+  padding: var(--space-2) var(--space-3) var(--space-2) 22px;
+}
 .comment-input {
   width: 100%;
   resize: vertical;
@@ -682,14 +815,28 @@ async function copyPrUrl(): Promise<void> {
   border-radius: var(--radius-sm);
   padding: var(--space-2);
 }
-.comment-actions { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
-.truncated { padding: var(--space-2) var(--space-3); color: var(--amber); font-size: var(--text-xs); }
+.comment-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.truncated {
+  padding: var(--space-2) var(--space-3);
+  color: var(--amber);
+  font-size: var(--text-xs);
+}
 .review-bar {
   border-top: 1px solid var(--border);
   background: var(--bg-elev);
   padding: var(--space-2) var(--space-3);
 }
-.review-comments { list-style: none; margin: 0 0 var(--space-2); padding: 0; max-height: 22vh; overflow: auto; }
+.review-comments {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  max-height: 22vh;
+  overflow: auto;
+}
 .rc {
   display: flex;
   align-items: baseline;
@@ -697,14 +844,45 @@ async function copyPrUrl(): Promise<void> {
   padding: 2px 0;
   font-size: var(--text-xs);
 }
-.rc-anchor { font-family: var(--font-mono, monospace); color: var(--accent); flex: none; }
-.rc-body { color: var(--text-dim); flex: 1; }
-.rc-rm { border: none; background: transparent; color: var(--text-faint); cursor: pointer; }
-.review-send { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.rc-count { font-size: var(--text-xs); color: var(--text-faint); }
-.modal-field { display: block; margin-bottom: var(--space-3); }
-.modal-field > span { display: block; font-size: var(--text-xs); color: var(--text-dim); margin-bottom: var(--space-1); }
-.modal-field i { color: var(--text-faint); font-style: normal; }
+.rc-anchor {
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  flex: none;
+}
+.rc-body {
+  color: var(--text-dim);
+  flex: 1;
+}
+.rc-rm {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.review-send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.rc-count {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.modal-field {
+  display: block;
+  margin-bottom: var(--space-3);
+}
+.modal-field > span {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  margin-bottom: var(--space-1);
+}
+.modal-field i {
+  color: var(--text-faint);
+  font-style: normal;
+}
 .modal-field input,
 .modal-field textarea {
   width: 100%;
@@ -717,7 +895,20 @@ async function copyPrUrl(): Promise<void> {
   padding: var(--space-2);
   resize: vertical;
 }
-.modal-err { color: var(--red); font-size: var(--text-sm); margin: 0; }
-.modal-ok { color: var(--text-dim); font-size: var(--text-sm); margin: 0 0 var(--space-2); }
-.pr-url { font-family: var(--font-mono, monospace); font-size: var(--text-sm); color: var(--accent); word-break: break-all; }
+.modal-err {
+  color: var(--red);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+.modal-ok {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2);
+}
+.pr-url {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  color: var(--accent);
+  word-break: break-all;
+}
 </style>

@@ -49,7 +49,11 @@ function pickProject(path: string) {
 
 async function start() {
   if (!canStart.value || !selected.value) return;
-  const input: TeamRunStartInput = { goal: goal.value.trim(), templateId: selected.value.id, path: workspace.value.trim() };
+  const input: TeamRunStartInput = {
+    goal: goal.value.trim(),
+    templateId: selected.value.id,
+    path: workspace.value.trim(),
+  };
   if (orchestrationMode.value) input.orchestrationMode = orchestrationMode.value;
   try {
     await team.start(input);
@@ -120,12 +124,7 @@ function onSaved(tpl: TeamTemplate) {
           <h3>{{ t('team.launcher.teamTemplate') }}</h3>
           <BaseButton size="sm" variant="ghost" @click="openNew">{{ t('common.new') }}</BaseButton>
         </div>
-        <div
-          v-for="tpl in templates"
-          :key="tpl.id"
-          class="tpl"
-          :class="{ active: tpl.id === selectedId }"
-        >
+        <div v-for="tpl in templates" :key="tpl.id" class="tpl" :class="{ active: tpl.id === selectedId }">
           <button
             type="button"
             class="tpl-select"
@@ -146,9 +145,15 @@ function onSaved(tpl: TeamTemplate) {
             </div>
           </button>
           <div class="tpl-actions">
-            <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{ tpl.builtin ? t('team.launcher.customize') : t('common.edit') }}</BaseButton>
-            <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">{{ t('team.launcher.duplicate') }}</BaseButton>
-            <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">{{ t('common.delete') }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" @click="openEdit(tpl)">{{
+              tpl.builtin ? t('team.launcher.customize') : t('common.edit')
+            }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" @click="duplicate(tpl)">{{
+              t('team.launcher.duplicate')
+            }}</BaseButton>
+            <BaseButton v-if="!tpl.builtin" size="sm" variant="ghost" class="danger" @click="remove(tpl)">{{
+              t('common.delete')
+            }}</BaseButton>
           </div>
         </div>
         <p v-if="!templates.length" class="empty">{{ t('team.launcher.noTemplates') }}</p>
@@ -161,7 +166,9 @@ function onSaved(tpl: TeamTemplate) {
             <option value="" disabled>{{ t('team.launcher.selectProject') }}</option>
             <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
           </select>
-          <BaseButton size="md" variant="secondary" @click="showPicker = true">{{ t('team.launcher.browse') }}</BaseButton>
+          <BaseButton size="md" variant="secondary" @click="showPicker = true">{{
+            t('team.launcher.browse')
+          }}</BaseButton>
         </div>
         <code v-if="workspace" class="ws-path">📁 {{ workspace }}</code>
         <code v-else class="ws-path empty-path">{{ t('team.launcher.noFolder') }}</code>
@@ -176,14 +183,21 @@ function onSaved(tpl: TeamTemplate) {
         />
 
         <h3 class="mt">{{ t('team.launcher.orchestrationMode') }}</h3>
-        <select v-model="orchestrationMode" class="mode-select" data-testid="team-orchestration-mode" :aria-label="t('team.launcher.orchestrationMode')">
+        <select
+          v-model="orchestrationMode"
+          class="mode-select"
+          data-testid="team-orchestration-mode"
+          :aria-label="t('team.launcher.orchestrationMode')"
+        >
           <option value="">{{ t('team.launcher.serverDefault') }}</option>
           <option value="legacy">{{ t('team.launcher.legacy') }}</option>
           <option value="company">{{ t('team.launcher.company') }}</option>
         </select>
 
         <div v-if="selected" class="selected-roles">
-          <span class="label">{{ t('team.launcher.selectedRoles', { name: selected.name, n: selected.roles.length }) }}</span>
+          <span class="label">{{
+            t('team.launcher.selectedRoles', { name: selected.name, n: selected.roles.length })
+          }}</span>
           <ul>
             <li v-for="r in selected.roles" :key="r.id">
               <TeamAgentBadge :tool="r.agent.tool" />
@@ -220,8 +234,8 @@ function onSaved(tpl: TeamTemplate) {
   isolation: isolate;
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-6);
-  max-width: 1180px;
+  padding: var(--space-4);
+  max-width: 1100px;
   margin: 0 auto;
   width: 100%;
 }
@@ -238,10 +252,10 @@ function onSaved(tpl: TeamTemplate) {
 }
 .intro {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 340px);
-  gap: var(--space-6);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: var(--space-4);
   align-items: center;
-  padding-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 .intro-copy {
@@ -249,7 +263,7 @@ function onSaved(tpl: TeamTemplate) {
 }
 .intro h1 {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   line-height: var(--leading-tight);
 }
 .intro p {
@@ -260,13 +274,13 @@ function onSaved(tpl: TeamTemplate) {
 }
 .assembly-viz {
   position: relative;
-  min-height: 218px;
+  min-height: 176px;
   overflow: hidden;
 }
 .assembly-viz::before {
   content: '';
   position: absolute;
-  inset: 26px 28px;
+  inset: 20px 24px;
   border: 1px solid color-mix(in srgb, var(--border-strong) 62%, transparent);
   border-radius: 50%;
   background:
@@ -284,12 +298,12 @@ function onSaved(tpl: TeamTemplate) {
   opacity: 0.72;
 }
 .ring-a {
-  width: 182px;
-  height: 128px;
+  width: 154px;
+  height: 108px;
 }
 .ring-b {
-  width: 260px;
-  height: 174px;
+  width: 224px;
+  height: 150px;
   opacity: 0.38;
 }
 .goal-node {
@@ -298,14 +312,12 @@ function onSaved(tpl: TeamTemplate) {
   top: 50%;
   display: grid;
   place-items: center;
-  gap: 7px;
-  width: 92px;
-  height: 76px;
+  gap: var(--space-1);
+  width: 80px;
+  height: 62px;
   border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border));
   border-radius: var(--radius);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent),
-    var(--bg-elev);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent), var(--bg-elev);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent),
     0 14px 34px color-mix(in srgb, var(--bg) 42%, transparent);
@@ -319,7 +331,7 @@ function onSaved(tpl: TeamTemplate) {
   text-transform: uppercase;
 }
 .goal-mark {
-  width: 52px;
+  width: 46px;
   height: 4px;
   border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--accent), var(--green), var(--blue));
@@ -328,10 +340,10 @@ function onSaved(tpl: TeamTemplate) {
   position: absolute;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 70px;
+  gap: var(--space-1);
+  min-width: 62px;
   justify-content: center;
-  padding: 6px 10px;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--bg-elev-2) 86%, transparent);
@@ -353,13 +365,13 @@ function onSaved(tpl: TeamTemplate) {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .agent-node.lead {
-  top: 14px;
-  left: calc(50% - 35px);
+  top: 10px;
+  left: calc(50% - 31px);
   color: var(--accent);
 }
 .agent-node.build {
-  right: 8px;
-  top: 94px;
+  right: 6px;
+  top: 74px;
   color: var(--green);
   animation-delay: -1.2s;
 }
@@ -369,7 +381,7 @@ function onSaved(tpl: TeamTemplate) {
 }
 .agent-node.review {
   left: 4px;
-  top: 96px;
+  top: 76px;
   color: var(--blue);
   animation-delay: -2.4s;
 }
@@ -378,8 +390,8 @@ function onSaved(tpl: TeamTemplate) {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 12%, transparent);
 }
 .agent-node.qa {
-  left: calc(50% - 35px);
-  bottom: 10px;
+  left: calc(50% - 31px);
+  bottom: 8px;
   color: var(--amber);
   animation-delay: -3.3s;
 }
@@ -391,7 +403,7 @@ function onSaved(tpl: TeamTemplate) {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 92px;
+  width: 78px;
   height: 1px;
   transform-origin: left center;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 68%, transparent), transparent);
@@ -399,7 +411,7 @@ function onSaved(tpl: TeamTemplate) {
   animation: link-breathe 3.8s var(--ease-in-out) infinite;
 }
 .link-lead {
-  width: 74px;
+  width: 62px;
   transform: rotate(-90deg);
 }
 .link-build {
@@ -413,7 +425,7 @@ function onSaved(tpl: TeamTemplate) {
   animation-delay: -2s;
 }
 .link-qa {
-  width: 78px;
+  width: 62px;
   transform: rotate(90deg);
   background: linear-gradient(90deg, color-mix(in srgb, var(--amber) 68%, transparent), transparent);
   animation-delay: -3s;
@@ -421,12 +433,12 @@ function onSaved(tpl: TeamTemplate) {
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
-  margin-top: var(--space-5);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
   align-items: start;
 }
 h3 {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-2);
   font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -454,11 +466,10 @@ h3.mt {
   overflow: hidden;
   text-align: left;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 46%),
-    var(--bg-elev);
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 46%), var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--space-3);
+  padding: var(--space-2);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
   transition:
     border-color var(--dur-base) var(--ease-standard),
@@ -517,7 +528,7 @@ h3.mt {
   padding: 1px 7px;
 }
 .tpl-desc {
-  margin: var(--space-2) 0;
+  margin: var(--space-1-5) 0;
   font-size: var(--text-sm);
   color: var(--text-dim);
   line-height: var(--leading-snug);
@@ -536,13 +547,13 @@ h3.mt {
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  padding: 2px 8px;
+  padding: 1px 6px;
 }
 .tpl-actions {
   display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
+  gap: var(--space-1-5);
+  margin-top: var(--space-1-5);
+  padding-top: var(--space-1-5);
   border-top: 1px solid var(--border);
 }
 .tpl-actions .danger:hover {
@@ -552,7 +563,7 @@ h3.mt {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-left: var(--space-4);
+  padding-left: var(--space-3);
   border-left: 1px solid var(--border);
 }
 .ws-row {
@@ -599,7 +610,7 @@ h3.mt {
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: var(--space-3);
+  padding: var(--space-2);
   line-height: var(--leading-normal);
 }
 .goal::placeholder {
@@ -612,8 +623,8 @@ h3.mt {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--space-3);
-  margin: var(--space-3) 0;
+  padding: var(--space-2);
+  margin: var(--space-2) 0;
 }
 .selected-roles .label {
   font-size: var(--text-xs);
@@ -647,8 +658,14 @@ h3.mt {
   padding: 1px 7px;
   border: 1px solid var(--border-strong);
 }
-.tag.write { color: var(--accent); border-color: var(--accent); }
-.tag.sign { color: var(--green); border-color: var(--green); }
+.tag.write {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tag.sign {
+  color: var(--green);
+  border-color: var(--green);
+}
 .empty {
   color: var(--text-faint);
   font-size: var(--text-sm);

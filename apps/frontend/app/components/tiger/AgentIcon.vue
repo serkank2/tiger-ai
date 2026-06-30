@@ -14,7 +14,10 @@ defineProps<{ type: TigerAgentType; size?: number }>();
     role="img"
     aria-label="Claude"
   >
-    <path fill="currentColor" d="M12 1.6c.62 5.2 3.6 8.18 8.8 8.8-5.2.62-8.18 3.6-8.8 8.8-.62-5.2-3.6-8.18-8.8-8.8 5.2-.62 8.18-3.6 8.8-8.8z" />
+    <path
+      fill="currentColor"
+      d="M12 1.6c.62 5.2 3.6 8.18 8.8 8.8-5.2.62-8.18 3.6-8.8 8.8-.62-5.2-3.6-8.18-8.8-8.8 5.2-.62 8.18-3.6 8.8-8.8z"
+    />
   </svg>
 
   <!-- Codex (OpenAI) — OpenAI logomark. -->
@@ -43,7 +46,10 @@ defineProps<{ type: TigerAgentType; size?: number }>();
     role="img"
     aria-label="Antigravity (Google)"
   >
-    <path fill="currentColor" d="M12 2c.7 4.9 2.4 6.6 7.3 7.3-4.9.7-6.6 2.4-7.3 7.3-.7-4.9-2.4-6.6-7.3-7.3C9.6 8.6 11.3 6.9 12 2z" />
+    <path
+      fill="currentColor"
+      d="M12 2c.7 4.9 2.4 6.6 7.3 7.3-4.9.7-6.6 2.4-7.3 7.3-.7-4.9-2.4-6.6-7.3-7.3C9.6 8.6 11.3 6.9 12 2z"
+    />
   </svg>
 </template>
 

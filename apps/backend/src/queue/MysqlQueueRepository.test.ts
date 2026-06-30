@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.KAPLAN_DB_NAME =
-  process.env.KAPLAN_DB_QUEUE_TEST_NAME?.trim() || process.env.KAPLAN_DB_TEST_NAME?.trim() || 'kaplan_queue_repository_test';
+  process.env.KAPLAN_DB_QUEUE_TEST_NAME?.trim() ||
+  process.env.KAPLAN_DB_TEST_NAME?.trim() ||
+  'kaplan_queue_repository_test';
 process.env.KAPLAN_DB_CONNECT_RETRIES ??= '0';
 process.env.KAPLAN_DB_CONNECT_RETRY_DELAY_MS ??= '1';
 process.env.KAPLAN_DB_CONNECT_MAX_DELAY_MS ??= '1';

@@ -14,14 +14,7 @@ import { toAgentTypeOr, type AgentType } from '../orchestrator/types.js';
 // re-pointed at the canonical types without changing the storage schema.
 // ---------------------------------------------------------------------------
 
-export type TeamRunStatus =
-  | 'running'
-  | 'paused'
-  | 'blocked'
-  | 'completed'
-  | 'failed'
-  | 'stopped'
-  | 'interrupted';
+export type TeamRunStatus = 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export type TeamMessageFromKind = 'role' | 'user' | 'system';
 
@@ -797,7 +790,10 @@ export class MemoryTeamPersistence implements TeamPersistence {
   }
 
   async listAttempts(runId: string): Promise<TeamAttemptRecord[]> {
-    return (this.attempts.get(runId) ?? []).slice().sort((a, b) => a.attemptNumber - b.attemptNumber).map(clone);
+    return (this.attempts.get(runId) ?? [])
+      .slice()
+      .sort((a, b) => a.attemptNumber - b.attemptNumber)
+      .map(clone);
   }
 
   async markAttemptPromoted(id: string, promotedAt = nowIso()): Promise<TeamAttemptRecord | null> {
@@ -810,7 +806,10 @@ export class MemoryTeamPersistence implements TeamPersistence {
     return {
       run: clone(run),
       roles: (this.roles.get(runId) ?? []).map(clone),
-      turns: (this.turns.get(runId) ?? []).slice().sort((a, b) => a.ordinal - b.ordinal).map(clone),
+      turns: (this.turns.get(runId) ?? [])
+        .slice()
+        .sort((a, b) => a.ordinal - b.ordinal)
+        .map(clone),
       directives: (this.directives.get(runId) ?? []).map(clone),
       verifications: (this.verifications.get(runId) ?? []).map(clone),
       signoffs: [...(this.signoffs.get(runId)?.values() ?? [])].map(clone),
@@ -909,10 +908,11 @@ export class MySqlTeamPersistence implements TeamPersistence {
         };
       }
       const expires = leaseExpiresAt(ttlMs);
-      await conn.execute<ResultSetHeader>(
-        `UPDATE team_runs SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`,
-        [leaseOwner, sqlDate(expires), runId],
-      );
+      await conn.execute<ResultSetHeader>(`UPDATE team_runs SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`, [
+        leaseOwner,
+        sqlDate(expires),
+        runId,
+      ]);
       return { ok: true, runId, leaseOwner, leaseExpiresAt: expires };
     });
   }
@@ -1182,9 +1182,13 @@ export class MySqlTeamPersistence implements TeamPersistence {
     if (!runRow) return null;
     const [roleRows, turnRows, directiveRows, verificationRows, signoffRows] = await Promise.all([
       this.rows<TeamRoleRow[]>(`SELECT * FROM team_roles WHERE run_id = ? ORDER BY role_key ASC`, [runId]),
-      this.rows<TeamTurnRow[]>(`SELECT * FROM team_turns WHERE run_id = ? ORDER BY ordinal ASC, created_at ASC`, [runId]),
+      this.rows<TeamTurnRow[]>(`SELECT * FROM team_turns WHERE run_id = ? ORDER BY ordinal ASC, created_at ASC`, [
+        runId,
+      ]),
       this.rows<TeamDirectiveRow[]>(`SELECT * FROM team_directives WHERE run_id = ? ORDER BY created_at ASC`, [runId]),
-      this.rows<TeamVerificationRow[]>(`SELECT * FROM team_verifications WHERE run_id = ? ORDER BY created_at ASC`, [runId]),
+      this.rows<TeamVerificationRow[]>(`SELECT * FROM team_verifications WHERE run_id = ? ORDER BY created_at ASC`, [
+        runId,
+      ]),
       this.rows<TeamSignoffRow[]>(`SELECT * FROM team_signoffs WHERE run_id = ? ORDER BY role_key ASC`, [runId]),
     ]);
     return {
@@ -1255,7 +1259,10 @@ export class MySqlTeamPersistence implements TeamPersistence {
       ]);
       if (existing.length > 0) continue;
       for (const statement of migration.statements) await this.exec(statement, []);
-      await this.exec(`INSERT IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)`, [migration.id, new Date()]);
+      await this.exec(`INSERT IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)`, [
+        migration.id,
+        new Date(),
+      ]);
     }
   }
 
@@ -1616,7 +1623,9 @@ function leaseIsStale(leaseOwner: string | null, expiresAt: string | null, curre
 }
 
 function isActiveRoleStatus(status: string): boolean {
-  return status === 'active' || status === 'working' || status === 'running' || status === 'waiting' || status === 'starting';
+  return (
+    status === 'active' || status === 'working' || status === 'running' || status === 'waiting' || status === 'starting'
+  );
 }
 
 function isActiveTurnStatus(status: string): boolean {

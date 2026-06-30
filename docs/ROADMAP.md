@@ -50,18 +50,18 @@ Kaplan was RCE-by-design with **no authentication or authorization anywhere**.
 ## Epic 3 — Test coverage of the highest-risk, untested code ☑ (core)
 
 - ☑ **`TerminalManager`** (routing, protected-exclusion, remove-during-start, autostart-during-shutdown)
-- ☑ **WS server `socket.ts`** (attach/snapshot ordering, origin verify, broadcast, garbage-frame resilience) — *heartbeat-reaping + 8MB backpressure-drop left as noted seams (need fake timers/stalled socket)*
+- ☑ **WS server `socket.ts`** (attach/snapshot ordering, origin verify, broadcast, garbage-frame resilience) — _heartbeat-reaping + 8MB backpressure-drop left as noted seams (need fake timers/stalled socket)_
 - ☑ **HTTP routes** (terminals, groups, settings, fs, limits) — validate→apply, concurrent-DELETE, error envelopes
-- ☐ **MySQL repos against a real/containerized DB** — **L** · *deferred: needs a DB container in CI*
+- ☐ **MySQL repos against a real/containerized DB** — **L** · _deferred: needs a DB container in CI_
 - ☑ **Frontend component tests** (Team done-gate/metrics/history, modal a11y, queue, useApi auth, i18n)
 - ☑ Backend `compose-turn`, `snapshot`, `role-session`, `scaffold`, `validate` units (+ completion-gate, worker-pool, retry, concurrency, workspace, write, worktree)
-- ☐ One end-to-end test exercising live PTY → WS → xterm — **M** · *deferred: needs a real pty backend + browser*
+- ☐ One end-to-end test exercising live PTY → WS → xterm — **M** · _deferred: needs a real pty backend + browser_
 
 ## Epic 4 — AI Team product maturity ☑
 
 - ☑ **Diff / changed-files / PR view** — per-file collapsible colorized diff + inline file:line comments bundled into a steering directive (review→follow-up loop) + Stage/Commit/Create-PR (gh, no force-push)
 - ☑ **Wire `TaskDirective` actions** (claim/complete/block/needs_work/request_review) into the task board
-- ☑ **Duration tracking & display** (per-role + per-run) + enabled budget/time guards · *token/cost = documented extension point (interactive PTY CLIs don't self-report usage)*
+- ☑ **Duration tracking & display** (per-role + per-run) + enabled budget/time guards · _token/cost = documented extension point (interactive PTY CLIs don't self-report usage)_
 - ☑ **Run history**: list + read-only reopen
 - ☑ Fixed `DoneGateState.satisfied` to reflect the full gate + open-blockers shown in the UI
 - ☑ Live **artifact/diff WS events** (`team.role`/`team.done`/`team.steering`/`team.changes`)
@@ -89,7 +89,7 @@ Kaplan was RCE-by-design with **no authentication or authorization anywhere**.
 - ☑ **Fail-open** when the `limit_snapshots` table is missing
 - ☑ `getState` N+1 → batched query; `replacePositions` → bulk SQL
 - ☑ `ctx.save()` divergence fix (see Epic 5)
-- ☐ Scrollback persistence / reconnect-to-orphaned-pty across backend restart — **L** · *deferred*
+- ☐ Scrollback persistence / reconnect-to-orphaned-pty across backend restart — **L** · _deferred_
 - ☑ Drag-and-drop queue reorder; bulk ops; per-provider concurrency lanes
 
 ## Epic 7 — Accessibility & internationalization ☑
@@ -106,13 +106,13 @@ Kaplan was RCE-by-design with **no authentication or authorization anywhere**.
 - ☑ Collapsed the dual limit-snapshot source of truth (MySQL authoritative; `state.json` = one-time back-compat import)
 - ☑ Limit-rules CRUD (endpoint + service + repo + UI)
 
-## Epic 9 — Competitor-extracted features *(net-new, from vibe-kanban / Maestro / agtx / CAO / CodeMachine / myclaude)*
+## Epic 9 — Competitor-extracted features _(net-new, from vibe-kanban / Maestro / agtx / CAO / CodeMachine / myclaude)_
 
 Distilled from a deep analysis of the six leading open-source orchestrators. **Landed** so far:
 
-- ☑ **Git worktree-per-task isolation** (`git/worktree.ts`) + wired into the Tiger fan-out (opt-in `KAPLAN_WORKTREE_PER_TASK`; merge-back + conflict-safe) — *vibe-kanban/agtx parallelism primitive*
-- ☑ **MCP server** exposing the board to agents (`mcp/**`: list/enqueue/team-steering over stdio, `KAPLAN_MCP_ENABLED`) — *bidirectional-MCP*
-- ☑ **PR-style review loop**: per-file colorized diff + inline comments → agent follow-up; git stage/commit/PR — *vibe-kanban review UX*
+- ☑ **Git worktree-per-task isolation** (`git/worktree.ts`) + wired into the Tiger fan-out (opt-in `KAPLAN_WORKTREE_PER_TASK`; merge-back + conflict-safe) — _vibe-kanban/agtx parallelism primitive_
+- ☑ **MCP server** exposing the board to agents (`mcp/**`: list/enqueue/team-steering over stdio, `KAPLAN_MCP_ENABLED`) — _bidirectional-MCP_
+- ☑ **PR-style review loop**: per-file colorized diff + inline comments → agent follow-up; git stage/commit/PR — _vibe-kanban review UX_
 - ☑ Multi-provider agents already supported (Claude/Codex/Antigravity) with per-stage/per-role model + permission
 
 **Landed in Wave 5:**

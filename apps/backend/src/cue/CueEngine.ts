@@ -268,9 +268,12 @@ export class CueEngine {
       log.warn('cue time.scheduled: invalid interval', { id: rt.sub.id, spec: rt.sub.intervalMs ?? rt.sub.watch });
       return;
     }
-    rt.interval = setInterval(() => {
-      void this.dispatchIfMatch(rt, { event: 'time.scheduled' });
-    }, Math.max(MIN_INTERVAL_MS, ms));
+    rt.interval = setInterval(
+      () => {
+        void this.dispatchIfMatch(rt, { event: 'time.scheduled' });
+      },
+      Math.max(MIN_INTERVAL_MS, ms),
+    );
     // Don't keep the process alive purely for a cue timer.
     rt.interval.unref?.();
   }
@@ -457,7 +460,11 @@ export class CueEngine {
     if (target.kind === 'queue') {
       await this.ctx.queueService.enqueue({
         prompt,
-        ...(target.workspacePath ? { workspacePath: target.workspacePath } : this.workspace ? { workspacePath: this.workspace } : {}),
+        ...(target.workspacePath
+          ? { workspacePath: target.workspacePath }
+          : this.workspace
+            ? { workspacePath: this.workspace }
+            : {}),
         ...(target.projectName ? { projectName: target.projectName } : { projectName: `Cue: ${sub.name ?? sub.id}` }),
         ...(target.provider ? { provider: target.provider } : {}),
         ...(target.priority !== undefined ? { priority: target.priority } : {}),

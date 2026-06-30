@@ -32,23 +32,25 @@ const lastFired = computed(() =>
         <span v-if="!sub.enabled" class="badge off">{{ t('cue.subscription.disabled') }}</span>
       </div>
       <div class="card-actions">
-        <BaseButton
-          v-if="isManual"
-          size="sm"
-          :loading="busy"
-          :disabled="!sub.enabled"
-          @click="emit('trigger', sub.id)"
-        >
+        <BaseButton v-if="isManual" size="sm" :loading="busy" :disabled="!sub.enabled" @click="emit('trigger', sub.id)">
           {{ t('cue.subscription.trigger') }}
         </BaseButton>
         <BaseButton size="sm" variant="ghost" @click="emit('edit', sub.id)">{{ t('common.edit') }}</BaseButton>
-        <BaseButton size="sm" variant="ghost" :loading="deleting" @click="emit('remove', sub.id)">{{ t('common.delete') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" :loading="deleting" @click="emit('remove', sub.id)">{{
+          t('common.delete')
+        }}</BaseButton>
       </div>
     </div>
 
     <dl class="meta">
-      <div><dt>{{ t('cue.subscription.lastFired') }}</dt><dd>{{ lastFired }}</dd></div>
-      <div><dt>{{ t('cue.subscription.fires') }}</dt><dd>{{ sub.fireCount }}</dd></div>
+      <div>
+        <dt>{{ t('cue.subscription.lastFired') }}</dt>
+        <dd>{{ lastFired }}</dd>
+      </div>
+      <div>
+        <dt>{{ t('cue.subscription.fires') }}</dt>
+        <dd>{{ sub.fireCount }}</dd>
+      </div>
       <div v-if="sub.pendingSources?.length">
         <dt>{{ t('cue.subscription.waitingOn') }}</dt>
         <dd>{{ sub.pendingSources.join(', ') }}</dd>

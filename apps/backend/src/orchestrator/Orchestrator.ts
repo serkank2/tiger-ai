@@ -4,13 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { config } from '../config.js';
-import {
-  createWorktree,
-  isGitRepo,
-  removeWorktree,
-  worktreeDiff,
-  type Worktree,
-} from '../git/worktree.js';
+import { createWorktree, isGitRepo, removeWorktree, worktreeDiff, type Worktree } from '../git/worktree.js';
 import type { TerminalManager } from '../terminal/TerminalManager.js';
 import type { RunTemplateService } from '../services/run-templates.js';
 import { STAGE_META, TigerPaths, agentLabel } from './paths.js';
@@ -211,7 +205,10 @@ export class Orchestrator extends EventEmitter {
    */
   private stageSucceeded: Partial<Record<StageId, boolean>> = {};
 
-  constructor(private readonly manager: TerminalManager, options: OrchestratorOptions = {}) {
+  constructor(
+    private readonly manager: TerminalManager,
+    options: OrchestratorOptions = {},
+  ) {
     super();
     this.persistence = options.persistence ?? new NoopExecutionPersistence();
     this.defaultOwner = options.owner ?? { type: 'manual', id: `${process.pid}:${nanoid(6)}` };
@@ -482,8 +479,7 @@ export class Orchestrator extends EventEmitter {
     if (!this.paths || !this.initialized) throw httpError(400, 'initialize a workspace first');
     if (this.busy) throw httpError(409, 'a stage is already running');
     this.autoConfigs = configs;
-    const start =
-      fromStage && STAGE_ORDER.includes(fromStage) ? fromStage : this.firstIncompleteStage();
+    const start = fromStage && STAGE_ORDER.includes(fromStage) ? fromStage : this.firstIncompleteStage();
     // Starting an auto-run from a mid stage must not consume missing/empty upstream artifacts.
     const upstream = await checkUpstreamArtifacts(this.paths, start);
     if (!upstream.ok) throw httpError(400, upstream.reason ?? `upstream artifacts for ${start} are missing`);
@@ -522,8 +518,7 @@ export class Orchestrator extends EventEmitter {
       // stage FAILED but still produced some output, mark it `continued` (downstream agents then get
       // the upstream-continued warning) and push forward instead of halting the whole auto-run. The
       // upstream-artifacts check below still stops a chain whose next stage would have nothing to run.
-      const userHalted =
-        stage.status === 'stopped' || stage.status === 'interrupted' || !!this.abort?.signal.aborted;
+      const userHalted = stage.status === 'stopped' || stage.status === 'interrupted' || !!this.abort?.signal.aborted;
       const producedSome = stage.runs.some((r) => r.state === 'completed');
       if (this.config.execution.continueOnFailure && stage.status === 'failed' && producedSome && !userHalted) {
         this.stages[stageId].continued = true;
@@ -533,7 +528,10 @@ export class Orchestrator extends EventEmitter {
         ).catch(() => {});
       } else {
         this.autoAdvance = false; // stop the chain on a user stop, or a stage that produced nothing
-        void logNote(this.paths!.runLogFile, `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`).catch(() => {});
+        void logNote(
+          this.paths!.runLogFile,
+          `Auto-advance stopped at stage ${stageId} (status: ${stage.status}).`,
+        ).catch(() => {});
         this.emitState();
         return;
       }
@@ -875,8 +873,7 @@ export class Orchestrator extends EventEmitter {
     // repo; otherwise every run uses the shared tiger root, byte-for-byte as before.
     this.taskWorktrees.clear();
     this.keptWorktrees.clear();
-    this.worktreeStageActive =
-      config.tiger.worktreePerTask && !!this.workspace && (await isGitRepo(this.workspace));
+    this.worktreeStageActive = config.tiger.worktreePerTask && !!this.workspace && (await isGitRepo(this.workspace));
     if (this.worktreeStageActive) {
       await logNote(
         paths.runLogFile,
@@ -927,7 +924,9 @@ export class Orchestrator extends EventEmitter {
       stage.runs.push(run);
       this.registerRun(run);
       await this.recordAgentSnapshot(run);
-      void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`).catch(() => {});
+      void logNote(paths.runLogFile, `${run.label} claimed ${claimed.record.id} (atomic rename to in_progress).`).catch(
+        () => {},
+      );
       this.emitState();
 
       await this.executeAgentRunWithRetry(run, { taskId: claimed.record.id, taskBlock: claimed.block }, signal);
@@ -1170,7 +1169,8 @@ export class Orchestrator extends EventEmitter {
 
     // --- Phase 1: FIND (review + report findings, no fixing) ---
     const findRuns: AgentRun[] = [];
-    for (let i = 1; i <= clampCount(cfg.claudeAgents); i++) findRuns.push(this.makeRun('task-review', 'claude', i, cfg));
+    for (let i = 1; i <= clampCount(cfg.claudeAgents); i++)
+      findRuns.push(this.makeRun('task-review', 'claude', i, cfg));
     for (let i = 1; i <= clampCount(cfg.codexAgents); i++) findRuns.push(this.makeRun('task-review', 'codex', i, cfg));
     for (let i = 1; i <= clampCount(cfg.antigravityAgents); i++)
       findRuns.push(this.makeRun('task-review', 'antigravity', i, cfg));
@@ -1242,7 +1242,12 @@ export class Orchestrator extends EventEmitter {
           claimNextFinding(
             paths.findingsDir,
             this.config.execution.locking
-              ? { locksDir: paths.findingLocksDir, agentId: label, agentType: type, ttlMs: this.config.execution.lockTtlMs }
+              ? {
+                  locksDir: paths.findingLocksDir,
+                  agentId: label,
+                  agentType: type,
+                  ttlMs: this.config.execution.lockTtlMs,
+                }
               : undefined,
           ),
         );
@@ -1265,18 +1270,27 @@ export class Orchestrator extends EventEmitter {
         await this.recordAgentSnapshot(run);
         void logNote(paths.runLogFile, `${run.label} claimed ${claimed.id} to fix.`).catch(() => {});
         this.emitState();
-        await this.executeAgentRun(run, { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block }, signal);
+        await this.executeAgentRun(
+          run,
+          { reviewPhase: 'fix', findingId: claimed.id, findingBlock: claimed.block },
+          signal,
+        );
         // Semantic completion gate: only a completed run that emits FIX_RESULT: fixed counts as fixed;
         // a missing FIX_RESULT (or wontfix) leaves the finding unresolved (wontfix), never silently fixed.
         const fixOutput = await fs.readFile(run.outputPath, 'utf8').catch(() => '');
-        const gate = evaluateCompletionGate(requiredSelfReport('task-review', 'fix'), run.state === 'completed', fixOutput);
+        const gate = evaluateCompletionGate(
+          requiredSelfReport('task-review', 'fix'),
+          run.state === 'completed',
+          fixOutput,
+        );
         if (!gate.ok && gate.reason) {
           run.error = run.error ?? gate.reason;
           void logNote(paths.runLogFile, `${run.label} did not resolve ${claimed.id}: ${gate.reason}`).catch(() => {});
         }
         await finishFinding(paths.findingsDir, claimed.id, gate.ok ? 'fixed' : 'wontfix');
         const finalFinding = (await listFindings(paths.findingsDir)).find((f) => f.id === claimed.id);
-        if (finalFinding) await this.persistence.recordFindingFinish({ workspace: this.workspace!, finding: finalFinding });
+        if (finalFinding)
+          await this.persistence.recordFindingFinish({ workspace: this.workspace!, finding: finalFinding });
         if (this.config.execution.locking) await releaseLock(paths.findingLockFile(claimed.id));
         await this.refreshFindings();
         return true;
@@ -1314,8 +1328,7 @@ export class Orchestrator extends EventEmitter {
     // Record whether the review stage actually succeeded so finalizeStage does not report a stage as
     // completed when reviews were inconclusive or fixes did not resolve their findings (see #2/#3).
     const unresolvedFindings = finalFindings.some((f) => f.status !== 'fixed');
-    this.stageSucceeded['task-review'] =
-      !signal.aborted && needsAttentionTaskIds.size === 0 && !unresolvedFindings;
+    this.stageSucceeded['task-review'] = !signal.aborted && needsAttentionTaskIds.size === 0 && !unresolvedFindings;
     if (!this.stageSucceeded['task-review'] && !stage.message) {
       stage.message = needsAttentionTaskIds.size
         ? `${needsAttentionTaskIds.size} task(s) need attention: their review did not complete or findings are unresolved.`
@@ -1515,13 +1528,7 @@ export class Orchestrator extends EventEmitter {
 
   // --- helpers ---
 
-  private makeRun(
-    stage: StageId,
-    type: AgentType,
-    index: number,
-    cfg: StageRunConfig,
-    taskId?: string,
-  ): AgentRun {
+  private makeRun(stage: StageId, type: AgentType, index: number, cfg: StageRunConfig, taskId?: string): AgentRun {
     const id = nanoid();
     const outputPath = this.paths!.outputFile(stage, type, index);
     // Each provider reads its own model/effort/permission so an Antigravity run is never launched
@@ -1545,9 +1552,14 @@ export class Orchestrator extends EventEmitter {
       // Honor the stage's explicitly-selected permission mode (yolo/dangerous/full). Without this
       // opt-in the launch builder strips the blanket `--dangerously-*` flag and the agent would open
       // in the CLI's restricted prompt-for-everything default. Mirrors the Team runner.
-      command: buildLaunchCommand(this.config, type, { model, effort, permission }, {
-        allowDangerous: config.tiger.honorDangerousPermissions,
-      }),
+      command: buildLaunchCommand(
+        this.config,
+        type,
+        { model, effort, permission },
+        {
+          allowDangerous: config.tiger.honorDangerousPermissions,
+        },
+      ),
       state: 'pending',
       attempts: 0,
       taskId,
@@ -1598,8 +1610,7 @@ export class Orchestrator extends EventEmitter {
     }
     stage.status = status;
     if (!stage.message) {
-      stage.message =
-        total === 0 ? stage.message : `${succeeded}/${total} agent(s) completed successfully.`;
+      stage.message = total === 0 ? stage.message : `${succeeded}/${total} agent(s) completed successfully.`;
     }
     void logStageEnd(this.paths!.runLogFile, stageId, status, succeeded, total);
     this.emitState();
@@ -1867,7 +1878,8 @@ export class Orchestrator extends EventEmitter {
       owner: this.owner,
       ttlMs: this.config.execution.lockTtlMs,
     });
-    const changed = r.interruptedRuns + r.interruptedStages + r.interruptedAgents + r.reclaimedTasks + r.reclaimedFindings;
+    const changed =
+      r.interruptedRuns + r.interruptedStages + r.interruptedAgents + r.reclaimedTasks + r.reclaimedFindings;
     if (changed > 0) {
       await logNote(
         this.paths.runLogFile,
@@ -1902,7 +1914,9 @@ export class Orchestrator extends EventEmitter {
       endedAt: record.endedAt,
       message:
         record.message ??
-        (interrupted ? 'Interrupted by a previous backend shutdown; resume will dispatch incomplete work again.' : undefined),
+        (interrupted
+          ? 'Interrupted by a previous backend shutdown; resume will dispatch incomplete work again.'
+          : undefined),
       config: record.config,
     };
   }

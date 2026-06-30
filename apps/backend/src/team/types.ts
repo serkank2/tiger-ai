@@ -59,24 +59,9 @@ export interface RoleTemplate {
 }
 
 /** Live status of a role inside a running team. */
-export type RoleStatus =
-  | 'idle'
-  | 'thinking'
-  | 'working'
-  | 'waiting'
-  | 'blocked'
-  | 'done'
-  | 'failed';
+export type RoleStatus = 'idle' | 'thinking' | 'working' | 'waiting' | 'blocked' | 'done' | 'failed';
 
-export const ROLE_STATUSES: RoleStatus[] = [
-  'idle',
-  'thinking',
-  'working',
-  'waiting',
-  'blocked',
-  'done',
-  'failed',
-];
+export const ROLE_STATUSES: RoleStatus[] = ['idle', 'thinking', 'working', 'waiting', 'blocked', 'done', 'failed'];
 
 /** A role as instantiated inside a specific run: template fields plus live state. */
 export interface RoleInstance {
@@ -305,14 +290,7 @@ export interface TeamTurn {
 }
 
 /** Lifecycle of a team run. */
-export type TeamRunStatus =
-  | 'running'
-  | 'paused'
-  | 'blocked'
-  | 'completed'
-  | 'failed'
-  | 'stopped'
-  | 'interrupted';
+export type TeamRunStatus = 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 export const TEAM_RUN_STATUSES: TeamRunStatus[] = [
   'running',
@@ -370,13 +348,7 @@ export interface TeamRun {
  */
 export type TeamAttemptStatus = 'running' | 'completed' | 'failed' | 'promoted' | 'superseded';
 
-export const TEAM_ATTEMPT_STATUSES: TeamAttemptStatus[] = [
-  'running',
-  'completed',
-  'failed',
-  'promoted',
-  'superseded',
-];
+export const TEAM_ATTEMPT_STATUSES: TeamAttemptStatus[] = ['running', 'completed', 'failed', 'promoted', 'superseded'];
 
 /** The diff summary captured for an attempt (mirrors the changeset summary shape). */
 export interface TeamAttemptSummary {

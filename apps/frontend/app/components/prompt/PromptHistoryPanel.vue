@@ -80,15 +80,7 @@ function displayText(item: PromptHistoryEvent): string {
 }
 
 function searchableText(item: PromptHistoryEvent): string {
-  return [
-    item.id,
-    item.kind,
-    item.projectId,
-    item.generationId,
-    item.inputText,
-    item.outputText,
-    statusOf(item),
-  ]
+  return [item.id, item.kind, item.projectId, item.generationId, item.inputText, item.outputText, statusOf(item)]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();
@@ -129,12 +121,7 @@ function fmtDate(value: string): string {
       <Skeleton :lines="5" />
     </div>
 
-    <EmptyState
-      v-else-if="error"
-      title="Prompt history unavailable"
-      :description="error"
-      tone="danger"
-    >
+    <EmptyState v-else-if="error" title="Prompt history unavailable" :description="error" tone="danger">
       <template #actions>
         <button class="refresh" @click="emit('refresh')">Retry</button>
       </template>

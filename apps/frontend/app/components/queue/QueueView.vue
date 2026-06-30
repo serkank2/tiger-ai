@@ -76,16 +76,18 @@ const jobs = computed(() => queue.jobs);
 const isPipelineV2 = computed(() => queue.queuePipelineV2);
 const pipelineModeLabel = computed(() => (isPipelineV2.value ? t('queue.pipeline.v2') : t('queue.pipeline.legacy')));
 const pipelineModeDetail = computed(() =>
-  isPipelineV2.value
-    ? t('queue.pipeline.activeDetail')
-    : t('queue.pipeline.legacyDetail'),
+  isPipelineV2.value ? t('queue.pipeline.activeDetail') : t('queue.pipeline.legacyDetail'),
 );
-const shownJobs = computed(() => (isPipelineV2.value && activeList.value === 'history' ? queue.historyItems : jobs.value));
+const shownJobs = computed(() =>
+  isPipelineV2.value && activeList.value === 'history' ? queue.historyItems : jobs.value,
+);
 const jobListLabel = computed(() => {
   if (!isPipelineV2.value) return t('queue.pipeline.orderedQueueJobs');
   return activeList.value === 'history' ? t('queue.pipeline.historyItems') : t('queue.pipeline.liveJobs');
 });
-const selectedJob = computed(() => shownJobs.value.find((job) => job.id === selectedJobId.value) ?? shownJobs.value[0] ?? null);
+const selectedJob = computed(
+  () => shownJobs.value.find((job) => job.id === selectedJobId.value) ?? shownJobs.value[0] ?? null,
+);
 const activeProgress = computed(() => progressFor(queue.activeJob));
 const enabledRules = computed(() => queue.rules.filter((rule) => rule.enabled));
 const disabledRules = computed(() => queue.rules.filter((rule) => !rule.enabled));
@@ -93,7 +95,12 @@ const savingRule = computed(() =>
   queue.isBusy(editingRuleId.value ? `rule:update:${editingRuleId.value}` : 'rule:create'),
 );
 const canSaveRule = computed(
-  () => ruleDraft.name.trim().length > 0 && Number.isFinite(ruleDraft.threshold) && ruleDraft.threshold >= 0 && ruleDraft.threshold <= 100 && !savingRule.value,
+  () =>
+    ruleDraft.name.trim().length > 0 &&
+    Number.isFinite(ruleDraft.threshold) &&
+    ruleDraft.threshold >= 0 &&
+    ruleDraft.threshold <= 100 &&
+    !savingRule.value,
 );
 const canSubmit = computed(() => {
   if (queue.isBusy('enqueue')) return false;
@@ -355,7 +362,11 @@ function targetRefText(job: QueueJobView): string {
 }
 
 function failureReason(job: QueueJobView): string {
-  return job.blockedReason || queue.events.find((event) => event.jobId === job.id && event.type === 'queue.failed')?.message || t('queue.jobs.noFailureReason');
+  return (
+    job.blockedReason ||
+    queue.events.find((event) => event.jobId === job.id && event.type === 'queue.failed')?.message ||
+    t('queue.jobs.noFailureReason')
+  );
 }
 
 function formatTime(iso: string | null | undefined): string {
@@ -383,7 +394,12 @@ function isTerminal(status: QueueJobStatus): boolean {
 }
 
 function canPause(job: QueueJobView): boolean {
-  return job.status === 'queued' || job.status === 'retrying' || job.status === 'running' || job.status === 'blocked_by_limit';
+  return (
+    job.status === 'queued' ||
+    job.status === 'retrying' ||
+    job.status === 'running' ||
+    job.status === 'blocked_by_limit'
+  );
 }
 
 function canResume(job: QueueJobView): boolean {
@@ -450,7 +466,10 @@ async function submitEnqueue(): Promise<void> {
       await queue.enqueue({
         prompt: teamDraft.body.trim(),
         body: teamDraft.body.trim(),
-        title: teamDraft.mode === 'append' ? t('queue.enqueue.appendTitle', { runId: teamDraft.runId.trim() }) : t('queue.enqueue.createTeamRunTitle'),
+        title:
+          teamDraft.mode === 'append'
+            ? t('queue.enqueue.appendTitle', { runId: teamDraft.runId.trim() })
+            : t('queue.enqueue.createTeamRunTitle'),
         priority: Number.isFinite(draft.priority) ? draft.priority : 0,
         maxAttempts: Number.isFinite(draft.maxAttempts) && draft.maxAttempts > 0 ? draft.maxAttempts : 1,
         target: { type: 'team' },
@@ -486,7 +505,10 @@ async function retryAsNew(job: QueueJobView): Promise<void> {
     provider: job.provider,
     maxAttempts: job.maxAttempts,
     target: job.targetType ? { type: job.targetType } : undefined,
-    payload: job.targetPayload && typeof job.targetPayload === 'object' ? (job.targetPayload as Record<string, unknown>) : undefined,
+    payload:
+      job.targetPayload && typeof job.targetPayload === 'object'
+        ? (job.targetPayload as Record<string, unknown>)
+        : undefined,
   });
   activeList.value = 'live';
 }
@@ -590,11 +612,21 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
         <span class="conn" :class="conn.status" :title="t('queue.connection.backendStatus', { status: conn.status })" />
       </div>
       <span class="spacer" />
-      <span v-if="queue.updatedAt" class="updated">{{ t('queue.connection.synced', { time: formatTime(queue.updatedAt) }) }}</span>
-      <BaseButton size="sm" variant="secondary" data-testid="refresh-queue" :loading="queue.loading" @click="queue.load().catch(() => {})">
+      <span v-if="queue.updatedAt" class="updated">{{
+        t('queue.connection.synced', { time: formatTime(queue.updatedAt) })
+      }}</span>
+      <BaseButton
+        size="sm"
+        variant="secondary"
+        data-testid="refresh-queue"
+        :loading="queue.loading"
+        @click="queue.load().catch(() => {})"
+      >
         {{ t('common.refresh') }}
       </BaseButton>
-      <BaseButton size="sm" variant="secondary" @click="emit('back')">{{ t('queue.actions.backToTerminals') }}</BaseButton>
+      <BaseButton size="sm" variant="secondary" @click="emit('back')">{{
+        t('queue.actions.backToTerminals')
+      }}</BaseButton>
     </header>
 
     <main class="qbody">
@@ -633,7 +665,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </template>
           <template v-else>
             <b>{{ t('queue.summary.noActiveJob') }}</b>
-            <span class="meta">{{ t('queue.summary.readyPaused', { ready: queue.dispatchableJobs.length, paused: queue.pausedJobs.length }) }}</span>
+            <span class="meta">{{
+              t('queue.summary.readyPaused', { ready: queue.dispatchableJobs.length, paused: queue.pausedJobs.length })
+            }}</span>
           </template>
         </div>
 
@@ -642,7 +676,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <template v-if="queue.blockedJobs.length">
             <b>{{ t('queue.summary.blockedJobs', { n: queue.blockedJobs.length }) }}</b>
             <span class="meta">{{ queue.blockedJobs[0]?.blockedReason ?? t('queue.summary.blockedByRule') }}</span>
-            <span class="eta">{{ t('queue.summary.resume', { time: countdown(queue.blockedJobs[0]?.resumeAfter ?? null) }) }}</span>
+            <span class="eta">{{
+              t('queue.summary.resume', { time: countdown(queue.blockedJobs[0]?.resumeAfter ?? null) })
+            }}</span>
           </template>
           <template v-else>
             <b>{{ t('queue.summary.clear') }}</b>
@@ -677,7 +713,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <b>{{ t('queue.summary.enabledRules', { n: enabledRules.length }) }}</b>
           <span v-if="enabledRules[0]" class="meta">{{ enabledRules.map(ruleLabel).join(', ') }}</span>
           <span v-else class="meta">{{ t('queue.summary.noEnabledRules') }}</span>
-          <span v-if="disabledRules.length" class="eta">{{ t('queue.summary.disabledRules', { n: disabledRules.length }) }}</span>
+          <span v-if="disabledRules.length" class="eta">{{
+            t('queue.summary.disabledRules', { n: disabledRules.length })
+          }}</span>
         </div>
       </section>
 
@@ -687,13 +725,20 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
             <b>{{ t('queue.rules.management') }}</b>
             <span>{{ t('queue.rules.description') }}</span>
           </div>
-          <BaseButton size="sm" variant="secondary" :disabled="!editingRuleId || savingRule" @click="resetRuleDraft">{{ t('queue.rules.newRule') }}</BaseButton>
+          <BaseButton size="sm" variant="secondary" :disabled="!editingRuleId || savingRule" @click="resetRuleDraft">{{
+            t('queue.rules.newRule')
+          }}</BaseButton>
         </div>
 
         <form class="rule-form" data-testid="rule-form" @submit.prevent="saveRule">
           <label>
             <span>{{ t('queue.rules.name') }}</span>
-            <input v-model="ruleDraft.name" data-testid="rule-name" :placeholder="t('queue.rules.placeholders.name')" maxlength="191" />
+            <input
+              v-model="ruleDraft.name"
+              data-testid="rule-name"
+              :placeholder="t('queue.rules.placeholders.name')"
+              maxlength="191"
+            />
           </label>
           <label>
             <span>{{ t('queue.rules.provider') }}</span>
@@ -703,7 +748,11 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </label>
           <label>
             <span>{{ t('queue.rules.window') }}</span>
-            <input v-model="ruleDraft.windowKey" data-testid="rule-window" :placeholder="t('queue.rules.placeholders.window')" />
+            <input
+              v-model="ruleDraft.windowKey"
+              data-testid="rule-window"
+              :placeholder="t('queue.rules.placeholders.window')"
+            />
           </label>
           <label>
             <span>{{ t('queue.rules.operator') }}</span>
@@ -713,13 +762,26 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </label>
           <label>
             <span>{{ t('queue.rules.threshold') }}</span>
-            <input v-model.number="ruleDraft.threshold" data-testid="rule-threshold" type="number" min="0" max="100" step="0.1" />
+            <input
+              v-model.number="ruleDraft.threshold"
+              data-testid="rule-threshold"
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+            />
           </label>
           <label class="rule-enabled">
             <input v-model="ruleDraft.enabled" data-testid="rule-enabled" type="checkbox" />
             <span>{{ t('queue.rules.enabled') }}</span>
           </label>
-          <BaseButton variant="primary" data-testid="save-rule" type="submit" :loading="savingRule" :disabled="!canSaveRule">
+          <BaseButton
+            variant="primary"
+            data-testid="save-rule"
+            type="submit"
+            :loading="savingRule"
+            :disabled="!canSaveRule"
+          >
             {{ editingRuleId ? t('queue.rules.updateRule') : t('queue.rules.createRule') }}
           </BaseButton>
         </form>
@@ -728,9 +790,14 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           <article v-for="rule in queue.rules" :key="rule.id" class="rule-card">
             <div>
               <b>{{ rule.name }}</b>
-              <span>{{ ruleLabel(rule) }} / {{ rule.enabled ? t('queue.rules.enabledStatus') : t('queue.rules.disabled') }}</span>
+              <span
+                >{{ ruleLabel(rule) }} /
+                {{ rule.enabled ? t('queue.rules.enabledStatus') : t('queue.rules.disabled') }}</span
+              >
             </div>
-            <BaseButton size="sm" variant="secondary" data-testid="edit-rule" @click="editRule(rule)">{{ t('queue.rules.edit') }}</BaseButton>
+            <BaseButton size="sm" variant="secondary" data-testid="edit-rule" @click="editRule(rule)">{{
+              t('queue.rules.edit')
+            }}</BaseButton>
             <BaseButton
               size="sm"
               variant="danger"
@@ -747,41 +814,51 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
       <section class="content">
         <aside class="left">
           <form class="enqueue" data-testid="enqueue-form" @submit.prevent="submitEnqueue">
-        <div v-if="isPipelineV2" class="target-tabs" data-testid="enqueue-target-tabs" role="group" :aria-label="t('queue.target.label')">
-          <button
-            type="button"
-            data-testid="enqueue-target-project"
-            :class="{ active: enqueueTarget === 'project' }"
-            :aria-pressed="enqueueTarget === 'project'"
-            @click="enqueueTarget = 'project'"
-          >
-            {{ t('queue.target.project') }}
-          </button>
-          <button
-            type="button"
-            data-testid="enqueue-target-terminal"
-            :class="{ active: enqueueTarget === 'terminal' }"
-            :aria-pressed="enqueueTarget === 'terminal'"
-            @click="enqueueTarget = 'terminal'"
-          >
-            {{ t('queue.target.terminal') }}
-          </button>
-          <button
-            type="button"
-            data-testid="enqueue-target-team"
-            :class="{ active: enqueueTarget === 'team' }"
-            :aria-pressed="enqueueTarget === 'team'"
-            @click="enqueueTarget = 'team'"
-          >
-            {{ t('queue.target.team') }}
-          </button>
-        </div>
+            <div
+              v-if="isPipelineV2"
+              class="target-tabs"
+              data-testid="enqueue-target-tabs"
+              role="group"
+              :aria-label="t('queue.target.label')"
+            >
+              <button
+                type="button"
+                data-testid="enqueue-target-project"
+                :class="{ active: enqueueTarget === 'project' }"
+                :aria-pressed="enqueueTarget === 'project'"
+                @click="enqueueTarget = 'project'"
+              >
+                {{ t('queue.target.project') }}
+              </button>
+              <button
+                type="button"
+                data-testid="enqueue-target-terminal"
+                :class="{ active: enqueueTarget === 'terminal' }"
+                :aria-pressed="enqueueTarget === 'terminal'"
+                @click="enqueueTarget = 'terminal'"
+              >
+                {{ t('queue.target.terminal') }}
+              </button>
+              <button
+                type="button"
+                data-testid="enqueue-target-team"
+                :class="{ active: enqueueTarget === 'team' }"
+                :aria-pressed="enqueueTarget === 'team'"
+                @click="enqueueTarget = 'team'"
+              >
+                {{ t('queue.target.team') }}
+              </button>
+            </div>
 
             <template v-if="!isPipelineV2 || enqueueTarget === 'project'">
               <div class="form-grid">
                 <label>
                   <span>{{ t('queue.enqueue.project') }}</span>
-                  <input v-model="draft.projectName" data-testid="enqueue-project" :placeholder="t('queue.enqueue.placeholders.projectName')" />
+                  <input
+                    v-model="draft.projectName"
+                    data-testid="enqueue-project"
+                    :placeholder="t('queue.enqueue.placeholders.projectName')"
+                  />
                 </label>
                 <label>
                   <span>{{ t('queue.enqueue.provider') }}</span>
@@ -798,12 +875,22 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 </label>
                 <label>
                   <span>{{ t('queue.enqueue.attempts') }}</span>
-                  <input v-model.number="draft.maxAttempts" data-testid="enqueue-attempts" type="number" min="1" step="1" />
+                  <input
+                    v-model.number="draft.maxAttempts"
+                    data-testid="enqueue-attempts"
+                    type="number"
+                    min="1"
+                    step="1"
+                  />
                 </label>
               </div>
               <label>
                 <span>{{ t('queue.enqueue.workspace') }}</span>
-                <input v-model="draft.workspacePath" data-testid="enqueue-workspace" :placeholder="t('queue.enqueue.placeholders.workspacePath')" />
+                <input
+                  v-model="draft.workspacePath"
+                  data-testid="enqueue-workspace"
+                  :placeholder="t('queue.enqueue.placeholders.workspacePath')"
+                />
               </label>
               <label>
                 <span>{{ t('queue.enqueue.prompt') }}</span>
@@ -820,7 +907,11 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               <div class="form-grid terminal-grid">
                 <label>
                   <span>{{ t('queue.enqueue.name') }}</span>
-                  <input v-model="terminalDraft.name" data-testid="enqueue-terminal-name" :placeholder="t('queue.enqueue.placeholders.terminalName')" />
+                  <input
+                    v-model="terminalDraft.name"
+                    data-testid="enqueue-terminal-name"
+                    :placeholder="t('queue.enqueue.placeholders.terminalName')"
+                  />
                 </label>
                 <label>
                   <span>{{ t('queue.enqueue.shell') }}</span>
@@ -835,7 +926,11 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               </div>
               <label>
                 <span>{{ t('queue.enqueue.cwd') }}</span>
-                <input v-model="terminalDraft.cwd" data-testid="enqueue-terminal-cwd" :placeholder="t('queue.enqueue.placeholders.terminalCwd')" />
+                <input
+                  v-model="terminalDraft.cwd"
+                  data-testid="enqueue-terminal-cwd"
+                  :placeholder="t('queue.enqueue.placeholders.terminalCwd')"
+                />
               </label>
               <label>
                 <span>{{ t('queue.enqueue.command') }}</span>
@@ -859,11 +954,19 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 </label>
                 <label v-if="teamDraft.mode === 'append'">
                   <span>{{ t('queue.enqueue.runId') }}</span>
-                  <input v-model="teamDraft.runId" data-testid="enqueue-team-run-id" :placeholder="t('queue.enqueue.placeholders.teamRunId')" />
+                  <input
+                    v-model="teamDraft.runId"
+                    data-testid="enqueue-team-run-id"
+                    :placeholder="t('queue.enqueue.placeholders.teamRunId')"
+                  />
                 </label>
                 <label v-else>
                   <span>{{ t('queue.enqueue.workspace') }}</span>
-                  <input v-model="teamDraft.workspacePath" data-testid="enqueue-team-workspace" :placeholder="t('queue.enqueue.placeholders.teamWorkspace')" />
+                  <input
+                    v-model="teamDraft.workspacePath"
+                    data-testid="enqueue-team-workspace"
+                    :placeholder="t('queue.enqueue.placeholders.teamWorkspace')"
+                  />
                 </label>
               </div>
               <label>
@@ -877,12 +980,25 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               </label>
             </template>
 
-            <BaseButton variant="primary" block data-testid="enqueue-submit" type="submit" :loading="queue.isBusy('enqueue')" :disabled="!canSubmit">
+            <BaseButton
+              variant="primary"
+              block
+              data-testid="enqueue-submit"
+              type="submit"
+              :loading="queue.isBusy('enqueue')"
+              :disabled="!canSubmit"
+            >
               {{ t('queue.enqueue.submit') }}
             </BaseButton>
           </form>
 
-          <div v-if="isPipelineV2" class="queue-tabs" data-testid="queue-tabs" role="group" :aria-label="t('queue.pipeline.queueListView')">
+          <div
+            v-if="isPipelineV2"
+            class="queue-tabs"
+            data-testid="queue-tabs"
+            role="group"
+            :aria-label="t('queue.pipeline.queueListView')"
+          >
             <button
               type="button"
               data-testid="queue-tab-live"
@@ -904,7 +1020,10 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </div>
 
           <div class="list-head">
-            <label class="select-all" :title="activeList === 'history' ? t('queue.history.rowsReadOnly') : t('queue.jobs.selectAll')">
+            <label
+              class="select-all"
+              :title="activeList === 'history' ? t('queue.history.rowsReadOnly') : t('queue.jobs.selectAll')"
+            >
               <input
                 v-if="!isPipelineV2 || activeList === 'live'"
                 type="checkbox"
@@ -913,20 +1032,79 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 :disabled="jobs.length === 0"
                 @change="toggleSelectAll"
               />
-              <b>{{ isPipelineV2 ? (activeList === 'history' ? t('queue.pipeline.history') : t('queue.pipeline.livePipeline')) : t('queue.pipeline.orderedJobs') }}</b>
+              <b>{{
+                isPipelineV2
+                  ? activeList === 'history'
+                    ? t('queue.pipeline.history')
+                    : t('queue.pipeline.livePipeline')
+                  : t('queue.pipeline.orderedJobs')
+              }}</b>
             </label>
-            <span>{{ t('queue.jobs.total', { n: isPipelineV2 && activeList === 'history' ? queue.historyTotal || queue.historyCounts.total : jobs.length }) }}</span>
+            <span>{{
+              t('queue.jobs.total', {
+                n:
+                  isPipelineV2 && activeList === 'history'
+                    ? queue.historyTotal || queue.historyCounts.total
+                    : jobs.length,
+              })
+            }}</span>
           </div>
 
-          <div v-if="selectedCount > 0 && (!isPipelineV2 || activeList === 'live')" class="bulk-bar" data-testid="bulk-bar">
+          <div
+            v-if="selectedCount > 0 && (!isPipelineV2 || activeList === 'live')"
+            class="bulk-bar"
+            data-testid="bulk-bar"
+          >
             <span class="bulk-count">{{ t('queue.jobs.selected', { n: selectedCount }) }}</span>
             <div class="bulk-actions">
-              <BaseButton size="sm" variant="secondary" data-testid="bulk-pause" :disabled="queue.isBusy('bulk')" @click="runBulk('pause')">{{ t('queue.jobs.pause') }}</BaseButton>
-              <BaseButton size="sm" variant="secondary" data-testid="bulk-resume" :disabled="queue.isBusy('bulk')" @click="runBulk('resume')">{{ t('queue.jobs.resume') }}</BaseButton>
-              <BaseButton size="sm" variant="secondary" data-testid="bulk-retry" :disabled="queue.isBusy('bulk')" @click="runBulk('retry')">{{ t('queue.jobs.retry') }}</BaseButton>
-              <BaseButton size="sm" variant="danger" data-testid="bulk-cancel" :disabled="queue.isBusy('bulk')" @click="runBulk('cancel')">{{ t('queue.jobs.cancel') }}</BaseButton>
-              <BaseButton size="sm" variant="danger" data-testid="bulk-delete" :disabled="queue.isBusy('bulk')" @click="runBulk('delete')">{{ t('queue.rules.delete') }}</BaseButton>
-              <BaseButton size="sm" variant="ghost" data-testid="bulk-clear" :disabled="queue.isBusy('bulk')" @click="clearSelection">{{ t('queue.summary.clear') }}</BaseButton>
+              <BaseButton
+                size="sm"
+                variant="secondary"
+                data-testid="bulk-pause"
+                :disabled="queue.isBusy('bulk')"
+                @click="runBulk('pause')"
+                >{{ t('queue.jobs.pause') }}</BaseButton
+              >
+              <BaseButton
+                size="sm"
+                variant="secondary"
+                data-testid="bulk-resume"
+                :disabled="queue.isBusy('bulk')"
+                @click="runBulk('resume')"
+                >{{ t('queue.jobs.resume') }}</BaseButton
+              >
+              <BaseButton
+                size="sm"
+                variant="secondary"
+                data-testid="bulk-retry"
+                :disabled="queue.isBusy('bulk')"
+                @click="runBulk('retry')"
+                >{{ t('queue.jobs.retry') }}</BaseButton
+              >
+              <BaseButton
+                size="sm"
+                variant="danger"
+                data-testid="bulk-cancel"
+                :disabled="queue.isBusy('bulk')"
+                @click="runBulk('cancel')"
+                >{{ t('queue.jobs.cancel') }}</BaseButton
+              >
+              <BaseButton
+                size="sm"
+                variant="danger"
+                data-testid="bulk-delete"
+                :disabled="queue.isBusy('bulk')"
+                @click="runBulk('delete')"
+                >{{ t('queue.rules.delete') }}</BaseButton
+              >
+              <BaseButton
+                size="sm"
+                variant="ghost"
+                data-testid="bulk-clear"
+                :disabled="queue.isBusy('bulk')"
+                @click="clearSelection"
+                >{{ t('queue.summary.clear') }}</BaseButton
+              >
             </div>
           </div>
 
@@ -959,7 +1137,12 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               v-for="job in shownJobs"
               :key="job.id"
               class="job-row"
-              :class="{ selected: selectedJob?.id === job.id, 'drag-over': dragOverId === job.id, dragging: dragId === job.id, fixed: !isReorderable(job) }"
+              :class="{
+                selected: selectedJob?.id === job.id,
+                'drag-over': dragOverId === job.id,
+                dragging: dragId === job.id,
+                fixed: !isReorderable(job),
+              }"
               :data-status="job.status"
               :data-testid="`job-row-${job.id}`"
               role="option"
@@ -988,7 +1171,9 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
                 <span class="job-title">{{ jobTitle(job) }}</span>
                 <span class="job-prompt">{{ shortPrompt(job) }}</span>
               </span>
-              <span class="provider">{{ isPipelineV2 ? targetLabel(job.targetType) : providerLabel(job.provider) }}</span>
+              <span class="provider">{{
+                isPipelineV2 ? targetLabel(job.targetType) : providerLabel(job.provider)
+              }}</span>
               <span class="pill" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span>
             </div>
           </div>
@@ -1000,12 +1185,18 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
               <h2>{{ jobTitle(selectedJob) }}</h2>
               <p>{{ selectedJob.workspacePath }}</p>
             </div>
-            <span class="pill large" :class="statusClass(selectedJob.status)">{{ statusLabel(selectedJob.status) }}</span>
+            <span class="pill large" :class="statusClass(selectedJob.status)">{{
+              statusLabel(selectedJob.status)
+            }}</span>
           </div>
 
           <div v-if="isPipelineV2" class="target-detail" data-testid="target-detail">
-            <span><b>{{ t('queue.target.labelShort') }}</b> {{ targetLabel(selectedJob.targetType) }}</span>
-            <span><b>{{ t('queue.target.reference') }}</b> {{ targetRefText(selectedJob) }}</span>
+            <span
+              ><b>{{ t('queue.target.labelShort') }}</b> {{ targetLabel(selectedJob.targetType) }}</span
+            >
+            <span
+              ><b>{{ t('queue.target.reference') }}</b> {{ targetRefText(selectedJob) }}</span
+            >
           </div>
 
           <div v-if="selectedJob.status === 'blocked_by_limit'" class="blocked-detail" data-testid="selected-blocked">
@@ -1016,11 +1207,28 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
 
           <div v-if="selectedJob.status === 'failed'" class="failure-detail" data-testid="failure-detail">
             <b>{{ failureReason(selectedJob) }}</b>
-            <span>{{ t('queue.jobs.attemptsDetail', { target: targetLabel(selectedJob.targetType), attempts: selectedJob.attempts, max: selectedJob.maxAttempts }) }}</span>
-            <span>{{ t('queue.jobs.nextAction', { action: isPipelineV2 && activeList === 'history' ? t('queue.jobs.retryAsNewAction') : t('queue.jobs.retryAction') }) }}</span>
+            <span>{{
+              t('queue.jobs.attemptsDetail', {
+                target: targetLabel(selectedJob.targetType),
+                attempts: selectedJob.attempts,
+                max: selectedJob.maxAttempts,
+              })
+            }}</span>
+            <span>{{
+              t('queue.jobs.nextAction', {
+                action:
+                  isPipelineV2 && activeList === 'history'
+                    ? t('queue.jobs.retryAsNewAction')
+                    : t('queue.jobs.retryAction'),
+              })
+            }}</span>
           </div>
 
-          <div v-if="isPipelineV2 && activeList === 'history'" class="controls" :aria-label="t('queue.history.controls')">
+          <div
+            v-if="isPipelineV2 && activeList === 'history'"
+            class="controls"
+            :aria-label="t('queue.history.controls')"
+          >
             <BaseButton
               size="sm"
               variant="secondary"
@@ -1042,8 +1250,22 @@ async function runControl(action: 'pause' | 'resume' | 'cancel' | 'retry'): Prom
           </div>
 
           <div v-else class="controls" :aria-label="t('queue.jobs.controls')">
-            <BaseButton size="sm" variant="secondary" data-testid="move-up-job" :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)" @click="moveSelected(-1)">{{ t('queue.jobs.moveUp') }}</BaseButton>
-            <BaseButton size="sm" variant="secondary" data-testid="move-down-job" :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)" @click="moveSelected(1)">{{ t('queue.jobs.moveDown') }}</BaseButton>
+            <BaseButton
+              size="sm"
+              variant="secondary"
+              data-testid="move-up-job"
+              :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)"
+              @click="moveSelected(-1)"
+              >{{ t('queue.jobs.moveUp') }}</BaseButton
+            >
+            <BaseButton
+              size="sm"
+              variant="secondary"
+              data-testid="move-down-job"
+              :disabled="queue.isBusy('reorder') || !isReorderable(selectedJob)"
+              @click="moveSelected(1)"
+              >{{ t('queue.jobs.moveDown') }}</BaseButton
+            >
             <BaseButton
               size="sm"
               variant="secondary"

@@ -2,15 +2,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
 import { nanoid } from 'nanoid';
-import type {
-  AgentRun,
-  AgentRunState,
-  AgentType,
-  StageId,
-  StageRunConfig,
-  StageStatus,
-  TaskRecord,
-} from './types.js';
+import type { AgentRun, AgentRunState, AgentType, StageId, StageRunConfig, StageStatus, TaskRecord } from './types.js';
 import { toAgentTypeOr } from './types.js';
 import type { FindingRecord } from './findings.js';
 
@@ -466,16 +458,7 @@ export class MySqlExecutionPersistence implements ExecutionPersistence {
         `INSERT INTO execution_runs
           (id, workspace_path, tiger_root, owner_type, owner_id, status, attempts, lease_owner, lease_expires_at, started_at)
          VALUES (?, ?, ?, ?, ?, 'running', 1, ?, ?, ?)`,
-        [
-          runId,
-          input.workspace,
-          input.tigerRoot,
-          input.owner.type,
-          input.owner.id,
-          leaseOwner,
-          sqlDate(expires),
-          now,
-        ],
+        [runId, input.workspace, input.tigerRoot, input.owner.type, input.owner.id, leaseOwner, sqlDate(expires), now],
       );
       await conn.execute<ResultSetHeader>(
         `UPDATE execution_workspace_leases
@@ -490,10 +473,11 @@ export class MySqlExecutionPersistence implements ExecutionPersistence {
   async refreshRunLease(runId: string, owner: ExecutionOwner, ttlMs: number): Promise<void> {
     const leaseOwner = ownerKey(owner);
     const expires = leaseExpiresAt(ttlMs);
-    await this.exec(
-      `UPDATE execution_runs SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`,
-      [leaseOwner, sqlDate(expires), runId],
-    );
+    await this.exec(`UPDATE execution_runs SET lease_owner = ?, lease_expires_at = ? WHERE id = ?`, [
+      leaseOwner,
+      sqlDate(expires),
+      runId,
+    ]);
     await this.exec(
       `UPDATE execution_workspace_leases
        SET lease_owner = ?, lease_expires_at = ?
@@ -1131,7 +1115,9 @@ export function leaseExpiresAt(ttlMs: number): string {
   return new Date(Date.now() + Math.max(1000, ttlMs)).toISOString();
 }
 
-export async function fileArtifact(absPath: string): Promise<{ checksumSha256: string | null; sizeBytes: number | null }> {
+export async function fileArtifact(
+  absPath: string,
+): Promise<{ checksumSha256: string | null; sizeBytes: number | null }> {
   const stat = await fs.stat(absPath).catch(() => null);
   if (!stat?.isFile()) return { checksumSha256: null, sizeBytes: null };
   const body = await fs.readFile(absPath).catch(() => null);

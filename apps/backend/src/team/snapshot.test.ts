@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type {
-  TeamRunState as EngineTeamRunState,
-  TeamRoleInstance as EngineRole,
-} from './TeamOrchestrator.js';
+import type { TeamRunState as EngineTeamRunState, TeamRoleInstance as EngineRole } from './TeamOrchestrator.js';
 import { toRoleSnapshot, computeDoneGate, toTeamRunStateDto } from './snapshot.js';
 
 function role(over: Partial<EngineRole> = {}): EngineRole {
@@ -83,8 +80,28 @@ test('toRoleSnapshot defaults a blocked role status note to the role name and co
   const s = state({
     roles: [role({ status: 'blocked' })],
     turns: [
-      { id: 't1', runId: 'run-1', roleId: 'r1', roleName: 'Developer', status: 'completed', round: 1, startedAt: 'x', messageSeqs: [], appliedDirectiveIds: [] },
-      { id: 't2', runId: 'run-1', roleId: 'other', roleName: 'Other', status: 'completed', round: 1, startedAt: 'x', messageSeqs: [], appliedDirectiveIds: [] },
+      {
+        id: 't1',
+        runId: 'run-1',
+        roleId: 'r1',
+        roleName: 'Developer',
+        status: 'completed',
+        round: 1,
+        startedAt: 'x',
+        messageSeqs: [],
+        appliedDirectiveIds: [],
+      },
+      {
+        id: 't2',
+        runId: 'run-1',
+        roleId: 'other',
+        roleName: 'Other',
+        status: 'completed',
+        round: 1,
+        startedAt: 'x',
+        messageSeqs: [],
+        appliedDirectiveIds: [],
+      },
     ],
   });
   const snap = toRoleSnapshot(s, s.roles[0]!);
@@ -119,7 +136,9 @@ test('computeDoneGate returns the authoritative gate shape and surfaces a board-
 // --- toTeamRunStateDto projection ---
 
 test('toTeamRunStateDto derives a one-line run name from the goal and passes recentMessages through', () => {
-  const dto = toTeamRunStateDto(state(), [{ runId: 'run-1', seq: 1, from: 'r1', to: 'all', kind: 'chat', body: 'hi', createdAt: 'x' } as never]);
+  const dto = toTeamRunStateDto(state(), [
+    { runId: 'run-1', seq: 1, from: 'r1', to: 'all', kind: 'chat', body: 'hi', createdAt: 'x' } as never,
+  ]);
   assert.equal(dto.name, 'Make the app faster', 'name is the first non-empty trimmed line of the goal');
   assert.equal(dto.recentMessages.length, 1);
   assert.equal(dto.id, 'run-1');
@@ -147,9 +166,16 @@ test('toTeamRunStateDto computes per-turn duration from start/end timestamps', (
   const s = state({
     turns: [
       {
-        id: 't1', runId: 'run-1', roleId: 'r1', roleName: 'Developer', status: 'completed', round: 1,
-        startedAt: '2026-06-19T10:00:00.000Z', endedAt: '2026-06-19T10:00:05.000Z',
-        messageSeqs: [], appliedDirectiveIds: [],
+        id: 't1',
+        runId: 'run-1',
+        roleId: 'r1',
+        roleName: 'Developer',
+        status: 'completed',
+        round: 1,
+        startedAt: '2026-06-19T10:00:00.000Z',
+        endedAt: '2026-06-19T10:00:05.000Z',
+        messageSeqs: [],
+        appliedDirectiveIds: [],
       },
     ],
   });

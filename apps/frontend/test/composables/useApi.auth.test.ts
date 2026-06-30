@@ -77,7 +77,10 @@ describe('useApi auth token + git-write routes', () => {
   });
 
   it('rethrows backend errors so callers can read the error code', async () => {
-    fetchMock.mockRejectedValueOnce({ status: 422, data: { error: { code: 'validation_failed', message: 'message required' } } });
+    fetchMock.mockRejectedValueOnce({
+      status: 422,
+      data: { error: { code: 'validation_failed', message: 'message required' } },
+    });
     const api = useApi();
     await expect(api.commitTeamChanges('run/1', '')).rejects.toMatchObject({
       data: { error: { code: 'validation_failed' } },

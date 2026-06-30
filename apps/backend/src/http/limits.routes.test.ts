@@ -17,7 +17,9 @@ interface Res {
  * `http.request` with `agent: false` (no keep-alive client sockets) so `--test-force-exit`
  * has no lingering socket handle to abort libuv on during teardown.
  */
-async function listen(router: express.Router): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
+async function listen(
+  router: express.Router,
+): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
   const app = express();
   app.use('/api/limits', express.json({ limit: '160kb' }), router);
   app.use(errorHandler());
@@ -28,11 +30,17 @@ async function listen(router: express.Router): Promise<{ req: (m: string, p: str
     req: (method, p, body) =>
       new Promise<Res>((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
-        const r = http.request(new URL(p, base), { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} }, (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }));
-        });
+        const r = http.request(
+          new URL(p, base),
+          { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} },
+          (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }),
+            );
+          },
+        );
         r.on('error', reject);
         if (payload) r.write(payload);
         r.end();
@@ -44,7 +52,9 @@ async function listen(router: express.Router): Promise<{ req: (m: string, p: str
 const STATE = { providers: [], decision: null, updatedAt: 'x' } as unknown as ReturnType<AppCtx['limits']['getState']>;
 
 function ctxWith(limits: Partial<AppCtx['limits']>): AppCtx {
-  return { limits: { getState: () => STATE, listRules: () => [], ...limits } as unknown as AppCtx['limits'] } as unknown as AppCtx;
+  return {
+    limits: { getState: () => STATE, listRules: () => [], ...limits } as unknown as AppCtx['limits'],
+  } as unknown as AppCtx;
 }
 
 test('GET /api/limits returns the current state snapshot', async () => {
@@ -106,7 +116,12 @@ test('PUT /api/limits/rules/:id maps a "not found" validation error to a 404 not
 
 test('POST /api/limits/refresh delegates to the service', async () => {
   let refreshed = '';
-  const ctx = ctxWith({ refresh: async (source) => { refreshed = source ?? ''; return STATE; } });
+  const ctx = ctxWith({
+    refresh: async (source) => {
+      refreshed = source ?? '';
+      return STATE;
+    },
+  });
   const srv = await listen(createLimitsRouter(ctx));
   try {
     const res = await srv.req('POST', '/api/limits/refresh');

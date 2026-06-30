@@ -69,9 +69,7 @@ export class TerminalManager extends EventEmitter {
     let s = this.sessions.get(def.id);
     if (!s) {
       s = this.createSession(def);
-      s.on('output', (data: string) =>
-        this.emit('output', { termId: def.id, data } satisfies ManagerOutputEvent),
-      );
+      s.on('output', (data: string) => this.emit('output', { termId: def.id, data } satisfies ManagerOutputEvent));
       s.on('status', (status: TerminalRuntimeStatus) => this.emit('status', status));
       s.on('exit', (status: TerminalRuntimeStatus) => this.emit('exit', status));
       this.sessions.set(def.id, s);

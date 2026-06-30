@@ -154,12 +154,12 @@ export class InMemoryPromptGenerationRepository implements PromptGenerationRepos
     if (!current) throw new Error(`prompt generation not found: ${id}`);
     const next: PromptGenerationRecord = {
       ...current,
-      outputText: 'outputText' in input ? input.outputText ?? null : current.outputText,
+      outputText: 'outputText' in input ? (input.outputText ?? null) : current.outputText,
       status: input.status ?? current.status,
-      error: 'error' in input ? input.error ?? null : current.error,
-      terminalId: 'terminalId' in input ? input.terminalId ?? null : current.terminalId,
-      startedAt: 'startedAt' in input ? input.startedAt ?? null : current.startedAt,
-      completedAt: 'completedAt' in input ? input.completedAt ?? null : current.completedAt,
+      error: 'error' in input ? (input.error ?? null) : current.error,
+      terminalId: 'terminalId' in input ? (input.terminalId ?? null) : current.terminalId,
+      startedAt: 'startedAt' in input ? (input.startedAt ?? null) : current.startedAt,
+      completedAt: 'completedAt' in input ? (input.completedAt ?? null) : current.completedAt,
       updatedAt: new Date().toISOString(),
     };
     this.rows.set(id, next);

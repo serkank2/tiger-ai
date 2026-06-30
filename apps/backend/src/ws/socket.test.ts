@@ -97,7 +97,7 @@ function collectUntil(ws: WebSocket, predicate: (msgs: ServerMsg[]) => boolean):
       if (predicate(msgs)) resolve(msgs);
     });
     ws.on('error', reject);
-    ws.on('close', () => predicate(msgs) ? resolve(msgs) : reject(new Error('socket closed early')));
+    ws.on('close', () => (predicate(msgs) ? resolve(msgs) : reject(new Error('socket closed early'))));
   });
 }
 
@@ -123,11 +123,23 @@ test('connection with no Origin (non-browser client) is allowed and gets the ini
   const h = await startServer();
   try {
     const ws = new WebSocket(h.url);
-    const msgs = await collectUntil(ws, (m) => m.some((x) => x.type === 'tiger.state') && m.some((x) => x.type === 'limit.state'));
-    assert.ok(msgs.find((m) => m.type === 'tiger.state'), 'tiger.state snapshot sent on connect');
-    assert.ok(msgs.find((m) => m.type === 'limit.state'), 'limit.state snapshot sent on connect');
+    const msgs = await collectUntil(
+      ws,
+      (m) => m.some((x) => x.type === 'tiger.state') && m.some((x) => x.type === 'limit.state'),
+    );
+    assert.ok(
+      msgs.find((m) => m.type === 'tiger.state'),
+      'tiger.state snapshot sent on connect',
+    );
+    assert.ok(
+      msgs.find((m) => m.type === 'limit.state'),
+      'limit.state snapshot sent on connect',
+    );
     // No team snapshot since tryGetState() returned null.
-    assert.equal(msgs.some((m) => m.type === 'team.state'), false);
+    assert.equal(
+      msgs.some((m) => m.type === 'team.state'),
+      false,
+    );
     ws.close();
   } finally {
     await h.close();
@@ -267,7 +279,13 @@ test('team and tiger orchestrator events are broadcast as the matching server fr
     await once(ws, 'open');
     const got = collectUntil(ws, (m) => m.some((x) => x.type === 'team.message'));
     (h.ctx.teamOrchestrator as unknown as EventEmitter).emit('message', {
-      runId: 'run-1', seq: 1, from: 'r1', to: 'all', kind: 'chat', body: 'hello team', createdAt: 'x',
+      runId: 'run-1',
+      seq: 1,
+      from: 'r1',
+      to: 'all',
+      kind: 'chat',
+      body: 'hello team',
+      createdAt: 'x',
     });
     const msgs = await got;
     const frame = msgs.find((m) => m.type === 'team.message') as Extract<ServerMsg, { type: 'team.message' }>;

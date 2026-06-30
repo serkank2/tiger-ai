@@ -108,7 +108,10 @@ export const useTemplatesStore = defineStore('templates', () => {
     }
   }
 
-  async function duplicate(template: TigerRunTemplate, payload: Partial<TigerRunTemplatePayload> = {}): Promise<TigerRunTemplate> {
+  async function duplicate(
+    template: TigerRunTemplate,
+    payload: Partial<TigerRunTemplatePayload> = {},
+  ): Promise<TigerRunTemplate> {
     const id = templateRef(template);
     duplicatingId.value = id;
     clearFeedback();

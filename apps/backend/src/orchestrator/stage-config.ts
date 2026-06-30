@@ -5,7 +5,14 @@ import {
   TIGER_CLAUDE_EFFORTS,
   TIGER_CODEX_EFFORTS,
 } from './config.js';
-import { STAGE_ORDER, isAgentType, type AgentType, type StageId, type StageRunConfig, type TigerConfig } from './types.js';
+import {
+  STAGE_ORDER,
+  isAgentType,
+  type AgentType,
+  type StageId,
+  type StageRunConfig,
+  type TigerConfig,
+} from './types.js';
 
 export function configInputError(message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -62,7 +69,12 @@ export function buildStageConfig(config: TigerConfig, body: Record<string, unkno
     antigravityAgents: toAgentCount(body.antigravityAgents, d.antigravityAgents, `${prefix}antigravityAgents`),
     claudeModel: toModel(body.claudeModel, d.claudeModel, cli.claude.models, `${prefix}claudeModel`),
     codexModel: toModel(body.codexModel, d.codexModel, cli.codex.models, `${prefix}codexModel`),
-    antigravityModel: toModel(body.antigravityModel, d.antigravityModel, cli.antigravity.models, `${prefix}antigravityModel`),
+    antigravityModel: toModel(
+      body.antigravityModel,
+      d.antigravityModel,
+      cli.antigravity.models,
+      `${prefix}antigravityModel`,
+    ),
     claudeEffort: toEffort(body.claudeEffort, d.claudeEffort, TIGER_CLAUDE_EFFORTS, `${prefix}claudeEffort`),
     codexEffort: toEffort(body.codexEffort, d.codexEffort, TIGER_CODEX_EFFORTS, `${prefix}codexEffort`),
     antigravityEffort: toEffort(

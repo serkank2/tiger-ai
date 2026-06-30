@@ -11,11 +11,7 @@ export function usesWindowsPathSyntax(...paths: Array<string | null | undefined>
   });
 }
 
-export function absoluteLocalPathError(
-  value: string,
-  label: string,
-  requireWindowsDrive: boolean,
-): string | null {
+export function absoluteLocalPathError(value: string, label: string, requireWindowsDrive: boolean): string | null {
   const p = value.trim();
   if (!p) return null;
   if (p.startsWith('\\\\') || p.startsWith('//')) return `${label} must be a local path; UNC paths are not allowed.`;

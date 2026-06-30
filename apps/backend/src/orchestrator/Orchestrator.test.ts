@@ -164,9 +164,7 @@ class LeaseTrackingPersistence extends MemoryExecutionPersistence {
   taskClaimLeaseExpiresAt: string | null = null;
   runLeaseExpiresAtAtTaskClaim: string | null = null;
 
-  override async refreshRunLease(
-    ...args: Parameters<MemoryExecutionPersistence['refreshRunLease']>
-  ): Promise<void> {
+  override async refreshRunLease(...args: Parameters<MemoryExecutionPersistence['refreshRunLease']>): Promise<void> {
     this.refreshCount += 1;
     await super.refreshRunLease(...args);
   }
@@ -344,7 +342,10 @@ test('boot reconciliation marks interrupted work stale and resumes only unfinish
     const cfg = fakeAgentConfig(orch2);
     const restored = orch2.getState().stages['executing-plan'];
     assert.equal(restored.status, 'interrupted');
-    assert.equal(restored.runs.some((r) => r.state === 'interrupted'), true);
+    assert.equal(
+      restored.runs.some((r) => r.state === 'interrupted'),
+      true,
+    );
     assert.equal(await exists(path.join(paths.tasksDir, 'TASK-001__done.md')), true);
     assert.equal(await exists(path.join(paths.tasksDir, 'TASK-002__not_started.md')), true);
 

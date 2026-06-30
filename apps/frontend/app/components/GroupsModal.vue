@@ -59,7 +59,9 @@ function clearRenameError(id: string) {
   delete renameErrors[id];
 }
 
-const newNameError = computed(() => createServerErrors.name ?? (newName.value.length ? groupNameError(newName.value) : null));
+const newNameError = computed(
+  () => createServerErrors.name ?? (newName.value.length ? groupNameError(newName.value) : null),
+);
 const newColorError = computed(() => createServerErrors.color ?? hexColorError(newColor.value, t('groups.colorLabel')));
 const hasCreateError = computed(() => Boolean(groupNameError(newName.value) || newColorError.value));
 
@@ -129,48 +131,62 @@ async function remove(id: string) {
 
 <template>
   <BaseModal :title="t('groups.title')" size="md" @close="emit('close')">
-      <form class="create" @submit.prevent="create">
-        <BaseField id="group-new-name" v-slot="{ id, describedby, invalid }" class="create-name" :label="t('terminals.newGroupName')" :error="newNameError || undefined">
-          <BaseInput
-            :id="id"
-            v-model="newName"
-            :placeholder="t('terminals.newGroupName')"
-            :invalid="invalid || undefined"
-            :describedby="describedby"
-            @input="clearCreateError('name')"
-          />
-        </BaseField>
-        <BaseField id="group-new-color" v-slot="{ id, describedby, invalid }" class="create-color" :label="t('groups.color')" :error="newColorError || undefined">
-          <div class="color-row">
-            <div class="swatches">
-              <button
-                v-for="c in COLORS"
-                :key="c"
-                type="button"
-                class="swatch"
-                :class="{ on: newColor === c }"
-                :style="{ background: c }"
-                :title="c"
-                @click="chooseColor(c)"
-              />
-            </div>
-            <BaseInput
-              :id="id"
-              v-model="newColor"
-              class="color-value"
-              spellcheck="false"
-              :invalid="invalid || undefined"
-              :describedby="describedby"
-              @input="clearCreateError('color')"
+    <form class="create" @submit.prevent="create">
+      <BaseField
+        id="group-new-name"
+        v-slot="{ id, describedby, invalid }"
+        class="create-name"
+        :label="t('terminals.newGroupName')"
+        :error="newNameError || undefined"
+      >
+        <BaseInput
+          :id="id"
+          v-model="newName"
+          :placeholder="t('terminals.newGroupName')"
+          :invalid="invalid || undefined"
+          :describedby="describedby"
+          @input="clearCreateError('name')"
+        />
+      </BaseField>
+      <BaseField
+        id="group-new-color"
+        v-slot="{ id, describedby, invalid }"
+        class="create-color"
+        :label="t('groups.color')"
+        :error="newColorError || undefined"
+      >
+        <div class="color-row">
+          <div class="swatches">
+            <button
+              v-for="c in COLORS"
+              :key="c"
+              type="button"
+              class="swatch"
+              :class="{ on: newColor === c }"
+              :style="{ background: c }"
+              :title="c"
+              @click="chooseColor(c)"
             />
           </div>
-        </BaseField>
-        <BaseButton type="submit" class="add-btn" variant="primary" :loading="busy" :disabled="hasCreateError">{{ t('groups.add') }}</BaseButton>
-      </form>
+          <BaseInput
+            :id="id"
+            v-model="newColor"
+            class="color-value"
+            spellcheck="false"
+            :invalid="invalid || undefined"
+            :describedby="describedby"
+            @input="clearCreateError('color')"
+          />
+        </div>
+      </BaseField>
+      <BaseButton type="submit" class="add-btn" variant="primary" :loading="busy" :disabled="hasCreateError">{{
+        t('groups.add')
+      }}</BaseButton>
+    </form>
 
-      <ul class="list">
-        <li v-for="g in groups.groups" :key="g.id">
-          <div class="group-row">
+    <ul class="list">
+      <li v-for="g in groups.groups" :key="g.id">
+        <div class="group-row">
           <span class="dot" :style="{ background: g.color || 'var(--text-faint)' }" />
           <BaseInput
             class="gname"
@@ -185,23 +201,27 @@ async function remove(id: string) {
             class="del"
             :class="{ confirm: confirmingId === g.id }"
             :title="confirmingId === g.id ? t('groups.deleteConfirm') : t('groups.deleteGroup')"
-            :aria-label="confirmingId === g.id ? t('groups.confirmDeleteAria', { name: g.name }) : t('groups.deleteGroupAria', { name: g.name })"
+            :aria-label="
+              confirmingId === g.id
+                ? t('groups.confirmDeleteAria', { name: g.name })
+                : t('groups.deleteGroupAria', { name: g.name })
+            "
             @click="onDelete(g.id)"
           >
             <template v-if="confirmingId === g.id">✓?</template>
             <IconTrash v-else />
           </button>
-          </div>
-          <p v-if="renameErrors[g.id]" :id="`group-${g.id}-name-error`" class="row-error" role="alert">
-            {{ renameErrors[g.id] }}
-          </p>
-        </li>
-        <li v-if="!groups.groups.length" class="empty">{{ t('groups.empty') }}</li>
-      </ul>
+        </div>
+        <p v-if="renameErrors[g.id]" :id="`group-${g.id}-name-error`" class="row-error" role="alert">
+          {{ renameErrors[g.id] }}
+        </p>
+      </li>
+      <li v-if="!groups.groups.length" class="empty">{{ t('groups.empty') }}</li>
+    </ul>
 
-      <template #footer>
-        <BaseButton variant="ghost" @click="emit('close')">{{ t('groups.done') }}</BaseButton>
-      </template>
+    <template #footer>
+      <BaseButton variant="ghost" @click="emit('close')">{{ t('groups.done') }}</BaseButton>
+    </template>
   </BaseModal>
 </template>
 

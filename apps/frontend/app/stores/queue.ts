@@ -58,7 +58,7 @@ export const useQueueStore = defineStore('queue', () => {
 
   const queuePipelineV2 = computed(() => state.value?.queuePipelineV2 === true);
   const jobs = computed(() =>
-    [...(queuePipelineV2.value ? state.value?.liveItems ?? [] : state.value?.jobs ?? [])].sort(byQueueOrder),
+    [...(queuePipelineV2.value ? (state.value?.liveItems ?? []) : (state.value?.jobs ?? []))].sort(byQueueOrder),
   );
   const rules = computed(() => state.value?.rules ?? []);
   const updatedAt = computed(() => state.value?.updatedAt ?? null);
@@ -71,12 +71,13 @@ export const useQueueStore = defineStore('queue', () => {
   const terminalJobs = computed(() =>
     queuePipelineV2.value ? [...historyItems.value] : jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)),
   );
-  const historyCounts = computed(() =>
-    state.value?.historyCounts ?? {
-      total: jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)).length,
-      byStatus: {},
-      byTarget: {},
-    },
+  const historyCounts = computed(
+    () =>
+      state.value?.historyCounts ?? {
+        total: jobs.value.filter((job) => TERMINAL_STATUSES.has(job.status)).length,
+        byStatus: {},
+        byTarget: {},
+      },
   );
 
   function setBusy(key: string, busy: boolean): void {
@@ -190,7 +191,10 @@ export const useQueueStore = defineStore('queue', () => {
     }
   }
 
-  async function loadHistory(query: QueueHistoryQuery = {}, options: { append?: boolean } = {}): Promise<QueueHistoryResponse> {
+  async function loadHistory(
+    query: QueueHistoryQuery = {},
+    options: { append?: boolean } = {},
+  ): Promise<QueueHistoryResponse> {
     setBusy('history', true);
     historyLoading.value = true;
     historyError.value = null;

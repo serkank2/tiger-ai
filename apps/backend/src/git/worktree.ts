@@ -279,7 +279,8 @@ export async function removeWorktree(opts: RemoveWorktreeOptions): Promise<void>
   if (!res.ok) {
     // Tolerate the common "already removed / not a working tree" case; otherwise log.
     const stderr = res.stderr.toLowerCase();
-    const alreadyGone = stderr.includes('is not a working tree') || stderr.includes('no such') || stderr.includes('not found');
+    const alreadyGone =
+      stderr.includes('is not a working tree') || stderr.includes('no such') || stderr.includes('not found');
     if (!alreadyGone) {
       log.warn('worktree remove reported an error (pruned anyway)', { path: target, detail: res.stderr.trim() });
     }
@@ -294,7 +295,8 @@ function parsePorcelainList(out: string, repoRoot: string): Worktree[] {
   const flush = (): void => {
     if (cur.path) {
       const branchRef = cur.branch ?? '';
-      const branch = branchRef.replace(/^refs\/heads\//, '') || (cur.head ? `(detached:${cur.head.slice(0, 12)})` : '(bare)');
+      const branch =
+        branchRef.replace(/^refs\/heads\//, '') || (cur.head ? `(detached:${cur.head.slice(0, 12)})` : '(bare)');
       // Derive taskId from a managed path under `.tiger/worktrees/<taskId>`.
       const base = path.basename(cur.path);
       worktrees.push({ taskId: base, path: path.resolve(cur.path), branch, baseRef: cur.head ?? '' });

@@ -59,7 +59,9 @@ function rowToTemplate(row: RunTemplateRow): RunTemplate {
 }
 
 function duplicateError(error: unknown): boolean {
-  return !!error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ER_DUP_ENTRY';
+  return (
+    !!error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ER_DUP_ENTRY'
+  );
 }
 
 function templateConflict(): RunTemplateServiceError {

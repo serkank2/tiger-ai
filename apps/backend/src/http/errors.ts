@@ -94,7 +94,8 @@ export function errorHandler() {
     }
 
     const e = err as { code?: string; status?: number; statusCode?: number };
-    const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
+    const explicit =
+      typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
     const status = explicit && explicit >= 400 && explicit < 600 ? explicit : e.code === 'EINVAL_CWD' ? 400 : 500;
     const rawMessage = err instanceof Error ? err.message : String(err);
 

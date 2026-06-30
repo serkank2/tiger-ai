@@ -17,7 +17,12 @@ const api = vi.hoisted(() => ({
 
 vi.mock('~/composables/useApi', () => ({ useApi: () => api }));
 
-function step(jobId: string, stepKey: TigerStageId, position: number, status: QueueStep['status'] = 'pending'): QueueStep {
+function step(
+  jobId: string,
+  stepKey: TigerStageId,
+  position: number,
+  status: QueueStep['status'] = 'pending',
+): QueueStep {
   return {
     id: `${jobId}-${stepKey}`,
     jobId,
@@ -61,7 +66,13 @@ function job(id: string, overrides: Partial<QueueJobView> = {}): QueueJobView {
   return { ...base, ...overrides };
 }
 
-function event(id: string, jobId: string | null, type: string, message: string, createdAt = '2026-06-18T08:00:00.000Z'): QueueEvent {
+function event(
+  id: string,
+  jobId: string | null,
+  type: string,
+  message: string,
+  createdAt = '2026-06-18T08:00:00.000Z',
+): QueueEvent {
   return { id, jobId, type, message, payload: null, createdAt };
 }
 
@@ -93,11 +104,15 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
 }
 
 function v2State(allJobs: QueueJobView[], liveItems?: QueueJobView[]): QueueState {
-  const terminalJobs = allJobs.filter((item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled');
+  const terminalJobs = allJobs.filter(
+    (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled',
+  );
   return {
     ...state(allJobs),
     queuePipelineV2: true,
-    liveItems: liveItems ?? allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled'),
+    liveItems:
+      liveItems ??
+      allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled'),
     historyCounts: {
       total: terminalJobs.length,
       byStatus: terminalJobs.reduce<NonNullable<QueueState['historyCounts']>['byStatus']>((acc, item) => {
@@ -234,16 +249,25 @@ describe('useQueueStore', () => {
     store.applyState(state([job('a')], [event('evt-submitted', 'a', 'queue.submitted', 'Submitted')]));
 
     store.applyState(
-      state([
-        job('a', {
-          status: 'running',
-          currentStep: 'brainstorming',
-          updatedAt: '2026-06-18T08:10:00.000Z',
-          steps: [step('a', 'brainstorming', 1, 'running'), step('a', 'writing-plan', 2)],
-        }),
-      ], [
-        event('evt-step', 'a', 'queue.step.running', 'Queue step started: brainstorming.', '2026-06-18T08:10:00.000Z'),
-      ]),
+      state(
+        [
+          job('a', {
+            status: 'running',
+            currentStep: 'brainstorming',
+            updatedAt: '2026-06-18T08:10:00.000Z',
+            steps: [step('a', 'brainstorming', 1, 'running'), step('a', 'writing-plan', 2)],
+          }),
+        ],
+        [
+          event(
+            'evt-step',
+            'a',
+            'queue.step.running',
+            'Queue step started: brainstorming.',
+            '2026-06-18T08:10:00.000Z',
+          ),
+        ],
+      ),
     );
 
     expect(store.activeJob?.id).toBe('a');

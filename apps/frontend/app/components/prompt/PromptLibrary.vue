@@ -29,7 +29,10 @@ const filtered = computed(() => {
   const s = q.value.trim().toLowerCase();
   if (!s) return props.items;
   return props.items.filter(
-    (p) => p.path.toLowerCase().includes(s) || (p.title ?? '').toLowerCase().includes(s) || (p.tags ?? []).some((t) => t.toLowerCase().includes(s)),
+    (p) =>
+      p.path.toLowerCase().includes(s) ||
+      (p.title ?? '').toLowerCase().includes(s) ||
+      (p.tags ?? []).some((t) => t.toLowerCase().includes(s)),
   );
 });
 
@@ -71,7 +74,9 @@ onBeforeUnmount(() => {
       <input v-model="q" class="search" :placeholder="t('prompts.library.searchPlaceholder')" spellcheck="false" />
     </div>
     <div class="actions">
-      <BaseButton size="sm" variant="secondary" block @click="emit('create')">{{ t('prompts.library.new') }}</BaseButton>
+      <BaseButton size="sm" variant="secondary" block @click="emit('create')">{{
+        t('prompts.library.new')
+      }}</BaseButton>
       <BaseButton
         size="sm"
         variant="secondary"
@@ -90,14 +95,11 @@ onBeforeUnmount(() => {
         <Skeleton v-for="i in 4" :key="i" :lines="2" />
       </div>
 
-      <EmptyState
-        v-else-if="error"
-        :title="t('prompts.library.unavailableTitle')"
-        :description="error"
-        tone="danger"
-      >
+      <EmptyState v-else-if="error" :title="t('prompts.library.unavailableTitle')" :description="error" tone="danger">
         <template #actions>
-          <BaseButton size="sm" variant="secondary" @click="emit('refresh')">{{ t('prompts.library.retry') }}</BaseButton>
+          <BaseButton size="sm" variant="secondary" @click="emit('refresh')">{{
+            t('prompts.library.retry')
+          }}</BaseButton>
         </template>
       </EmptyState>
 
@@ -107,7 +109,9 @@ onBeforeUnmount(() => {
         :description="t('prompts.library.emptyDescription')"
       >
         <template #actions>
-          <BaseButton size="sm" variant="secondary" @click="emit('create')">{{ t('prompts.library.createFirst') }}</BaseButton>
+          <BaseButton size="sm" variant="secondary" @click="emit('create')">{{
+            t('prompts.library.createFirst')
+          }}</BaseButton>
         </template>
       </EmptyState>
 
@@ -137,7 +141,9 @@ onBeforeUnmount(() => {
             <div class="meta">
               <div class="title">
                 {{ p.title || p.path }}
-                <span v-if="p.path === currentPath && dirty" class="dirty" :title="t('prompts.library.unsavedTitle')">●</span>
+                <span v-if="p.path === currentPath && dirty" class="dirty" :title="t('prompts.library.unsavedTitle')"
+                  >●</span
+                >
               </div>
               <div class="path">{{ p.path }}</div>
               <div v-if="p.tags?.length" class="tags">
@@ -162,7 +168,9 @@ onBeforeUnmount(() => {
                 icon-only
                 class="ic danger"
                 :class="{ confirm: confirmingPath === p.path }"
-                :aria-label="confirmingPath === p.path ? t('prompts.library.deleteConfirm') : t('prompts.library.delete')"
+                :aria-label="
+                  confirmingPath === p.path ? t('prompts.library.deleteConfirm') : t('prompts.library.delete')
+                "
                 :title="confirmingPath === p.path ? t('prompts.library.deleteConfirm') : t('prompts.library.delete')"
                 @click="onDelete(p.path)"
               >
@@ -179,26 +187,114 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.lib { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.top { margin-bottom: 8px; }
-.search { width: 100%; }
-.actions { display: flex; gap: 6px; margin-bottom: 8px; }
-.list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.loading-list { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
-.item { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
-.item:hover { background: var(--bg-elev-2); }
-.item.active { background: var(--accent-soft); border-left: 2px solid var(--accent); }
-.meta { flex: 1; min-width: 0; }
-.title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dirty { color: var(--amber); margin-left: 4px; }
-.path { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-.tag { font-size: 10px; background: var(--bg-elev-2); color: var(--text-dim); border-radius: 999px; padding: 1px 7px; }
-.row-actions { display: none; gap: 2px; }
-.item:hover .row-actions, .item.active .row-actions, .item:focus-within .row-actions { display: flex; }
-.item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ic { font-size: 12px; }
-.ic.danger:hover, .ic.confirm { color: var(--red); }
-.renameinput { width: 100%; font-family: var(--font-mono); font-size: 12px; }
-.empty { padding: 18px; text-align: center; color: var(--text-faint); font-size: 13px; }
+.lib {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.top {
+  margin-bottom: 8px;
+}
+.search {
+  width: 100%;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.list {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.loading-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.item:hover {
+  background: var(--bg-elev-2);
+}
+.item.active {
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+}
+.meta {
+  flex: 1;
+  min-width: 0;
+}
+.title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dirty {
+  color: var(--amber);
+  margin-left: 4px;
+}
+.path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.tag {
+  font-size: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.row-actions {
+  display: none;
+  gap: 2px;
+}
+.item:hover .row-actions,
+.item.active .row-actions,
+.item:focus-within .row-actions {
+  display: flex;
+}
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ic {
+  font-size: 12px;
+}
+.ic.danger:hover,
+.ic.confirm {
+  color: var(--red);
+}
+.renameinput {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
 </style>

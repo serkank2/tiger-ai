@@ -4,12 +4,7 @@ import pty from 'node-pty';
 import type { IDisposable, IPty } from 'node-pty';
 import { config } from '../config.js';
 import { resolveExistingDir } from '../util/paths.js';
-import type {
-  ShellSpec,
-  TerminalDefinition,
-  TerminalRunState,
-  TerminalRuntimeStatus,
-} from '../store/types.js';
+import type { ShellSpec, TerminalDefinition, TerminalRunState, TerminalRuntimeStatus } from '../store/types.js';
 
 /** Resolve a ShellSpec to an executable + args for the current platform. */
 export function resolveShell(spec: ShellSpec): { file: string; args: string[] } {

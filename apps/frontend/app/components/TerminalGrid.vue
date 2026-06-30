@@ -128,8 +128,7 @@ const tiles = computed(() => terminals.items);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%),
-    var(--bg-elev);
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%), var(--bg-elev);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent),
     0 8px 22px color-mix(in srgb, var(--bg) 34%, transparent);

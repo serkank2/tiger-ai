@@ -141,20 +141,22 @@ export class InMemoryPromptHistoryRepository implements PromptHistoryRepository 
     const dateFrom = filters.dateFrom ? new Date(filters.dateFrom).getTime() : null;
     const dateTo = filters.dateTo ? new Date(filters.dateTo).getTime() : null;
     const items = this.events
-      .map((event): PromptHistoryEvent => ({
-        id: event.id,
-        projectId: event.projectId ?? null,
-        kind: event.kind,
-        inputText: event.inputText ?? null,
-        outputText: event.outputText ?? null,
-        generationId: event.generationId ?? null,
-        metadata: event.metadata ?? null,
-        createdAt: event.createdAt,
-        status: typeof event.metadata?.status === 'string' ? event.metadata.status : null,
-        agentType: typeof event.metadata?.agentType === 'string' ? (event.metadata.agentType as AgentType) : null,
-        model: typeof event.metadata?.model === 'string' ? event.metadata.model : null,
-        error: typeof event.metadata?.error === 'string' ? event.metadata.error : null,
-      }))
+      .map(
+        (event): PromptHistoryEvent => ({
+          id: event.id,
+          projectId: event.projectId ?? null,
+          kind: event.kind,
+          inputText: event.inputText ?? null,
+          outputText: event.outputText ?? null,
+          generationId: event.generationId ?? null,
+          metadata: event.metadata ?? null,
+          createdAt: event.createdAt,
+          status: typeof event.metadata?.status === 'string' ? event.metadata.status : null,
+          agentType: typeof event.metadata?.agentType === 'string' ? (event.metadata.agentType as AgentType) : null,
+          model: typeof event.metadata?.model === 'string' ? event.metadata.model : null,
+          error: typeof event.metadata?.error === 'string' ? event.metadata.error : null,
+        }),
+      )
       .filter((event) => {
         if (filters.kind && event.kind !== filters.kind) return false;
         if (filters.projectId && event.projectId !== filters.projectId) return false;
@@ -221,9 +223,7 @@ function normalizeLimit(limit: unknown): number {
 function normalizeDate(value: string, endOfDay: boolean): string {
   const trimmed = value.trim();
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
-  const date = dateOnly
-    ? new Date(`${trimmed}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
-    : new Date(trimmed);
+  const date = dateOnly ? new Date(`${trimmed}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`) : new Date(trimmed);
   if (Number.isNaN(date.getTime())) throw httpErr(400, 'history date filters must be valid dates');
   return toMysqlDate(date.toISOString());
 }

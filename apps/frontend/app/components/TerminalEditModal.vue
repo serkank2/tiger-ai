@@ -36,7 +36,11 @@ const SHELLS = computed<{ value: ShellKind; label: string }[]>(() => [
 const isEdit = computed(() => !!props.terminal);
 
 function envToText(env?: Record<string, string>): string {
-  return env ? Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+  return env
+    ? Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n')
+    : '';
 }
 function parseEnv(text: string): Record<string, string> | undefined {
   const out: Record<string, string> = {};
@@ -166,35 +170,61 @@ const cwdWindowsContext = computed(() => usesWindowsPathSyntax(settings.settings
 const shellWindowsContext = computed(() =>
   usesWindowsPathSyntax(settings.settings?.defaultCwd, form.cwd, form.shellPath),
 );
-const nameError = computed(() => serverErrors.name ?? (!form.name.trim() ? t('terminals.editModal.nameRequired') : null));
-const groupError = computed(() =>
-  serverErrors.groupId ?? (form.groupId && !groups.groups.some((g) => g.id === form.groupId) ? t('terminals.editModal.groupInvalid') : null),
+const nameError = computed(
+  () => serverErrors.name ?? (!form.name.trim() ? t('terminals.editModal.nameRequired') : null),
+);
+const groupError = computed(
+  () =>
+    serverErrors.groupId ??
+    (form.groupId && !groups.groups.some((g) => g.id === form.groupId) ? t('terminals.editModal.groupInvalid') : null),
 );
 const cwdShapeError = computed(() =>
-  form.cwd.trim() ? absoluteLocalPathError(form.cwd, t('terminals.editModal.workingDirectory'), cwdWindowsContext.value) : null,
+  form.cwd.trim()
+    ? absoluteLocalPathError(form.cwd, t('terminals.editModal.workingDirectory'), cwdWindowsContext.value)
+    : null,
 );
 const cwdError = computed(
-  () => serverErrors.cwd ?? cwdShapeError.value ?? (cwdState.value === 'bad' ? t('terminals.editModal.cwdNotFound') : null),
+  () =>
+    serverErrors.cwd ?? cwdShapeError.value ?? (cwdState.value === 'bad' ? t('terminals.editModal.cwdNotFound') : null),
 );
 const initialCommandLength = computed(() => form.initialCommand.trim().length);
-const initialCommandError = computed(() =>
-  serverErrors.initialCommand ??
-  (initialCommandLength.value > INITIAL_COMMAND_MAX_LENGTH
-    ? t('terminals.editModal.initialCommandTooLong', { max: INITIAL_COMMAND_MAX_LENGTH })
-    : null),
+const initialCommandError = computed(
+  () =>
+    serverErrors.initialCommand ??
+    (initialCommandLength.value > INITIAL_COMMAND_MAX_LENGTH
+      ? t('terminals.editModal.initialCommandTooLong', { max: INITIAL_COMMAND_MAX_LENGTH })
+      : null),
 );
-const shellPathError = computed(() =>
-  serverErrors.shellPath ?? customShellPathError(form.shellKind, form.shellPath, t('terminals.editModal.shellPath'), shellWindowsContext.value),
+const shellPathError = computed(
+  () =>
+    serverErrors.shellPath ??
+    customShellPathError(form.shellKind, form.shellPath, t('terminals.editModal.shellPath'), shellWindowsContext.value),
 );
 const envError = computed(() => serverErrors.env ?? envTextError(form.env));
 const hasFieldError = computed(() =>
-  Boolean(nameError.value || groupError.value || cwdError.value || initialCommandError.value || shellPathError.value || envError.value),
+  Boolean(
+    nameError.value ||
+    groupError.value ||
+    cwdError.value ||
+    initialCommandError.value ||
+    shellPathError.value ||
+    envError.value,
+  ),
 );
 const canSave = computed(() => !saving.value && !hasFieldError.value && cwdState.value !== 'checking');
 
-watch(() => form.initialCommand, () => clearServerError('initialCommand'));
-watch(() => form.shellPath, () => clearServerError('shellPath'));
-watch(() => form.env, () => clearServerError('env'));
+watch(
+  () => form.initialCommand,
+  () => clearServerError('initialCommand'),
+);
+watch(
+  () => form.shellPath,
+  () => clearServerError('shellPath'),
+);
+watch(
+  () => form.env,
+  () => clearServerError('env'),
+);
 
 // create-only: make N copies at once, optionally starting them immediately
 const count = ref(1);
@@ -275,166 +305,230 @@ async function save() {
 </script>
 
 <template>
-  <BaseModal :title="isEdit ? t('terminals.editModal.editTitle') : t('terminals.editModal.newTitle')" size="lg" @close="emit('close')">
-      <BaseField id="terminal-name" v-slot="{ id, describedby, invalid }" :label="t('terminals.editModal.name')" :error="nameError || undefined">
+  <BaseModal
+    :title="isEdit ? t('terminals.editModal.editTitle') : t('terminals.editModal.newTitle')"
+    size="lg"
+    @close="emit('close')"
+  >
+    <BaseField
+      id="terminal-name"
+      v-slot="{ id, describedby, invalid }"
+      :label="t('terminals.editModal.name')"
+      :error="nameError || undefined"
+    >
+      <input
+        :id="id"
+        v-model="form.name"
+        :placeholder="t('terminals.placeholders.nameExample')"
+        autofocus
+        :aria-invalid="invalid || undefined"
+        :aria-describedby="describedby"
+        @input="clearServerError('name')"
+      />
+    </BaseField>
+
+    <BaseField
+      id="terminal-group"
+      v-slot="{ id, describedby, invalid }"
+      :label="t('terminals.targetGroup')"
+      :error="groupError || undefined"
+    >
+      <select
+        :id="id"
+        v-model="form.groupId"
+        :aria-invalid="invalid || undefined"
+        :aria-describedby="describedby"
+        @change="clearServerError('groupId')"
+      >
+        <option :value="null">{{ t('terminals.editModal.none') }}</option>
+        <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+      </select>
+    </BaseField>
+
+    <BaseField
+      id="terminal-cwd"
+      v-slot="{ id, describedby, invalid }"
+      :label="t('terminals.editModal.workingDirectory')"
+      :error="cwdError || undefined"
+    >
+      <span class="cwd-row">
         <input
           :id="id"
-          v-model="form.name"
-          :placeholder="t('terminals.placeholders.nameExample')"
-          autofocus
-          :aria-invalid="invalid || undefined"
-          :aria-describedby="describedby"
-          @input="clearServerError('name')"
-        />
-      </BaseField>
-
-      <BaseField id="terminal-group" v-slot="{ id, describedby, invalid }" :label="t('terminals.targetGroup')" :error="groupError || undefined">
-        <select
-          :id="id"
-          v-model="form.groupId"
-          :aria-invalid="invalid || undefined"
-          :aria-describedby="describedby"
-          @change="clearServerError('groupId')"
-        >
-          <option :value="null">{{ t('terminals.editModal.none') }}</option>
-          <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-        </select>
-      </BaseField>
-
-      <BaseField id="terminal-cwd" v-slot="{ id, describedby, invalid }" :label="t('terminals.editModal.workingDirectory')" :error="cwdError || undefined">
-        <span class="cwd-row">
-          <input
-            :id="id"
-            v-model="form.cwd"
-            placeholder="C:\path\to\project"
-            spellcheck="false"
-            :aria-invalid="invalid || undefined"
-            :aria-describedby="describedby"
-            @input="onCwdInput"
-            @blur="checkCwd"
-          />
-          <button type="button" class="browse" :title="t('settings.browseFolders')" :aria-label="t('settings.browseFolders')" @click="showPicker = true">📁</button>
-          <span class="flag" :class="cwdState">
-            {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
-          </span>
-        </span>
-      </BaseField>
-
-      <div class="ai">
-        <div class="ai-head">🤖 {{ t('terminals.editModal.aiQuickStart') }} <i>{{ t('terminals.editModal.aiQuickStartHint') }}</i></div>
-        <div class="ai-row">
-          <select v-model="form.aiTool" :aria-label="t('terminals.editModal.aiCli')" @change="onToolChange">
-            <option value="">{{ t('terminals.editModal.none') }}</option>
-            <option value="claude">{{ t('common.providers.claude') }}</option>
-            <option value="codex">{{ t('common.providers.codex') }}</option>
-            <option value="antigravity">{{ t('common.providers.antigravity') }}</option>
-          </select>
-          <template v-if="form.aiTool === 'claude'">
-            <select v-model="form.aiModel" :aria-label="t('terminals.editModal.claudeModel')" @change="rebuildAi">
-              <option v-for="m in CLAUDE_MODELS" :key="m" :value="m">{{ m || t('terminals.editModal.defaultModel') }}</option>
-            </select>
-            <select v-model="form.aiMode" :aria-label="t('terminals.editModal.claudePermissionMode')" @change="rebuildAi">
-              <option v-for="o in CLAUDE_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
-            </select>
-          </template>
-          <template v-else-if="form.aiTool === 'codex'">
-            <input v-model="form.aiModel" :placeholder="t('terminals.placeholders.modelOptional')" spellcheck="false" @input="rebuildAi" />
-            <select v-model="form.aiMode" :aria-label="t('terminals.editModal.codexSandboxMode')" @change="rebuildAi">
-              <option v-for="o in CODEX_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
-            </select>
-          </template>
-          <template v-else-if="form.aiTool === 'antigravity'">
-            <select v-model="form.aiModel" :aria-label="t('terminals.editModal.antigravityModel')" @change="rebuildAi">
-              <option v-for="m in ANTIGRAVITY_MODELS" :key="m" :value="m">{{ m || t('terminals.editModal.defaultModel') }}</option>
-            </select>
-            <select v-model="form.aiMode" :aria-label="t('terminals.editModal.antigravityPermissionMode')" @change="rebuildAi">
-              <option v-for="o in ANTIGRAVITY_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
-            </select>
-          </template>
-        </div>
-        <p v-if="form.aiMode === 'full'" class="ai-warn">
-          {{ t('terminals.editModal.fullAccessWarn', { scope: form.aiTool === 'codex' ? t('terminals.editModal.fullAccessScopeCodex') : t('terminals.editModal.fullAccessScopePrompts') }) }}
-        </p>
-      </div>
-
-      <BaseField
-        :label="t('terminals.editModal.initialCommand')"
-        :hint="t('terminals.editModal.initialCommandHint', { n: initialCommandLength, max: INITIAL_COMMAND_MAX_LENGTH })"
-        :error="initialCommandError || undefined"
-      >
-        <input v-model="form.initialCommand" placeholder="npm run dev · claude · codex" spellcheck="false" />
-      </BaseField>
-
-      <label class="field">
-        <span>{{ t('terminals.editModal.shell') }}</span>
-        <select v-model="form.shellKind" @change="clearServerError('shellPath')">
-          <option v-for="s in SHELLS" :key="s.value" :value="s.value">{{ s.label }}</option>
-        </select>
-      </label>
-
-      <template v-if="form.shellKind === 'custom'">
-        <BaseField id="terminal-shell-path" v-slot="{ id, describedby, invalid }" :label="t('terminals.editModal.shellPath')" :error="shellPathError || undefined">
-          <input
-            :id="id"
-            v-model="form.shellPath"
-            placeholder="C:\path\to\shell.exe"
-            spellcheck="false"
-            :aria-invalid="invalid || undefined"
-            :aria-describedby="describedby"
-          />
-        </BaseField>
-        <label class="field">
-          <span>{{ t('terminals.editModal.shellArgs') }} <i>{{ t('terminals.editModal.shellArgsHint') }}</i></span>
-          <input v-model="form.shellArgs" spellcheck="false" />
-        </label>
-      </template>
-
-      <BaseField
-        id="terminal-env"
-        v-slot="{ id, describedby, invalid }"
-        :label="t('terminals.editModal.envVars')"
-        :hint="t('terminals.editModal.envHint')"
-        :error="envError || undefined"
-      >
-        <textarea
-          :id="id"
-          v-model="form.env"
-          rows="3"
+          v-model="form.cwd"
+          placeholder="C:\path\to\project"
           spellcheck="false"
-          placeholder="NODE_ENV=development"
+          :aria-invalid="invalid || undefined"
+          :aria-describedby="describedby"
+          @input="onCwdInput"
+          @blur="checkCwd"
+        />
+        <button
+          type="button"
+          class="browse"
+          :title="t('settings.browseFolders')"
+          :aria-label="t('settings.browseFolders')"
+          @click="showPicker = true"
+        >
+          📁
+        </button>
+        <span class="flag" :class="cwdState">
+          {{ cwdState === 'ok' ? '✓' : cwdState === 'bad' ? '✗' : cwdState === 'checking' ? '…' : '' }}
+        </span>
+      </span>
+    </BaseField>
+
+    <div class="ai">
+      <div class="ai-head">
+        🤖 {{ t('terminals.editModal.aiQuickStart') }} <i>{{ t('terminals.editModal.aiQuickStartHint') }}</i>
+      </div>
+      <div class="ai-row">
+        <select v-model="form.aiTool" :aria-label="t('terminals.editModal.aiCli')" @change="onToolChange">
+          <option value="">{{ t('terminals.editModal.none') }}</option>
+          <option value="claude">{{ t('common.providers.claude') }}</option>
+          <option value="codex">{{ t('common.providers.codex') }}</option>
+          <option value="antigravity">{{ t('common.providers.antigravity') }}</option>
+        </select>
+        <template v-if="form.aiTool === 'claude'">
+          <select v-model="form.aiModel" :aria-label="t('terminals.editModal.claudeModel')" @change="rebuildAi">
+            <option v-for="m in CLAUDE_MODELS" :key="m" :value="m">
+              {{ m || t('terminals.editModal.defaultModel') }}
+            </option>
+          </select>
+          <select v-model="form.aiMode" :aria-label="t('terminals.editModal.claudePermissionMode')" @change="rebuildAi">
+            <option v-for="o in CLAUDE_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+          </select>
+        </template>
+        <template v-else-if="form.aiTool === 'codex'">
+          <input
+            v-model="form.aiModel"
+            :placeholder="t('terminals.placeholders.modelOptional')"
+            spellcheck="false"
+            @input="rebuildAi"
+          />
+          <select v-model="form.aiMode" :aria-label="t('terminals.editModal.codexSandboxMode')" @change="rebuildAi">
+            <option v-for="o in CODEX_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+          </select>
+        </template>
+        <template v-else-if="form.aiTool === 'antigravity'">
+          <select v-model="form.aiModel" :aria-label="t('terminals.editModal.antigravityModel')" @change="rebuildAi">
+            <option v-for="m in ANTIGRAVITY_MODELS" :key="m" :value="m">
+              {{ m || t('terminals.editModal.defaultModel') }}
+            </option>
+          </select>
+          <select
+            v-model="form.aiMode"
+            :aria-label="t('terminals.editModal.antigravityPermissionMode')"
+            @change="rebuildAi"
+          >
+            <option v-for="o in ANTIGRAVITY_MODES" :key="o.v" :value="o.v">{{ o.label }}</option>
+          </select>
+        </template>
+      </div>
+      <p v-if="form.aiMode === 'full'" class="ai-warn">
+        {{
+          t('terminals.editModal.fullAccessWarn', {
+            scope:
+              form.aiTool === 'codex'
+                ? t('terminals.editModal.fullAccessScopeCodex')
+                : t('terminals.editModal.fullAccessScopePrompts'),
+          })
+        }}
+      </p>
+    </div>
+
+    <BaseField
+      :label="t('terminals.editModal.initialCommand')"
+      :hint="t('terminals.editModal.initialCommandHint', { n: initialCommandLength, max: INITIAL_COMMAND_MAX_LENGTH })"
+      :error="initialCommandError || undefined"
+    >
+      <input v-model="form.initialCommand" placeholder="npm run dev · claude · codex" spellcheck="false" />
+    </BaseField>
+
+    <label class="field">
+      <span>{{ t('terminals.editModal.shell') }}</span>
+      <select v-model="form.shellKind" @change="clearServerError('shellPath')">
+        <option v-for="s in SHELLS" :key="s.value" :value="s.value">{{ s.label }}</option>
+      </select>
+    </label>
+
+    <template v-if="form.shellKind === 'custom'">
+      <BaseField
+        id="terminal-shell-path"
+        v-slot="{ id, describedby, invalid }"
+        :label="t('terminals.editModal.shellPath')"
+        :error="shellPathError || undefined"
+      >
+        <input
+          :id="id"
+          v-model="form.shellPath"
+          placeholder="C:\path\to\shell.exe"
+          spellcheck="false"
           :aria-invalid="invalid || undefined"
           :aria-describedby="describedby"
         />
       </BaseField>
+      <label class="field">
+        <span
+          >{{ t('terminals.editModal.shellArgs') }} <i>{{ t('terminals.editModal.shellArgsHint') }}</i></span
+        >
+        <input v-model="form.shellArgs" spellcheck="false" />
+      </label>
+    </template>
 
-      <label class="check">
-        <input v-model="form.autostart" type="checkbox" />
-        <span>{{ t('terminals.editModal.autostart') }}</span>
+    <BaseField
+      id="terminal-env"
+      v-slot="{ id, describedby, invalid }"
+      :label="t('terminals.editModal.envVars')"
+      :hint="t('terminals.editModal.envHint')"
+      :error="envError || undefined"
+    >
+      <textarea
+        :id="id"
+        v-model="form.env"
+        rows="3"
+        spellcheck="false"
+        placeholder="NODE_ENV=development"
+        :aria-invalid="invalid || undefined"
+        :aria-describedby="describedby"
+      />
+    </BaseField>
+
+    <label class="check">
+      <input v-model="form.autostart" type="checkbox" />
+      <span>{{ t('terminals.editModal.autostart') }}</span>
+    </label>
+    <label class="check">
+      <input v-model="form.protected" type="checkbox" />
+      <span>🔒 {{ t('terminals.editModal.protected') }}</span>
+    </label>
+
+    <template v-if="!isEdit">
+      <label class="field">
+        <span
+          >{{ t('terminals.editModal.howMany') }} <i>{{ t('terminals.editModal.howManyHint') }}</i></span
+        >
+        <input v-model.number="count" type="number" min="1" max="20" />
       </label>
       <label class="check">
-        <input v-model="form.protected" type="checkbox" />
-        <span>🔒 {{ t('terminals.editModal.protected') }}</span>
+        <input v-model="startNow" type="checkbox" />
+        <span>{{ t('terminals.editModal.startNow') }}</span>
       </label>
+    </template>
 
-      <template v-if="!isEdit">
-        <label class="field">
-          <span>{{ t('terminals.editModal.howMany') }} <i>{{ t('terminals.editModal.howManyHint') }}</i></span>
-          <input v-model.number="count" type="number" min="1" max="20" />
-        </label>
-        <label class="check">
-          <input v-model="startNow" type="checkbox" />
-          <span>{{ t('terminals.editModal.startNow') }}</span>
-        </label>
-      </template>
+    <p v-if="error" class="err">{{ error }}</p>
 
-      <p v-if="error" class="err">{{ error }}</p>
-
-      <template #footer>
-        <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-        <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">
-          {{ isEdit ? t('terminals.editModal.saveChanges') : count > 1 ? t('terminals.editModal.createN', { n: count }) : t('common.create') }}
-        </BaseButton>
-      </template>
+    <template #footer>
+      <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
+      <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">
+        {{
+          isEdit
+            ? t('terminals.editModal.saveChanges')
+            : count > 1
+              ? t('terminals.editModal.createN', { n: count })
+              : t('common.create')
+        }}
+      </BaseButton>
+    </template>
   </BaseModal>
 
   <FolderPicker v-if="showPicker" :initial="form.cwd" @select="onPickFolder" @close="showPicker = false" />

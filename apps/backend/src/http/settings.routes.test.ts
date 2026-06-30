@@ -19,7 +19,9 @@ interface Res {
  * `http.request` with `agent: false` (no keep-alive client sockets) so `--test-force-exit`
  * has no lingering socket handle to abort libuv on during teardown.
  */
-async function listen(router: express.Router): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
+async function listen(
+  router: express.Router,
+): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
   const app = express();
   app.use('/api/settings', express.json({ limit: '160kb' }), router);
   app.use(errorHandler());
@@ -30,11 +32,17 @@ async function listen(router: express.Router): Promise<{ req: (m: string, p: str
     req: (method, p, body) =>
       new Promise<Res>((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
-        const r = http.request(new URL(p, base), { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} }, (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }));
-        });
+        const r = http.request(
+          new URL(p, base),
+          { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} },
+          (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }),
+            );
+          },
+        );
         r.on('error', reject);
         if (payload) r.write(payload);
         r.end();
@@ -61,7 +69,12 @@ function state(): PersistedState {
 
 function ctxWith(s: PersistedState) {
   let saves = 0;
-  const ctx = { state: s, save: async () => { saves += 1; } } as unknown as AppCtx;
+  const ctx = {
+    state: s,
+    save: async () => {
+      saves += 1;
+    },
+  } as unknown as AppCtx;
   return { ctx, saveCount: () => saves };
 }
 

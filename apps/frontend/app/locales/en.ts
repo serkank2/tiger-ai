@@ -331,7 +331,8 @@ export default {
       intro: 'Browse reusable prompt files from the existing prompt library store.',
       loading: 'Loading prompt library...',
       emptyTitle: 'No prompts yet.',
-      emptyDesc: 'Create prompt files in the existing Prompts workspace, then refresh this category to manage them here.',
+      emptyDesc:
+        'Create prompt files in the existing Prompts workspace, then refresh this category to manage them here.',
       refreshLibrary: 'Refresh prompt library',
       listLabel: 'Prompt library files',
       selected: 'Selected prompt',
@@ -346,7 +347,8 @@ export default {
       refreshStatus: 'Refresh status',
       loading: 'Loading Cue configuration...',
       disabledTitle: 'Cue engine is not enabled.',
-      disabledDesc: 'Start the backend with KAPLAN_CUE_ENABLED=1 to load .kaplan/cue.json and enable event-driven pipelines.',
+      disabledDesc:
+        'Start the backend with KAPLAN_CUE_ENABLED=1 to load .kaplan/cue.json and enable event-driven pipelines.',
       emptyTitle: 'No cue subscriptions.',
       emptyDesc: 'Define subscriptions in .kaplan/cue.json in your workspace, then reload the Cue configuration.',
       refreshCueStatus: 'Refresh Cue status',
@@ -523,7 +525,8 @@ export default {
       diff: 'Diff',
       promoteTitle: "Merge this attempt's branch into the workspace base branch",
       promote: 'Promote',
-      empty: 'No attempts recorded yet - this run behaves as a single implicit attempt. Start a new attempt to sample another solution.',
+      empty:
+        'No attempts recorded yet - this run behaves as a single implicit attempt. Start a new attempt to sample another solution.',
       newTitle: 'Re-run the same goal as a new attempt (its work is isolated on its own branch)',
       newAttempt: '+ New attempt',
     },
@@ -577,7 +580,8 @@ export default {
     },
     launcher: {
       title: 'Assemble an AI Team',
-      description: 'Pick the project folder, choose a team template, describe the goal, and the role agents will plan, build, review, and only stop once every required role signs off. Steer them anytime.',
+      description:
+        'Pick the project folder, choose a team template, describe the goal, and the role agents will plan, build, review, and only stop once every required role signs off. Steer them anytime.',
       goal: 'Goal',
       lead: 'Lead',
       build: 'Build',
@@ -615,7 +619,8 @@ export default {
       role: 'Role',
       provider: 'Provider',
       empty: 'No metrics yet.',
-      naTip: 'Token/cost totals need a usage-reporting runner - the CLIs run as interactive PTYs and do not self-report usage.',
+      naTip:
+        'Token/cost totals need a usage-reporting runner - the CLIs run as interactive PTYs and do not self-report usage.',
     },
     roleControls: {
       oneLeadRequired: 'Exactly one Lead role is required.',
@@ -696,7 +701,8 @@ export default {
       responsibilitiesPlaceholder: 'Responsibilities, one per line...',
       mayEditSource: 'may edit project source',
       requiredForSignoff: 'required for sign-off',
-      permissionHint: 'Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).',
+      permissionHint:
+        'Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).',
       createTemplate: 'Create template',
     },
     terminal: {
@@ -747,7 +753,8 @@ export default {
       editTitle: 'Edit subscription',
       saveChanges: 'Save changes',
       default: 'Default',
-      promptVarsHint: "Template vars: {'{{'}CUE_FILE_PATH{'}}'}, {'{{'}CUE_SOURCE{'}}'}, {'{{'}CUE_SOURCE_OUTPUT{'}}'}, {'{{'}CUE_EVENT{'}}'}.",
+      promptVarsHint:
+        "Template vars: {'{{'}CUE_FILE_PATH{'}}'}, {'{{'}CUE_SOURCE{'}}'}, {'{{'}CUE_SOURCE_OUTPUT{'}}'}, {'{{'}CUE_EVENT{'}}'}.",
       intervalHint: 'How often to fire. Use s / m / h.',
       events: {
         fileChanged: 'File changed',
@@ -1003,7 +1010,6 @@ export default {
     },
   },
   tiger: {
-
     view: {
       tiger: 'Tiger',
       templates: 'Templates',
@@ -1021,7 +1027,7 @@ export default {
       runAnyway: 'Run anyway',
     },
     stages: {
-      'brainstorming': { title: 'Brainstorming' },
+      brainstorming: { title: 'Brainstorming' },
       'writing-plan': { title: 'Writing Plan' },
       'writing-tasks': { title: 'Writing Tasks' },
       'merge-tasks': { title: 'Merge Tasks' },
@@ -1067,7 +1073,8 @@ export default {
       forgetAriaLabel: 'Forget project {name} (does not delete files)',
       forgetTitle: 'Forget (does not delete files)',
       forgetDialogTitle: 'Forget project',
-      forgetDialogMessage: 'Forget “{name}”? This removes it from the project list but does not delete any files on disk.',
+      forgetDialogMessage:
+        'Forget “{name}”? This removes it from the project list but does not delete any files on disk.',
       forgetDialogConfirm: 'Forget',
       noPromptYet: '(no prompt yet)',
       folderMissing: 'Folder is missing',
@@ -1486,4 +1493,3 @@ export default {
     },
   },
 };
-

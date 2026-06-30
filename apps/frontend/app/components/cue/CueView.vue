@@ -95,12 +95,7 @@ async function onRemove(id: string): Promise<void> {
       <div class="actions">
         <span v-if="cue.running" class="status on">? {{ t('cue.status.running') }}</span>
         <span v-else-if="cue.loaded && !cue.disabled" class="status off">? {{ t('cue.status.stopped') }}</span>
-        <BaseButton
-          :loading="cue.isBusy('reload')"
-          :disabled="cue.disabled"
-          variant="ghost"
-          @click="onReload"
-        >
+        <BaseButton :loading="cue.isBusy('reload')" :disabled="cue.disabled" variant="ghost" @click="onReload">
           {{ t('cue.actions.reloadConfig') }}
         </BaseButton>
         <BaseButton :disabled="cue.disabled" @click="onNew">{{ t('cue.actions.newSubscription') }}</BaseButton>
@@ -130,9 +125,13 @@ async function onRemove(id: string): Promise<void> {
 
     <template v-else>
       <p class="ctx">
-        <span v-if="cue.workspace">{{ t('cue.context.workspace') }}: <code>{{ cue.workspace }}</code></span>
+        <span v-if="cue.workspace"
+          >{{ t('cue.context.workspace') }}: <code>{{ cue.workspace }}</code></span
+        >
         <span v-else>{{ t('cue.context.noWorkspace') }}</span>
-        <span v-if="cue.configPath"> ? {{ t('cue.context.config') }}: <code>{{ cue.configPath }}</code></span>
+        <span v-if="cue.configPath">
+          ? {{ t('cue.context.config') }}: <code>{{ cue.configPath }}</code></span
+        >
       </p>
 
       <EmptyState

@@ -35,7 +35,10 @@ const LANG_OPTIONS: { value: ChatLang; key: string }[] = [
 
 function pickLang(lang: ChatLang): void {
   toastedFailure = false;
-  setChatLang(lang, messages.value.map((m) => ({ id: m.id, body: m.body })));
+  setChatLang(
+    lang,
+    messages.value.map((m) => ({ id: m.id, body: m.body })),
+  );
 }
 
 // Translate whatever is currently displayed whenever the set changes while a non-original
@@ -177,7 +180,8 @@ function loadOlder() {
                 v-if="chatLang !== 'original' && !hasTranslation(m.id)"
                 class="pending-tag"
                 :title="t('team.translating')"
-              >...</span>
+                >...</span
+              >
               <span class="time">{{ time(m.createdAt) }}</span>
             </div>
             <p class="text">{{ bodyFor(m) }}</p>
@@ -248,8 +252,13 @@ function loadOlder() {
   animation: tpulse 1.1s var(--ease-in-out) infinite;
 }
 @keyframes tpulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 .stream {
   flex: 1;
@@ -327,7 +336,8 @@ function loadOlder() {
   border-color: var(--green);
   background: var(--green-soft);
 }
-.kind-decision .bubble, .kind-steering .bubble {
+.kind-decision .bubble,
+.kind-steering .bubble {
   border-color: var(--border-strong);
 }
 .head {
@@ -363,11 +373,27 @@ function loadOlder() {
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
 }
-.k-blocker { color: var(--red); border-color: var(--red); }
-.k-signoff { color: var(--green); border-color: var(--green); }
-.k-decision { color: var(--blue); border-color: var(--blue); }
-.k-steering { color: var(--accent); border-color: var(--accent); }
-.k-finding, .k-verification { color: var(--amber); border-color: var(--amber); }
+.k-blocker {
+  color: var(--red);
+  border-color: var(--red);
+}
+.k-signoff {
+  color: var(--green);
+  border-color: var(--green);
+}
+.k-decision {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.k-steering {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.k-finding,
+.k-verification {
+  color: var(--amber);
+  border-color: var(--amber);
+}
 .text {
   margin: var(--space-1) 0 0;
   font-size: var(--text-sm);

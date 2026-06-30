@@ -46,12 +46,9 @@ onBeforeUnmount(() => {
         <span class="dot" aria-hidden="true" />
         <span class="title">{{ title }}</span>
         <code class="tid" :title="termId">{{ termId }}</code>
-        <BaseButton
-          class="close"
-          size="sm"
-          variant="ghost"
-          @click="emit('close')"
-        >{{ t('team.terminal.close') }}</BaseButton>
+        <BaseButton class="close" size="sm" variant="ghost" @click="emit('close')">{{
+          t('team.terminal.close')
+        }}</BaseButton>
       </div>
       <div ref="host" class="host" />
     </div>

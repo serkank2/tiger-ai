@@ -149,8 +149,10 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     send(ws, { type: 'tiger.state', state: orchestrator.getState() });
     send(ws, { type: 'limit.state', state: limits.getState() });
     const teamSnapshot = teamOrchestrator.tryGetState();
-    if (teamSnapshot) send(ws, { type: 'team.state', runId: teamSnapshot.runId, state: toTeamRunStateDto(teamSnapshot) });
-    if (queueService) void queueService.getState().then((queueState) => send(ws, { type: 'queue.state', state: queueState }));
+    if (teamSnapshot)
+      send(ws, { type: 'team.state', runId: teamSnapshot.runId, state: toTeamRunStateDto(teamSnapshot) });
+    if (queueService)
+      void queueService.getState().then((queueState) => send(ws, { type: 'queue.state', state: queueState }));
     ws.on('pong', () => {
       peer.alive = true;
     });
@@ -171,11 +173,23 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
       switch (msg.type) {
         case 'term.attach': {
           if (!isStr(msg.termId) || !manager.getDefinition(msg.termId)) {
-            send(peer.ws, { type: 'term.error', termId: msg.termId, id: msg.id, code: 'UNKNOWN_TERMINAL', message: 'unknown terminal' });
+            send(peer.ws, {
+              type: 'term.error',
+              termId: msg.termId,
+              id: msg.id,
+              code: 'UNKNOWN_TERMINAL',
+              message: 'unknown terminal',
+            });
             break;
           }
           if (peer.attached.size >= MAX_ATTACH) {
-            send(peer.ws, { type: 'term.error', termId: msg.termId, id: msg.id, code: 'TOO_MANY_ATTACHMENTS', message: 'attachment limit reached' });
+            send(peer.ws, {
+              type: 'term.error',
+              termId: msg.termId,
+              id: msg.id,
+              code: 'TOO_MANY_ATTACHMENTS',
+              message: 'attachment limit reached',
+            });
             break;
           }
           // Drain pending output to already-attached peers BEFORE this peer joins, so the

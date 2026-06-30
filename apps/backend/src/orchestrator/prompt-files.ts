@@ -338,7 +338,7 @@ End with a "# Final Decision" section containing EXACTLY one of:
 
 /** System-prompt content keyed by stage. */
 export const SYSTEM_PROMPT_BY_STAGE: Record<StageId, string> = {
-  'brainstorming': P01_BRAINSTORMING,
+  brainstorming: P01_BRAINSTORMING,
   'writing-plan': P02_WRITING_PLAN,
   'writing-tasks': P03_WRITING_TASKS,
   'merge-tasks': P04_MERGE_TASKS,

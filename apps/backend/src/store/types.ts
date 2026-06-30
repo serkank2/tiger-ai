@@ -7,15 +7,7 @@ import type { LimitsPersistedState } from '../limits/types.js';
 export type TerminalId = string;
 export type GroupId = string;
 
-export type ShellKind =
-  | 'system-default'
-  | 'powershell'
-  | 'pwsh'
-  | 'cmd'
-  | 'bash'
-  | 'zsh'
-  | 'fish'
-  | 'custom';
+export type ShellKind = 'system-default' | 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'custom';
 
 export interface ShellSpec {
   kind: ShellKind;

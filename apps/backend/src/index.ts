@@ -67,9 +67,7 @@ const save = () => saveState(state);
 const orchestrator = new Orchestrator(manager, {
   persistence: new MySqlExecutionPersistence(dbPool),
 });
-const runTemplates = new RunTemplateService(new MySqlRunTemplateRepository(dbPool), () =>
-  orchestrator.getConfig(),
-);
+const runTemplates = new RunTemplateService(new MySqlRunTemplateRepository(dbPool), () => orchestrator.getConfig());
 orchestrator.setRunTemplateService(runTemplates);
 const limits = new LimitService({
   manager,
@@ -81,10 +79,15 @@ const limits = new LimitService({
 });
 await limits.initialize();
 const queueService = new QueueService(new MysqlQueueRepository());
-const promptGenerations = createDefaultPromptGenerationService(manager, state, () => orchestrator.getConfig(), () => {
-  const tiger = orchestrator.getState();
-  return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
-});
+const promptGenerations = createDefaultPromptGenerationService(
+  manager,
+  state,
+  () => orchestrator.getConfig(),
+  () => {
+    const tiger = orchestrator.getState();
+    return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
+  },
+);
 
 // AI Team: reusable role/team templates and the autonomous run engine. The team
 // engine drives real CLI turns on the shared TerminalManager (same path Tiger
@@ -236,7 +239,10 @@ let cueEngine: CueEngine | null = null;
 if (config.cue.enabled) {
   cueEngine = new CueEngine({ ctx, workspace: config.cue.workspace || null });
 }
-app.use('/api/cue', createCueRouter(ctx, () => cueEngine));
+app.use(
+  '/api/cue',
+  createCueRouter(ctx, () => cueEngine),
+);
 
 // Central error handler (Express 5 forwards rejected async handlers here).
 app.use(errorHandler());
@@ -252,8 +258,9 @@ queueService.on('state', (s: import('./queue/types.js').QueueState) => {
 });
 metrics.setGauge('queue_depth', () => lastQueueDepth);
 metrics.setGauge('terminal_count', () => state.terminals.length);
-metrics.setGauge('terminal_running_count', () =>
-  state.terminals.filter((t) => manager.getStatus(t.id)?.state === 'running').length,
+metrics.setGauge(
+  'terminal_running_count',
+  () => state.terminals.filter((t) => manager.getStatus(t.id)?.state === 'running').length,
 );
 metrics.setGauge('ws_peers', () => wss.clients.size);
 metrics.setGauge('process_uptime_seconds', () => Math.round(process.uptime()));

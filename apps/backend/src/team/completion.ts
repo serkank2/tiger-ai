@@ -17,13 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import type { FindingsSummary, TaskSummary } from '../orchestrator/types.js';
-import type {
-  DoneGateState,
-  RoleInstance,
-  SignOff,
-  SteeringDirective,
-  VerificationRecord,
-} from './types.js';
+import type { DoneGateState, RoleInstance, SignOff, SteeringDirective, VerificationRecord } from './types.js';
 import type { TeamRoleKind } from './scheduler.js';
 
 // ---------------------------------------------------------------------------

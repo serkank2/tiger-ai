@@ -45,7 +45,13 @@ interface EditableRole {
 }
 
 const isEdit = computed(() => !!props.template && !props.template.builtin);
-const title = computed(() => (props.template ? (props.template.builtin ? t('team.templateEditor.newFromBuiltin') : t('team.templateEditor.editTitle')) : t('team.templateEditor.newTitle')));
+const title = computed(() =>
+  props.template
+    ? props.template.builtin
+      ? t('team.templateEditor.newFromBuiltin')
+      : t('team.templateEditor.editTitle')
+    : t('team.templateEditor.newTitle'),
+);
 
 const name = ref('');
 const description = ref('');
@@ -90,14 +96,32 @@ function toEditable(r: TeamTemplate['roles'][number]): EditableRole {
 function blankRoles(): EditableRole[] {
   return [
     {
-      id: 'lead', name: 'Lead / Coordinator', persona: 'You direct the team, delegate work, and decide when the project is genuinely complete. You do not write code.',
-      responsibilities: 'Break the goal into clear work items\nDelegate to the right role and sequence the work\nConfirm every required sign-off before completion',
-      tool: 'claude', model: '', effort: 'high', permission: 'acceptEdits', canWriteCode: false, requiredForSignoff: true,
+      id: 'lead',
+      name: 'Lead / Coordinator',
+      persona:
+        'You direct the team, delegate work, and decide when the project is genuinely complete. You do not write code.',
+      responsibilities:
+        'Break the goal into clear work items\nDelegate to the right role and sequence the work\nConfirm every required sign-off before completion',
+      tool: 'claude',
+      model: '',
+      effort: 'high',
+      permission: 'acceptEdits',
+      canWriteCode: false,
+      requiredForSignoff: true,
     },
     {
-      id: 'developer', name: 'Developer', persona: 'You implement the agreed work as the smallest correct change that respects the existing conventions, and add or update tests for what you change.',
-      responsibilities: 'Implement assigned work minimally and correctly\nFollow existing style, architecture, and tooling\nWrite or update tests for the code you change',
-      tool: 'claude', model: '', effort: 'high', permission: 'acceptEdits', canWriteCode: true, requiredForSignoff: true,
+      id: 'developer',
+      name: 'Developer',
+      persona:
+        'You implement the agreed work as the smallest correct change that respects the existing conventions, and add or update tests for what you change.',
+      responsibilities:
+        'Implement assigned work minimally and correctly\nFollow existing style, architecture, and tooling\nWrite or update tests for the code you change',
+      tool: 'claude',
+      model: '',
+      effort: 'high',
+      permission: 'acceptEdits',
+      canWriteCode: true,
+      requiredForSignoff: true,
     },
   ];
 }
@@ -206,20 +230,26 @@ async function save() {
       name: r.name.trim() || displayRoleName(roles, r, i),
       description: '',
       persona: r.persona.trim(),
-      responsibilities: r.responsibilities.split('\n').map((s) => s.trim()).filter(Boolean),
+      responsibilities: r.responsibilities
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
       agent: { tool: r.tool, model: r.model, effort: r.effort, permission: r.permission },
       canWriteCode: r.canWriteCode,
       requiredForSignoff: r.requiredForSignoff,
     })),
   };
   try {
-    const saved = isEdit.value && props.template?.id
-      ? await team.updateTemplate(props.template.id, payload)
-      : await team.createTemplate(payload);
+    const saved =
+      isEdit.value && props.template?.id
+        ? await team.updateTemplate(props.template.id, payload)
+        : await team.createTemplate(payload);
     emit('saved', saved);
   } catch (e) {
-    error.value = (e as { data?: { error?: { message?: string } }; message?: string })?.data?.error?.message
-      ?? (e as { message?: string })?.message ?? t('team.templateEditor.saveFailed');
+    error.value =
+      (e as { data?: { error?: { message?: string } }; message?: string })?.data?.error?.message ??
+      (e as { message?: string })?.message ??
+      t('team.templateEditor.saveFailed');
   }
 }
 </script>
@@ -240,13 +270,17 @@ async function save() {
 
       <div class="roles-head">
         <h4>{{ t('team.templateEditor.roles') }}</h4>
-        <BaseButton size="sm" variant="ghost" @click="addRole()">{{ t('team.templateEditor.addDeveloper') }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" @click="addRole()">{{
+          t('team.templateEditor.addDeveloper')
+        }}</BaseButton>
       </div>
 
       <div v-for="(role, i) in roles" :key="i" class="role-card">
         <div class="role-top">
           <TeamAgentBadge :tool="role.tool" />
-          <span class="role-instance" :title="displayRoleName(roles, role, i)">{{ displayRoleName(roles, role, i) }}</span>
+          <span class="role-instance" :title="displayRoleName(roles, role, i)">{{
+            displayRoleName(roles, role, i)
+          }}</span>
           <input v-model="role.name" class="role-name" :placeholder="t('team.templateEditor.roleNamePlaceholder')" />
           <BaseButton
             size="sm"
@@ -254,14 +288,17 @@ async function save() {
             :disabled="isLeadRole(role)"
             :title="t('team.templateEditor.duplicateTitle')"
             @click="addRole(role)"
-          >{{ t('team.launcher.duplicate') }}</BaseButton>
+            >{{ t('team.launcher.duplicate') }}</BaseButton
+          >
           <button
             type="button"
             class="rm"
             :title="t('team.templateEditor.removeRole')"
             :disabled="!canRemoveRole(role)"
             @click="removeRole(i)"
-          >x</button>
+          >
+            x
+          </button>
         </div>
 
         <div class="role-grid">
@@ -276,13 +313,17 @@ async function save() {
           <label class="mini">
             <span>{{ t('team.roleControls.model') }}</span>
             <select v-model="role.model">
-              <option v-for="m in models(role.tool, role.model)" :key="m" :value="m">{{ m || t('team.roleControls.default') }}</option>
+              <option v-for="m in models(role.tool, role.model)" :key="m" :value="m">
+                {{ m || t('team.roleControls.default') }}
+              </option>
             </select>
           </label>
           <label class="mini">
             <span>{{ t('team.roleControls.effort') }}</span>
             <select v-model="role.effort">
-              <option v-for="e in efforts(role.tool, role.effort)" :key="e" :value="e">{{ e || t('team.roleControls.default') }}</option>
+              <option v-for="e in efforts(role.tool, role.effort)" :key="e" :value="e">
+                {{ e || t('team.roleControls.default') }}
+              </option>
             </select>
           </label>
           <label class="mini">
@@ -293,12 +334,27 @@ async function save() {
           </label>
         </div>
 
-        <textarea v-model="role.persona" class="persona" rows="2" :placeholder="t('team.templateEditor.personaPlaceholder')" />
-        <textarea v-model="role.responsibilities" class="resp" rows="2" :placeholder="t('team.templateEditor.responsibilitiesPlaceholder')" />
+        <textarea
+          v-model="role.persona"
+          class="persona"
+          rows="2"
+          :placeholder="t('team.templateEditor.personaPlaceholder')"
+        />
+        <textarea
+          v-model="role.responsibilities"
+          class="resp"
+          rows="2"
+          :placeholder="t('team.templateEditor.responsibilitiesPlaceholder')"
+        />
 
         <div class="flags">
-          <label><input v-model="role.canWriteCode" type="checkbox" /> {{ t('team.templateEditor.mayEditSource') }}</label>
-          <label><input v-model="role.requiredForSignoff" type="checkbox" /> {{ t('team.templateEditor.requiredForSignoff') }}</label>
+          <label
+            ><input v-model="role.canWriteCode" type="checkbox" /> {{ t('team.templateEditor.mayEditSource') }}</label
+          >
+          <label
+            ><input v-model="role.requiredForSignoff" type="checkbox" />
+            {{ t('team.templateEditor.requiredForSignoff') }}</label
+          >
         </div>
       </div>
 
@@ -308,7 +364,9 @@ async function save() {
 
     <template #footer>
       <BaseButton variant="ghost" :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-      <BaseButton variant="primary" :loading="busy" @click="save">{{ isEdit ? t('cue.editor.saveChanges') : t('team.templateEditor.createTemplate') }}</BaseButton>
+      <BaseButton variant="primary" :loading="busy" @click="save">{{
+        isEdit ? t('cue.editor.saveChanges') : t('team.templateEditor.createTemplate')
+      }}</BaseButton>
     </template>
   </BaseModal>
 </template>

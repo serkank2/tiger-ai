@@ -73,7 +73,7 @@ vi.mock('~/components/team/TeamTemplateEditor.vue', () => ({
     props: ['template'],
     emits: ['saved', 'close'],
     template:
-      '<div data-testid="team-template-editor"><span>{{ template ? template.name : "new team template" }}</span><button @click="$emit(\'saved\', { id: \'saved-template\', name: \'Saved\', description: \'\', roles: [] })">save</button></div>',
+      "<div data-testid=\"team-template-editor\"><span>{{ template ? template.name : \"new team template\" }}</span><button @click=\"$emit('saved', { id: 'saved-template', name: 'Saved', description: '', roles: [] })\">save</button></div>",
   },
 }));
 
@@ -292,7 +292,9 @@ describe('TemplatesView', () => {
       load: vi.fn().mockResolvedValue(undefined),
       create: vi.fn().mockResolvedValue(runTemplate({ id: 'created-run', name: 'Focused author run', builtin: false })),
       update: vi.fn().mockResolvedValue(runTemplate({ id: 'custom-run', name: 'Updated custom run', builtin: false })),
-      duplicate: vi.fn().mockResolvedValue(runTemplate({ id: 'copy-run', name: 'Full review run Copy', builtin: false })),
+      duplicate: vi
+        .fn()
+        .mockResolvedValue(runTemplate({ id: 'copy-run', name: 'Full review run Copy', builtin: false })),
       archive: vi.fn().mockResolvedValue(undefined),
       clearFeedback: vi.fn(),
     });
@@ -586,7 +588,9 @@ describe('TemplatesView', () => {
     await flushPromises();
 
     expect(buttonByText(wrapper, 'Save template').attributes('disabled')).toBeDefined();
-    expect(wrapper.findAll('[data-testid="stage-config"]').some((panel) => panel.attributes('data-disabled') === 'false')).toBe(true);
+    expect(
+      wrapper.findAll('[data-testid="stage-config"]').some((panel) => panel.attributes('data-disabled') === 'false'),
+    ).toBe(true);
 
     await wrapper.find('[data-testid="run-template-name"]').setValue('Focused author run');
     await wrapper.find('[data-testid="run-template-description"]').setValue('A reusable authored run.');
@@ -601,7 +605,9 @@ describe('TemplatesView', () => {
         fromStage: 'task-review',
       }),
     );
-    const payload = vi.mocked(mocks.templates.create).mock.calls[0]![0] as { configs: Record<string, TigerStageRunConfig> };
+    const payload = vi.mocked(mocks.templates.create).mock.calls[0]![0] as {
+      configs: Record<string, TigerStageRunConfig>;
+    };
     expect(payload.configs['writing-plan'].claudeAgents).toBe(2);
     expect(payload.configs['writing-plan'].codexAgents).toBe(1);
   });
@@ -619,9 +625,15 @@ describe('TemplatesView', () => {
     await buttonByText(wrapper, 'Edit').trigger('click');
     await flushPromises();
 
-    expect((wrapper.find('[data-testid="run-template-name"]').element as HTMLInputElement).value).toBe('Custom regression run');
-    expect((wrapper.find('[data-testid="run-template-description"]').element as HTMLTextAreaElement).value).toBe('Custom stage preset.');
-    expect((wrapper.find('[data-testid="run-template-from-stage"]').element as HTMLSelectElement).value).toBe('executing-plan');
+    expect((wrapper.find('[data-testid="run-template-name"]').element as HTMLInputElement).value).toBe(
+      'Custom regression run',
+    );
+    expect((wrapper.find('[data-testid="run-template-description"]').element as HTMLTextAreaElement).value).toBe(
+      'Custom stage preset.',
+    );
+    expect((wrapper.find('[data-testid="run-template-from-stage"]').element as HTMLSelectElement).value).toBe(
+      'executing-plan',
+    );
 
     await wrapper.find('[data-testid="run-template-name"]').setValue('Updated custom run');
     await buttonByText(wrapper, 'Save template').trigger('click');

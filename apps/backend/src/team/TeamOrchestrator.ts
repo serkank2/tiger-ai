@@ -408,7 +408,10 @@ export interface TeamSchedulerContext {
 }
 
 export interface TeamScheduler {
-  selectNextTurns(state: TeamRunState, context: TeamSchedulerContext): Promise<TeamSchedulerDecision> | TeamSchedulerDecision;
+  selectNextTurns(
+    state: TeamRunState,
+    context: TeamSchedulerContext,
+  ): Promise<TeamSchedulerDecision> | TeamSchedulerDecision;
 }
 
 export interface TeamCompletionDecision {
@@ -423,7 +426,10 @@ export interface TeamCompletionContext {
 }
 
 export interface TeamCompletionGate {
-  evaluate(state: TeamRunState, context: TeamCompletionContext): Promise<TeamCompletionDecision> | TeamCompletionDecision;
+  evaluate(
+    state: TeamRunState,
+    context: TeamCompletionContext,
+  ): Promise<TeamCompletionDecision> | TeamCompletionDecision;
 }
 
 export interface TeamRoleTurnInput {
@@ -444,6 +450,8 @@ export interface TeamRoleTurnInput {
   assignedTask?: { id: string; title?: string; content: string };
   /** Inbox messages (from `sendMessage` verbs) to surface to this role at this turn. */
   inbox?: { fromRoleId: string; title?: string; body: string; createdAt: string }[];
+  /** True when this role is the resolved Lead for this turn, including fallback Lead roles. */
+  isLeadTurn?: boolean;
 }
 
 /** A task-board directive a turn emitted (claim/complete/block/needs_work/request_review). */
@@ -982,9 +990,12 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
             }
           : undefined,
         steering: input.appliedSteering.map((directive) => directive.body),
-        inbox: input.inbox?.map((m) => (m.title ? `From ${m.fromRoleId} — ${m.title}: ${m.body}` : `From ${m.fromRoleId}: ${m.body}`)),
+        inbox: input.inbox?.map((m) =>
+          m.title ? `From ${m.fromRoleId} — ${m.title}: ${m.body}` : `From ${m.fromRoleId}: ${m.body}`,
+        ),
         completionStatus: input.completionHints,
         transcriptMaxMessages: options.transcriptMaxMessages,
+        isLeadTurn: input.isLeadTurn,
         model: input.role.model,
         effort: input.role.effort,
         permission: input.role.permission,
@@ -1159,7 +1170,10 @@ function toSchedulerTasks(tasks: TaskSummary | null, mode: TeamOrchestrationMode
   };
 }
 
-function toSchedulerFindings(findings: FindingsSummary | null, mode: TeamOrchestrationMode): PureFindingState | undefined {
+function toSchedulerFindings(
+  findings: FindingsSummary | null,
+  mode: TeamOrchestrationMode,
+): PureFindingState | undefined {
   if (!findings || findings.total === 0) return undefined;
   if (mode === 'company') return { open: findings.open, needsFix: findings.fixing, needsVerification: findings.fixed };
   return { open: findings.open, needsFix: findings.fixing };
@@ -1417,6 +1431,10 @@ export function classifyTeamMerge(res: { ok: boolean; stdout: string; stderr: st
   return 'failed';
 }
 
+function teamWorktreeRoot(state: Pick<TeamRunState, 'tigerRoot'>): string {
+  return path.join(state.tigerRoot, 'worktrees');
+}
+
 /**
  * Autonomous AI team run engine. It composes the pure scheduler, one-turn runner,
  * message bus, completion gate, limit checks, file queues, and shared execution
@@ -1492,7 +1510,10 @@ export class TeamOrchestrator extends EventEmitter {
     this.defaultOrchestrationMode = normalizeTeamOrchestrationMode(
       options.orchestrationMode ?? appConfig.team.orchestrationMode,
     );
-    this.maxConcurrentReadOnly = Math.max(1, options.maxConcurrentReadOnly ?? appConfig.team.maxConcurrentReadOnly ?? 2);
+    this.maxConcurrentReadOnly = Math.max(
+      1,
+      options.maxConcurrentReadOnly ?? appConfig.team.maxConcurrentReadOnly ?? 2,
+    );
     this.maxConcurrentWrite = Math.max(1, options.maxConcurrentWrite ?? appConfig.team.maxConcurrentWrite ?? 1);
     this.scheduler = options.scheduler ?? new LeadOwnedScheduler(this.maxIdleLeadTurns);
     this.runner = options.runner ?? new MissingTeamTurnRunner();
@@ -1672,7 +1693,12 @@ export class TeamOrchestrator extends EventEmitter {
 
   async steer(body: string, from: MessageSender = USER_SENDER): Promise<TeamMessage> {
     const state = this.requireState();
-    if (state.status !== 'running' && state.status !== 'paused' && state.status !== 'interrupted' && state.status !== 'blocked') {
+    if (
+      state.status !== 'running' &&
+      state.status !== 'paused' &&
+      state.status !== 'interrupted' &&
+      state.status !== 'blocked'
+    ) {
       throw httpError(409, `cannot steer a ${state.status} team run`);
     }
     const text = body.trim();
@@ -1711,7 +1737,7 @@ export class TeamOrchestrator extends EventEmitter {
     const idledWaiting = isWaitingStatus || (state.status !== 'paused' && state.status !== 'running' && !this.loop);
     state.message = idledWaiting
       ? 'Your prompt was queued for the Lead; resuming the run so the Lead picks it up.'
-      : 'Your prompt was queued for the Lead and will be picked up on the Lead\'s next turn.';
+      : "Your prompt was queued for the Lead and will be picked up on the Lead's next turn.";
     await this.persistState();
     this.emitState();
     // Auto-resume an idled run so a new Lead prompt makes it continue WITHOUT a separate manual
@@ -1812,6 +1838,7 @@ export class TeamOrchestrator extends EventEmitter {
         const worktree: Worktree = await createWorktree({
           repoDir: state.workspace,
           taskId: `${state.runId}-attempt-${attemptNumber}`,
+          rootDir: teamWorktreeRoot(state),
         });
         attempt.branch = worktree.branch;
         attempt.baseRef = worktree.baseRef;
@@ -2220,7 +2247,8 @@ export class TeamOrchestrator extends EventEmitter {
     const state = this.requireState();
     const role = state.roles.find((entry) => entry.id === roleId);
     if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
-    if (role.id === this.leadRoleId()) throw httpError(409, 'the Lead role cannot be paused; pause the whole run instead');
+    if (role.id === this.leadRoleId())
+      throw httpError(409, 'the Lead role cannot be paused; pause the whole run instead');
     if (role.status !== 'paused') {
       role.status = 'paused';
       role.statusNote = reason;
@@ -2496,7 +2524,10 @@ export class TeamOrchestrator extends EventEmitter {
         if (decision.turns.length === 0) {
           // No Lead-approved worker task and nothing for the Lead to act on → wait/idle.
           // The run stays resumable (sessions alive); a new user prompt or resume restarts it.
-          await this.finishRun('blocked', decision.reason ?? 'No Lead-assigned work or user prompt is pending; the team is waiting.');
+          await this.finishRun(
+            'blocked',
+            decision.reason ?? 'No Lead-assigned work or user prompt is pending; the team is waiting.',
+          );
           return;
         }
         turns = decision.turns;
@@ -2612,6 +2643,7 @@ export class TeamOrchestrator extends EventEmitter {
         findingId: scheduled.findingId,
         completionHints: gate.complete ? [] : gate.reasons,
         inbox: inbox.length ? inbox : undefined,
+        isLeadTurn: role.id === this.leadRoleId(),
       });
       if (signal.aborted || this.state?.status !== 'running') {
         this.interruptTurn(turn, 'Interrupted before the turn result could be applied.');
@@ -2680,7 +2712,12 @@ export class TeamOrchestrator extends EventEmitter {
     // branches from a committed ref and would show an EMPTY diff, making reviewers falsely conclude
     // "no work was done" and forcing pointless re-planning.
     if (!task || !isRepo || !this.roleCanWrite(turn.roleId)) {
-      return decideTeamTurnCwd({ workspace: state.workspace, enabled: this.worktreePerTask, isRepo, worktreePath: null });
+      return decideTeamTurnCwd({
+        workspace: state.workspace,
+        enabled: this.worktreePerTask,
+        isRepo,
+        worktreePath: null,
+      });
     }
     try {
       const worktree = await createWorktree({
@@ -2689,6 +2726,7 @@ export class TeamOrchestrator extends EventEmitter {
         // across multiple turns previously reused `runId-taskId`, whose branch is not deleted on
         // merge, so the second `git worktree add` collided and failed ("could not isolate …").
         taskId: `${state.runId}-${task.id}-${turn.id}`,
+        rootDir: teamWorktreeRoot(state),
       });
       this.turnWorktrees.set(turn.id, worktree);
       state.taskWorktrees ??= [];
@@ -2728,7 +2766,11 @@ export class TeamOrchestrator extends EventEmitter {
    * failure) ABORTS the merge, marks the task blocked, keeps the worktree + branch intact, and
    * surfaces a blocker. Never auto-resolves. No-op when no worktree was created for this turn.
    */
-  private async mergeBackTurnWorktree(turn: TeamTurnRecord, role: TeamRoleInstance, task: AgentTask | null): Promise<void> {
+  private async mergeBackTurnWorktree(
+    turn: TeamTurnRecord,
+    role: TeamRoleInstance,
+    task: AgentTask | null,
+  ): Promise<void> {
     const worktree = this.turnWorktrees.get(turn.id);
     if (!worktree) return;
     this.turnWorktrees.delete(turn.id);
@@ -2827,7 +2869,9 @@ export class TeamOrchestrator extends EventEmitter {
     await this.ensureLoaded(runId);
     const state = this.requireState();
     state.taskWorktrees ??= [];
-    const record = state.taskWorktrees.find((w) => w.taskId === taskId && (w.status === 'conflict' || w.status === 'failed'));
+    const record = state.taskWorktrees.find(
+      (w) => w.taskId === taskId && (w.status === 'conflict' || w.status === 'failed'),
+    );
     if (!record) throw httpError(404, `no un-merged worktree for task ${taskId}`);
     if (!(await isGitRepo(state.workspace).catch(() => false))) {
       throw httpError(409, 'the workspace is not a git repository');
@@ -2851,7 +2895,10 @@ export class TeamOrchestrator extends EventEmitter {
       record.note = `merge ${outcome}: ${detail}`;
       await this.persistState();
       this.emitState();
-      throw httpError(409, `branch "${record.branch}" still conflicts; the merge was aborted (worktree kept). ${detail}`.trim());
+      throw httpError(
+        409,
+        `branch "${record.branch}" still conflicts; the merge was aborted (worktree kept). ${detail}`.trim(),
+      );
     }
     record.status = 'merged';
     record.mergedAt = nowIso();
@@ -2898,7 +2945,11 @@ export class TeamOrchestrator extends EventEmitter {
     this.requireState().inboxes![roleId] = inbox.filter((m) => !drop.has(m.id));
   }
 
-  private async applyTurnResult(turn: TeamTurnRecord, role: TeamRoleInstance, result: TeamRoleTurnResult): Promise<void> {
+  private async applyTurnResult(
+    turn: TeamTurnRecord,
+    role: TeamRoleInstance,
+    result: TeamRoleTurnResult,
+  ): Promise<void> {
     const state = this.requireState();
     // Self-recovery: the role's CLI died this turn and was evicted. Track it as a health signal
     // and surface a visible notice so the user sees the system auto-restarting the agent instead
@@ -2977,7 +3028,8 @@ export class TeamOrchestrator extends EventEmitter {
       }
       for (const verification of structuredVerifications) {
         const completedAt = nowIso();
-        const status = verification.outcome === 'passed' ? 'passed' : verification.outcome === 'failed' ? 'failed' : 'skipped';
+        const status =
+          verification.outcome === 'passed' ? 'passed' : verification.outcome === 'failed' ? 'failed' : 'skipped';
         state.verifications.push({
           id: nanoid(),
           roleId: verification.roleId ?? role.id,
@@ -3032,7 +3084,9 @@ export class TeamOrchestrator extends EventEmitter {
     // needs_work/request_review). The message-bus parses these; previously the orchestrator
     // dropped them. They mutate the board + run state so a role can drive a task's lifecycle
     // explicitly rather than only via the implicit claim-on-schedule / file-on-complete flow.
-    const directiveEffects = authorityAllowed ? await this.applyTaskDirectives(turn, role, result.taskDirectives ?? []) : 0;
+    const directiveEffects = authorityAllowed
+      ? await this.applyTaskDirectives(turn, role, result.taskDirectives ?? [])
+      : 0;
 
     // Materialize this turn's Lead-approved `task` assignments into the target role's todo
     // queue. Only the Lead may delegate executable work; lateral non-Lead delegation and
@@ -3041,7 +3095,9 @@ export class TeamOrchestrator extends EventEmitter {
 
     // Apply the explicit coordination verbs (handoff/assign/sendMessage) this turn emitted,
     // on top of the existing board + scheduler. Counts toward Lead productivity.
-    const coordinationEffects = authorityAllowed ? await this.applyCoordinationDirectives(turn, role, result.coordinationDirectives ?? []) : 0;
+    const coordinationEffects = authorityAllowed
+      ? await this.applyCoordinationDirectives(turn, role, result.coordinationDirectives ?? [])
+      : 0;
 
     turn.status = result.status;
     turn.endedAt = nowIso();
@@ -3127,7 +3183,8 @@ export class TeamOrchestrator extends EventEmitter {
     });
     if (decision.complete) {
       if (isCompanyMode(state) && state.projectComplete !== true) {
-        const message = 'All completion gates passed; waiting for the Lead to emit an explicit project-complete decision.';
+        const message =
+          'All completion gates passed; waiting for the Lead to emit an explicit project-complete decision.';
         if (state.message !== message) {
           state.message = message;
           await this.persistState();
@@ -3139,7 +3196,10 @@ export class TeamOrchestrator extends EventEmitter {
       return true;
     }
     if (decision.terminalStatus) {
-      await this.finishRun(decision.terminalStatus, decision.reasons.join('; ') || `Run ended as ${decision.terminalStatus}.`);
+      await this.finishRun(
+        decision.terminalStatus,
+        decision.reasons.join('; ') || `Run ended as ${decision.terminalStatus}.`,
+      );
       return true;
     }
     return false;
@@ -3149,10 +3209,19 @@ export class TeamOrchestrator extends EventEmitter {
     if (result.status !== 'completed') return true;
     if ((result.verifications ?? []).some((verification) => verification.outcome !== 'passed')) return true;
     if (result.verification && result.verification.status !== 'passed') return true;
-    if ((result.taskDirectives ?? []).some((directive) => directive.action === 'block' || directive.action === 'needs_work' || directive.action === 'request_review')) {
+    if (
+      (result.taskDirectives ?? []).some(
+        (directive) =>
+          directive.action === 'block' || directive.action === 'needs_work' || directive.action === 'request_review',
+      )
+    ) {
       return true;
     }
-    return messages.some((message) => message.kind === 'blocker' || (message.kind === 'verification' && inferVerificationOutcome(message.body) !== 'passed'));
+    return messages.some(
+      (message) =>
+        message.kind === 'blocker' ||
+        (message.kind === 'verification' && inferVerificationOutcome(message.body) !== 'passed'),
+    );
   }
 
   private async pauseIfRequested(): Promise<boolean> {
@@ -3219,7 +3288,12 @@ export class TeamOrchestrator extends EventEmitter {
     if (matching) Object.assign(matching, turn);
   }
 
-  private recordSignoff(role: TeamRoleInstance, message?: TeamMessage, createdAt = nowIso(), messageId = message?.id): void {
+  private recordSignoff(
+    role: TeamRoleInstance,
+    message?: TeamMessage,
+    createdAt = nowIso(),
+    messageId = message?.id,
+  ): void {
     this.requireState().signoffs.push({
       id: nanoid(),
       roleId: role.id,
@@ -3357,7 +3431,11 @@ export class TeamOrchestrator extends EventEmitter {
 
   /** Derive a concise task title from an assignment message body. */
   private taskTitle(body: string): string {
-    const firstLine = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? 'Task';
+    const firstLine =
+      body
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean) ?? 'Task';
     return firstLine.slice(0, 120);
   }
 
@@ -3451,7 +3529,7 @@ export class TeamOrchestrator extends EventEmitter {
 
   private async materializeKindQueuedTasks(excludeRoleId?: string): Promise<void> {
     const state = this.requireState();
-    if (!isCompanyMode(state) || !this.taskBoard || !(state.kindQueuedTasks?.length)) return;
+    if (!isCompanyMode(state) || !this.taskBoard || !state.kindQueuedTasks?.length) return;
     const remaining: TeamKindQueuedTask[] = [];
     const reserved = new Set<string>();
     for (const queued of state.kindQueuedTasks) {
@@ -3843,8 +3921,7 @@ export class TeamOrchestrator extends EventEmitter {
     }
     await this.refreshWorkQueues();
     if (reclaimedTasks.length > 0 || reclaimedFindings.length > 0) {
-      this.requireState().message =
-        `Reconciled ${reclaimedTasks.length} stale task claim(s) and ${reclaimedFindings.length} stale finding claim(s).`;
+      this.requireState().message = `Reconciled ${reclaimedTasks.length} stale task claim(s) and ${reclaimedFindings.length} stale finding claim(s).`;
     }
     this.requireState().pendingSteeringCount = this.countPendingSteering();
     await this.syncMessageCount();
@@ -3970,7 +4047,7 @@ export class TeamOrchestrator extends EventEmitter {
       const provider = mostCommonProvider(state);
       logger.child({ mod: 'team', runId: state.runId }).info('team run finished', {
         status,
-        completionMethod: status === 'completed' ? 'done-gate' : reason ?? status,
+        completionMethod: status === 'completed' ? 'done-gate' : (reason ?? status),
         durationMs: metrics.durationMs,
         turns: metrics.turnCount,
         provider,
@@ -4041,8 +4118,9 @@ export class TeamOrchestrator extends EventEmitter {
 
   private persistState(): Promise<void> {
     const snapshot = clone(this.requireState());
-    const run = this.persistGate.then(() => this.teamPersistence.saveRun(snapshot), () =>
-      this.teamPersistence.saveRun(snapshot),
+    const run = this.persistGate.then(
+      () => this.teamPersistence.saveRun(snapshot),
+      () => this.teamPersistence.saveRun(snapshot),
     );
     this.persistGate = run.then(
       () => undefined,
@@ -4184,8 +4262,7 @@ function normalizeLoadedState(value: TeamRunState | null): TeamRunState | null {
     currentTurn: value.currentTurn ?? null,
     closed: value.closed === true,
     leadReviewPending: value.leadReviewPending === true,
-    consecutiveIdleLeadTurns:
-      typeof value.consecutiveIdleLeadTurns === 'number' ? value.consecutiveIdleLeadTurns : 0,
+    consecutiveIdleLeadTurns: typeof value.consecutiveIdleLeadTurns === 'number' ? value.consecutiveIdleLeadTurns : 0,
     pendingSteeringCount: Array.isArray(value.directives)
       ? value.directives.filter((directive) => directive.status === 'pending').length
       : 0,
@@ -4221,7 +4298,10 @@ function compareTaskCandidates(a: { roleId: string; head: AgentTask }, b: { role
 }
 
 function isProjectCompleteDecision(message: TeamMessage): boolean {
-  return message.kind === 'decision' && /\b(project[-\s]+complete|complete[-\s]+project|project\s+is\s+complete)\b/i.test(message.body);
+  return (
+    message.kind === 'decision' &&
+    /\b(project[-\s]+complete|complete[-\s]+project|project\s+is\s+complete)\b/i.test(message.body)
+  );
 }
 
 function latestVerification(state: TeamRunState): TeamVerificationRecord | null {
@@ -4248,7 +4328,12 @@ export function computeRunMetrics(state: TeamRunState): import('./types.js').Tea
     const dur = turnDurationMs(turn);
     totalDuration += dur;
     const role = state.roles.find((r) => r.id === turn.roleId);
-    const entry = byRole.get(turn.roleId) ?? { roleName: turn.roleName, provider: role?.tool, turnCount: 0, durationMs: 0 };
+    const entry = byRole.get(turn.roleId) ?? {
+      roleName: turn.roleName,
+      provider: role?.tool,
+      turnCount: 0,
+      durationMs: 0,
+    };
     entry.turnCount += 1;
     entry.durationMs += dur;
     byRole.set(turn.roleId, entry);
@@ -4319,7 +4404,9 @@ function renderRunMarkdown(run: TeamRunExportJson): string {
   lines.push('', '## Sign-offs', '');
   if (run.signoffs.length === 0) lines.push('_None recorded._');
   for (const s of run.signoffs) {
-    lines.push(`- ${s.roleName} (${s.roleId}) — ${s.stale ? `stale: ${s.staleReason ?? ''}` : 'fresh'} (${s.createdAt})`);
+    lines.push(
+      `- ${s.roleName} (${s.roleId}) — ${s.stale ? `stale: ${s.staleReason ?? ''}` : 'fresh'} (${s.createdAt})`,
+    );
   }
   lines.push('', '## Transcript', '');
   for (const m of run.messages) {
@@ -4331,7 +4418,11 @@ function renderRunMarkdown(run: TeamRunExportJson): string {
 
 /** A short display name derived from a run goal (mirrors snapshot.deriveRunName). */
 function deriveRunNameFromGoal(goal: string): string {
-  const firstLine = goal.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  const firstLine =
+    goal
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
   if (!firstLine) return 'Team Run';
   return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
 }
@@ -4488,18 +4579,23 @@ function inferVerificationOutcome(body: string): TeamVerificationStatus {
   const lower = body.toLowerCase();
   const neutralized = lower
     // "0 errors", "no failures", "zero warnings", "without errors", "free of regressions"
-    .replace(/\b(?:0|no|zero|without|free\s+of|free\s+from)\s+(?:open\s+)?(?:errors?|failures?|failing|warnings?|regressions?|issues?)\b/g, ' ')
+    .replace(
+      /\b(?:0|no|zero|without|free\s+of|free\s+from)\s+(?:open\s+)?(?:errors?|failures?|failing|warnings?|regressions?|issues?)\b/g,
+      ' ',
+    )
     // "all tests pass", "did pass", "tests passed" — keep positive phrasing from tripping fail words
     .replace(/\b(?:all\s+)?(?:tests?|checks?|builds?)\s+pass(?:ed|ing)?\b/g, ' ');
-  const failed = /\b(fail|failed|failing|failure|error|errored|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/.test(
-    neutralized,
-  );
+  const failed =
+    /\b(fail|failed|failing|failure|error|errored|broke|broken|did ?n['o]t pass|does ?n['o]t pass|not pass|unmet|regress)/.test(
+      neutralized,
+    );
   if (failed) return 'failed';
   // An explicit, affirmative pass signal in the ORIGINAL text (the neutralizer strips some of
   // these for the fail check, so test the raw lowercased body here).
-  const passed = /\b(pass|passed|passing|succeed|succeeded|success|successful|green|ok|all good|works?|working|verified|no (?:errors?|failures?|issues?))\b/.test(
-    lower,
-  );
+  const passed =
+    /\b(pass|passed|passing|succeed|succeeded|success|successful|green|ok|all good|works?|working|verified|no (?:errors?|failures?|issues?))\b/.test(
+      lower,
+    );
   // Ambiguous prose with no clear signal → inconclusive (blocks the done-gate), never `passed`.
   return passed ? 'passed' : 'skipped';
 }

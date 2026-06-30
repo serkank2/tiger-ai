@@ -112,7 +112,9 @@ onMounted(() => void team.loadRuns());
       <header class="h-head">
         <strong>{{ t('team.history.title') }}</strong>
         <div class="h-actions">
-          <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">{{ t('common.refresh') }}</BaseButton>
+          <BaseButton size="sm" variant="ghost" :loading="loading" @click="team.loadRuns()">{{
+            t('common.refresh')
+          }}</BaseButton>
           <BaseButton size="sm" variant="ghost" @click="emit('close')">{{ t('team.history.close') }}</BaseButton>
         </div>
       </header>
@@ -146,9 +148,22 @@ onMounted(() => void team.loadRuns());
               :loading="team.isBusy(`open:${r.runId}`)"
               :disabled="r.runId === activeRunId && !team.readOnly"
               @click="open(r.runId)"
-            >{{ t('common.open') }}</BaseButton>
-            <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json', r.runId)">JSON</BaseButton>
-            <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown', r.runId)">MD</BaseButton>
+              >{{ t('common.open') }}</BaseButton
+            >
+            <BaseButton
+              size="sm"
+              variant="ghost"
+              :title="t('team.export.jsonTooltip')"
+              @click="team.exportRun('json', r.runId)"
+              >JSON</BaseButton
+            >
+            <BaseButton
+              size="sm"
+              variant="ghost"
+              :title="t('team.export.markdownTooltip')"
+              @click="team.exportRun('markdown', r.runId)"
+              >MD</BaseButton
+            >
           </div>
         </li>
       </ul>
@@ -182,7 +197,10 @@ onMounted(() => void team.loadRuns());
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
-.h-actions { display: flex; gap: var(--space-1); }
+.h-actions {
+  display: flex;
+  gap: var(--space-1);
+}
 .h-state {
   display: flex;
   align-items: center;
@@ -190,7 +208,12 @@ onMounted(() => void team.loadRuns());
   padding: var(--space-4);
   color: var(--text-dim);
 }
-.run-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+.run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+}
 .run {
   display: flex;
   align-items: center;
@@ -199,10 +222,26 @@ onMounted(() => void team.loadRuns());
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
-.run.current { background: var(--bg-elev); }
-.r-main { min-width: 0; flex: 1; }
-.r-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.r-name { font-weight: 600; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run.current {
+  background: var(--bg-elev);
+}
+.r-main {
+  min-width: 0;
+  flex: 1;
+}
+.r-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.r-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .r-status {
   font-size: var(--text-xs);
   font-weight: 700;
@@ -213,13 +252,43 @@ onMounted(() => void team.loadRuns());
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
 }
-.st-running { color: var(--accent); border-color: var(--accent); }
-.st-completed { color: var(--green); border-color: var(--green); }
-.st-failed { color: var(--red); border-color: var(--red); }
-.st-blocked, .st-interrupted { color: var(--amber); border-color: var(--amber); }
-.r-live { font-size: var(--text-xs); color: var(--green); }
-.r-meta { display: flex; gap: var(--space-2); margin-top: 2px; font-size: var(--text-xs); color: var(--text-faint); }
-.r-when { margin-left: auto; }
-.r-controls { display: flex; gap: var(--space-1); flex: none; }
-.h-state.empty { color: var(--text-dim); }
+.st-running {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.st-completed {
+  color: var(--green);
+  border-color: var(--green);
+}
+.st-failed {
+  color: var(--red);
+  border-color: var(--red);
+}
+.st-blocked,
+.st-interrupted {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.r-live {
+  font-size: var(--text-xs);
+  color: var(--green);
+}
+.r-meta {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.r-when {
+  margin-left: auto;
+}
+.r-controls {
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
+}
+.h-state.empty {
+  color: var(--text-dim);
+}
 </style>

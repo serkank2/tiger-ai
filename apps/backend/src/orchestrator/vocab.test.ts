@@ -14,8 +14,10 @@ test('review status vocabulary matches the spec exactly', () => {
 });
 
 test('final decision vocabulary matches the spec exactly', () => {
-  assert.deepEqual(
-    [...FINAL_DECISIONS].sort(),
-    ['approved', 'major_fixes_required', 'minor_fixes_required', 'rejected'],
-  );
+  assert.deepEqual([...FINAL_DECISIONS].sort(), [
+    'approved',
+    'major_fixes_required',
+    'minor_fixes_required',
+    'rejected',
+  ]);
 });

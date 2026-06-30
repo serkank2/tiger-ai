@@ -70,7 +70,7 @@ function roleDisplayName(index: number): string {
 const terminalRoleTitle = computed(() => {
   const roles = state.value?.roles ?? [];
   const index = roles.findIndex((role) => role.id === terminalRole.value?.id);
-  return index >= 0 ? roleDisplayName(index) : terminalRole.value?.name ?? '';
+  return index >= 0 ? roleDisplayName(index) : (terminalRole.value?.name ?? '');
 });
 
 const dialog = useDialog();
@@ -158,7 +158,11 @@ async function reset() {
       <div class="title-group">
         <BaseButton variant="ghost" size="sm" @click="emit('back')">{{ t('team.run.backToTerminals') }}</BaseButton>
         <span class="brand">{{ t('team.run.brand') }}</span>
-        <span class="conn" :class="{ ok: connected }" :title="connected ? t('common.status.live') : t('common.status.disconnected')" />
+        <span
+          class="conn"
+          :class="{ ok: connected }"
+          :title="connected ? t('common.status.live') : t('common.status.disconnected')"
+        />
       </div>
 
       <div v-if="state" class="run-meta">
@@ -186,14 +190,16 @@ async function reset() {
           size="sm"
           :loading="team.isBusy(`pause:${state.id}`)"
           @click="team.pause(state.id)"
-        >{{ t('team.controls.pause') }}</BaseButton>
+          >{{ t('team.controls.pause') }}</BaseButton
+        >
         <BaseButton
           v-if="canResume"
           size="sm"
           variant="primary"
           :loading="team.isBusy(`resume:${state.id}`)"
           @click="team.resume(state.id)"
-        >{{ t('team.controls.resume') }}</BaseButton>
+          >{{ t('team.controls.resume') }}</BaseButton
+        >
         <BaseButton
           v-if="canStop"
           size="sm"
@@ -201,7 +207,8 @@ async function reset() {
           :loading="team.isBusy(`stop:${state.id}`)"
           :title="t('team.controls.haltTitle')"
           @click="team.stop(state.id)"
-        >{{ t('team.controls.stop') }}</BaseButton>
+          >{{ t('team.controls.stop') }}</BaseButton
+        >
         <BaseButton
           v-if="hasLiveSessions"
           size="sm"
@@ -209,23 +216,32 @@ async function reset() {
           :loading="team.isBusy(`close:${state.id}`)"
           :title="t('team.controls.closeTitle')"
           @click="closeRun(state.id)"
-        >{{ t('team.controls.close') }}</BaseButton>
+          >{{ t('team.controls.close') }}</BaseButton
+        >
         <BaseButton
           v-if="!readOnly"
           size="sm"
           variant="ghost"
           :title="t('team.controls.changesTitle')"
           @click="openChanges"
-        >{{ t('team.controls.changes') }}</BaseButton>
+          >{{ t('team.controls.changes') }}</BaseButton
+        >
+        <BaseButton size="sm" variant="ghost" :title="t('team.controls.historyTitle')" @click="showHistory = true">{{
+          t('team.controls.history')
+        }}</BaseButton>
+        <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json')"
+          >JSON</BaseButton
+        >
         <BaseButton
           size="sm"
           variant="ghost"
-          :title="t('team.controls.historyTitle')"
-          @click="showHistory = true"
-        >{{ t('team.controls.history') }}</BaseButton>
-        <BaseButton size="sm" variant="ghost" :title="t('team.export.jsonTooltip')" @click="team.exportRun('json')">JSON</BaseButton>
-        <BaseButton size="sm" variant="ghost" :title="t('team.export.markdownTooltip')" @click="team.exportRun('markdown')">MD</BaseButton>
-        <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">{{ t('team.run.newRun') }}</BaseButton>
+          :title="t('team.export.markdownTooltip')"
+          @click="team.exportRun('markdown')"
+          >MD</BaseButton
+        >
+        <BaseButton v-if="!isActive && !readOnly" size="sm" variant="ghost" @click="reset">{{
+          t('team.run.newRun')
+        }}</BaseButton>
       </div>
     </header>
 
@@ -249,7 +265,8 @@ async function reset() {
             class="manage-toggle"
             :title="showRoleControls ? t('team.controls.hideRoleControls') : t('team.controls.manageRoleControls')"
             @click="showRoleControls = !showRoleControls"
-          >{{ showRoleControls ? t('team.controls.done') : t('team.controls.manage') }}</BaseButton>
+            >{{ showRoleControls ? t('team.controls.done') : t('team.controls.manage') }}</BaseButton
+          >
         </div>
         <div v-if="showRoleControls" class="roles">
           <TeamRoleControls
@@ -307,9 +324,9 @@ async function reset() {
 
 <style scoped>
 .team {
-  --text-xs: 16px;
-  --text-sm: 16px;
-  --text-md: 16px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 15px;
   --text-dim: #cfc3b3;
   --text-faint: #b9ad9d;
   position: relative;
@@ -338,10 +355,10 @@ async function reset() {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-1-5) var(--space-3);
   border-bottom: 1px solid var(--border);
-  min-height: var(--bar-h);
+  min-height: calc(var(--bar-h) - var(--space-2));
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%),
     color-mix(in srgb, var(--bg-elev) 92%, var(--bg) 8%);
@@ -363,7 +380,7 @@ async function reset() {
 .title-group {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   flex: none;
 }
 .brand {
@@ -393,15 +410,15 @@ async function reset() {
 .run-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  margin-left: var(--space-2);
+  gap: var(--space-1-5);
+  margin-left: var(--space-1);
   min-width: 0;
-  flex: 1 1 26rem;
+  flex: 1 1 22rem;
 }
 .run-name {
   font-size: var(--text-sm);
   color: var(--text-dim);
-  max-width: 42ch;
+  max-width: 34ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -410,10 +427,10 @@ async function reset() {
 .status-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   font-size: var(--text-xs);
   font-weight: 700;
-  padding: 2px 8px;
+  padding: 1px 6px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
@@ -429,11 +446,28 @@ async function reset() {
   background: currentColor;
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
 }
-.st-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 64%, var(--border)); }
-.st-completed { color: var(--green); border-color: color-mix(in srgb, var(--green) 64%, var(--border)); }
-.st-failed { color: var(--red); border-color: color-mix(in srgb, var(--red) 64%, var(--border)); }
-.st-blocked, .st-interrupted { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 64%, var(--border)); }
-.st-paused, .st-stopped { color: var(--slate); border-color: color-mix(in srgb, var(--slate) 64%, var(--border)); }
+.st-running {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+}
+.st-completed {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 64%, var(--border));
+}
+.st-failed {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 64%, var(--border));
+}
+.st-blocked,
+.st-interrupted {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 64%, var(--border));
+}
+.st-paused,
+.st-stopped {
+  color: var(--slate);
+  border-color: color-mix(in srgb, var(--slate) 64%, var(--border));
+}
 .st-running .chip-dot,
 .st-blocked .chip-dot {
   animation: chip-breathe 1.8s var(--ease-in-out) infinite;
@@ -441,19 +475,19 @@ async function reset() {
 .progress-meter {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  padding: 2px 8px;
+  padding: 1px 6px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--bg-elev-2) 48%, transparent);
 }
 .controls {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-1);
   margin-left: auto;
   flex-wrap: wrap;
   align-items: center;
@@ -486,7 +520,7 @@ async function reset() {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
+  grid-template-columns: minmax(232px, 292px) 1fr;
   min-height: 0;
   flex: 1;
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 24%, transparent), transparent 180px);
@@ -494,11 +528,15 @@ async function reset() {
 .rail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2);
   border-right: 1px solid var(--border);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 82%, transparent), color-mix(in srgb, var(--bg) 72%, transparent)),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-elev) 82%, transparent),
+      color-mix(in srgb, var(--bg) 72%, transparent)
+    ),
     var(--bg);
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--text) 3%, transparent);
   overflow-y: auto;
@@ -523,7 +561,7 @@ async function reset() {
 .roles {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
 }
 .artifacts {
   margin-top: var(--space-2);
@@ -559,8 +597,8 @@ async function reset() {
 @media (max-width: 720px) {
   .team-header {
     align-items: stretch;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    gap: var(--space-1-5);
+    padding: var(--space-1-5) var(--space-2);
   }
   .title-group,
   .run-meta,
@@ -631,7 +669,7 @@ async function reset() {
 }
 .tile-leave-active {
   position: absolute;
-  width: calc(100% - 2 * var(--space-3));
+  width: calc(100% - 2 * var(--space-2));
 }
 .tile-move {
   transition: transform var(--dur-base) var(--ease-standard);

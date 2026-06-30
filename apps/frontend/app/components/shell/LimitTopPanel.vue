@@ -110,9 +110,8 @@ const providerChips = computed(() =>
       checkedLabel: checkedLabel(backend?.latestCheckedAt ?? current?.checkedAt ?? null),
       message: unsupported ?? backend?.error ?? latest.find((item) => item.error)?.error ?? null,
       sparklinePoints: sparklinePoints(series),
-      historyCount: sortSnapshotsNewestFirst(
-        limits.snapshots.filter((snapshot) => snapshot.provider === provider),
-      ).length,
+      historyCount: sortSnapshotsNewestFirst(limits.snapshots.filter((snapshot) => snapshot.provider === provider))
+        .length,
       windows: latest.map((snapshot) => ({
         snapshot,
         percent: normalizedPercent(snapshot.percentUsed),
@@ -121,12 +120,20 @@ const providerChips = computed(() =>
         stale: isSnapshotStale(snapshot, limits.staleAfterMs, nowMs.value),
         severity: severityForPercent(snapshot.percentUsed),
       })),
-      title: buildTitle(labels[provider], latest, statusLabel(status), resetText, message(unsupported, backend?.error, latest)),
+      title: buildTitle(
+        labels[provider],
+        latest,
+        statusLabel(status),
+        resetText,
+        message(unsupported, backend?.error, latest),
+      ),
     };
   }),
 );
 
-const expandedChip = computed(() => providerChips.value.find((chip) => chip.provider === expandedProvider.value) ?? null);
+const expandedChip = computed(
+  () => providerChips.value.find((chip) => chip.provider === expandedProvider.value) ?? null,
+);
 
 function hydrateLimits(): void {
   if (!limits.loaded && !limits.loading) void limits.load().catch(() => {});
@@ -237,7 +244,12 @@ function unsupportedMessage(provider: TigerAgentType, latest: LimitSnapshot[], b
   const snapshotError = latest.find((snapshot) => snapshot.error)?.error;
   const msg = backendError ?? snapshotError ?? '';
   const lower = msg.toLowerCase();
-  if (lower.includes('unsupported') || lower.includes('no usage') || lower.includes('no limit') || lower.includes('agy')) {
+  if (
+    lower.includes('unsupported') ||
+    lower.includes('no usage') ||
+    lower.includes('no limit') ||
+    lower.includes('agy')
+  ) {
     return msg || t('limits.panel.antigravityUnsupported');
   }
   if (!latest.length) return t('limits.panel.antigravityUnsupported');
@@ -254,7 +266,9 @@ function sparklineSeries(provider: TigerAgentType, windowKey: string | null): nu
     .filter((snapshot) => snapshot.ok && normalizedPercent(snapshot.percentUsed) !== null)
     .sort((a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt))
     .slice(-12);
-  return items.map((snapshot) => normalizedPercent(snapshot.percentUsed)).filter((value): value is number => value !== null);
+  return items
+    .map((snapshot) => normalizedPercent(snapshot.percentUsed))
+    .filter((value): value is number => value !== null);
 }
 
 function sparklinePoints(values: number[]): string {
@@ -275,7 +289,8 @@ function roundCoord(value: number): string {
 
 function resetLabel(snapshot: LimitSnapshot | null): string {
   if (!snapshot) return t('limits.panel.resetUnknown');
-  if (snapshot.resetAt) return t('limits.panel.resetLabel', { value: countdown(snapshot.resetAt, t('limits.panel.resetWaiting')) });
+  if (snapshot.resetAt)
+    return t('limits.panel.resetLabel', { value: countdown(snapshot.resetAt, t('limits.panel.resetWaiting')) });
   if (snapshot.resetText) return t('limits.panel.resetLabel', { value: snapshot.resetText });
   return t('limits.panel.resetUnknown');
 }
@@ -320,7 +335,12 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
 <template>
   <LimitStatusBadge v-if="panelError" data-testid="limit-panel-fallback" />
 
-  <section v-else class="limit-top-panel" data-testid="limit-top-panel" :aria-label="t('shell.limitTopPanel.providerLimits')">
+  <section
+    v-else
+    class="limit-top-panel"
+    data-testid="limit-top-panel"
+    :aria-label="t('shell.limitTopPanel.providerLimits')"
+  >
     <div class="chip-row">
       <template v-if="loading">
         <span
@@ -342,7 +362,14 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
           :key="chip.provider"
           type="button"
           class="provider-chip"
-          :class="[`tier-${chip.tier}`, { 'is-warn': chip.tier === 'amber', 'is-danger': chip.tier === 'red', 'is-open': expandedProvider === chip.provider }]"
+          :class="[
+            `tier-${chip.tier}`,
+            {
+              'is-warn': chip.tier === 'amber',
+              'is-danger': chip.tier === 'red',
+              'is-open': expandedProvider === chip.provider,
+            },
+          ]"
           :data-provider="chip.provider"
           :data-testid="`limit-provider-${chip.provider}`"
           :title="chip.title"
@@ -377,7 +404,11 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
 
           <!-- Detail trend retained for the expanded view / a11y; collapsed out of the compact band. -->
           <span class="chip-sparkline" :data-testid="`sparkline-${chip.provider}`" aria-hidden="true">
-            <svg viewBox="0 0 96 30" role="img" :aria-label="t('shell.limitTopPanel.providerUsageTrend', { provider: chip.label })">
+            <svg
+              viewBox="0 0 96 30"
+              role="img"
+              :aria-label="t('shell.limitTopPanel.providerUsageTrend', { provider: chip.label })"
+            >
               <polyline v-if="chip.sparklinePoints" :points="chip.sparklinePoints" />
             </svg>
           </span>
@@ -396,15 +427,23 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
         >
           <span class="dot" :class="gateBlocked ? 'tier-red' : 'tier-ok'" aria-hidden="true" />
           <span class="chip-name">{{ t('limits.gate.label') }}</span>
-          <span class="chip-gate-state" :class="{ blocked: gateBlocked }">{{ gateBlocked ? t('limits.gate.block') : t('limits.gate.allow') }}</span>
+          <span class="chip-gate-state" :class="{ blocked: gateBlocked }">{{
+            gateBlocked ? t('limits.gate.block') : t('limits.gate.allow')
+          }}</span>
           <span class="chip-reset gate-reason">{{ gate?.reason ?? freshnessLabel }}</span>
 
           <span v-if="firstBlockedJob" class="visually-hidden" data-testid="limit-blocked-summary">
-            {{ firstBlockedJob.blockedReason ?? 'Blocked by active limit rule' }} — Resume {{ countdown(firstBlockedJob.resumeAfter, 'waiting') }}
+            {{ firstBlockedJob.blockedReason ?? 'Blocked by active limit rule' }} — Resume
+            {{ countdown(firstBlockedJob.resumeAfter, 'waiting') }}
           </span>
         </button>
 
-        <span v-if="lanes.length" class="lane-strip" data-testid="limit-lanes" :aria-label="t('shell.limitTopPanel.queueLanes')">
+        <span
+          v-if="lanes.length"
+          class="lane-strip"
+          data-testid="limit-lanes"
+          :aria-label="t('shell.limitTopPanel.queueLanes')"
+        >
           <span
             v-for="lane in lanes"
             :key="lane.provider"
@@ -412,7 +451,8 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
             :class="{ full: lane.full }"
             :data-provider="lane.provider"
             :title="`${lane.label} ${lane.active}/${lane.limit} active`"
-          >{{ lane.label }} {{ lane.active }}/{{ lane.limit }}</span>
+            >{{ lane.label }} {{ lane.active }}/{{ lane.limit }}</span
+          >
         </span>
 
         <span class="panel-controls">
@@ -424,7 +464,9 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
             :title="limits.refreshing ? t('limits.panel.refreshing') : t('shell.limitTopPanel.refresh')"
             :aria-label="t('shell.limitTopPanel.refresh')"
             @click="refresh"
-          >{{ limits.refreshing ? '…' : '↻' }}</button>
+          >
+            {{ limits.refreshing ? '…' : '↻' }}
+          </button>
           <button
             type="button"
             class="icon-button"
@@ -432,7 +474,9 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
             :title="t('shell.limitTopPanel.openDetails')"
             :aria-label="t('shell.limitTopPanel.openDetails')"
             @click="openDetails"
-          >⋯</button>
+          >
+            ⋯
+          </button>
         </span>
 
         <span
@@ -441,15 +485,23 @@ function buildTitle(label: string, latest: LimitSnapshot[], status: string, rese
           data-testid="limit-panel-error"
           role="alert"
           :title="limits.loadError ?? limits.refreshError ?? ''"
-        >! {{ limits.loadError ?? limits.refreshError }}</span>
+          >! {{ limits.loadError ?? limits.refreshError }}</span
+        >
       </template>
     </div>
 
     <!-- Expanded detail drawer: per-window bars + trend for the selected provider. -->
     <div v-if="expandedChip && expandedChip.hasData" class="expand-drawer" data-testid="limit-expand-drawer">
-      <strong class="expand-title">{{ expandedChip.label }} · {{ expandedChip.checkedLabel }} · {{ expandedChip.historyCount }} snapshots</strong>
+      <strong class="expand-title"
+        >{{ expandedChip.label }} · {{ expandedChip.checkedLabel }} · {{ expandedChip.historyCount }} snapshots</strong
+      >
       <div class="window-bars">
-        <div v-for="row in expandedChip.windows" :key="row.snapshot.id" class="window-row" :class="{ stale: row.stale }">
+        <div
+          v-for="row in expandedChip.windows"
+          :key="row.snapshot.id"
+          class="window-row"
+          :class="{ stale: row.stale }"
+        >
           <span class="window-label" :title="row.snapshot.label">{{ row.snapshot.label }}</span>
           <span
             class="window-track"

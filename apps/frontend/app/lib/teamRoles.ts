@@ -39,7 +39,10 @@ export function roleKindLabel(kind: TeamRoleKind): string {
 }
 
 export function stripInstanceNumber(name: string): string {
-  return name.trim().replace(/\s+#\d+$/, '').trim();
+  return name
+    .trim()
+    .replace(/\s+#\d+$/, '')
+    .trim();
 }
 
 export function roleBaseName(role: TeamRoleLike): string {
@@ -77,10 +80,12 @@ export function nextRoleName<T extends TeamRoleLike>(roles: readonly T[], source
 }
 
 export function roleSlug(name: string): string {
-  return stripInstanceNumber(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'role';
+  return (
+    stripInstanceNumber(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'role'
+  );
 }
 
 export function uniqueRoleId<T extends TeamRoleLike>(roles: readonly T[], name: string, currentIndex?: number): string {

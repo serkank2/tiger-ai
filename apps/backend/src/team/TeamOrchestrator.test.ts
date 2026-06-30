@@ -23,9 +23,10 @@ import {
   type TeamRoleTurnResult,
   type TeamRunState,
   type TeamScheduler,
+  type TeamTurnRecord,
   type TeamTurnRunner,
 } from './TeamOrchestrator.js';
-import { TaskBoard } from './task-board.js';
+import { TaskBoard, type AgentTask } from './task-board.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -87,10 +88,38 @@ Return it to open.
 `;
 
 const roles = [
-  { id: 'coordinator', name: 'Coordinator', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-  { id: 'analyst', name: 'Analyst', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-  { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-  { id: 'reviewer', name: 'Reviewer', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
+  {
+    id: 'coordinator',
+    name: 'Coordinator',
+    tool: 'codex' as const,
+    responsibilities: [],
+    canWriteCode: false,
+    requiredForSignoff: false,
+  },
+  {
+    id: 'analyst',
+    name: 'Analyst',
+    tool: 'codex' as const,
+    responsibilities: [],
+    canWriteCode: false,
+    requiredForSignoff: false,
+  },
+  {
+    id: 'developer',
+    name: 'Developer',
+    tool: 'codex' as const,
+    responsibilities: [],
+    canWriteCode: true,
+    requiredForSignoff: false,
+  },
+  {
+    id: 'reviewer',
+    name: 'Reviewer',
+    tool: 'codex' as const,
+    responsibilities: [],
+    canWriteCode: false,
+    requiredForSignoff: true,
+  },
 ];
 
 function completionAfterRoleMessages(count: number): TeamCompletionGate {
@@ -121,10 +150,16 @@ function roundRobinScheduler(): TeamScheduler {
     selectNextTurns(state, context) {
       if (state.status !== 'running') return { turns: [] };
       if (state.turnCount >= context.maxTurns) {
-        return { turns: [], terminal: { status: 'blocked', reason: `Team run reached the max turn limit (${context.maxTurns}).` } };
+        return {
+          turns: [],
+          terminal: { status: 'blocked', reason: `Team run reached the max turn limit (${context.maxTurns}).` },
+        };
       }
       if (state.round >= context.maxRounds) {
-        return { turns: [], terminal: { status: 'blocked', reason: `Team run reached the max round limit (${context.maxRounds}).` } };
+        return {
+          turns: [],
+          terminal: { status: 'blocked', reason: `Team run reached the max round limit (${context.maxRounds}).` },
+        };
       }
       const runnable = state.roles.filter((role) => role.status !== 'blocked' && role.status !== 'interrupted');
       if (runnable.length === 0) {
@@ -136,11 +171,7 @@ function roundRobinScheduler(): TeamScheduler {
   };
 }
 
-async function waitFor(
-  predicate: () => boolean,
-  label: string,
-  timeoutMs = 5000,
-): Promise<void> {
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) assert.fail(`timed out waiting for ${label}`);
@@ -152,8 +183,10 @@ async function waitForTerminal(orch: TeamOrchestrator, timeoutMs = 5000): Promis
   const deadline = Date.now() + timeoutMs;
   while (true) {
     const status = orch.getState().status;
-    if (status === 'completed' || status === 'blocked' || status === 'failed' || status === 'stopped') return orch.getState();
-    if (Date.now() > deadline) assert.fail(`timed out waiting for team terminal state: ${JSON.stringify(orch.getState())}`);
+    if (status === 'completed' || status === 'blocked' || status === 'failed' || status === 'stopped')
+      return orch.getState();
+    if (Date.now() > deadline)
+      assert.fail(`timed out waiting for team terminal state: ${JSON.stringify(orch.getState())}`);
     await delay(10);
   }
 }
@@ -305,7 +338,11 @@ test('a completion gate satisfied by a failing turn does not overwrite the faile
         },
       },
     });
-    await orch.createTeamRun({ workspace, goal: 'Fail clearly even when the gate is satisfied.', roles: roles.slice(0, 1) });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Fail clearly even when the gate is satisfied.',
+      roles: roles.slice(0, 1),
+    });
     await orch.start();
     const final = await waitForTerminal(orch);
     assert.equal(final.status, 'failed');
@@ -410,10 +447,16 @@ test('steering is appended immediately, stales signoffs, and is applied at the n
     await waitFor(() => calls.length >= 2, 'developer turn to start');
 
     assert.ok(orch.getState().signoffs.length >= 1);
-    assert.equal(orch.getState().signoffs.every((signoff) => !signoff.stale), true);
+    assert.equal(
+      orch.getState().signoffs.every((signoff) => !signoff.stale),
+      true,
+    );
     const steering = await orch.steer('Focus on the authentication flow.');
     assert.equal(steering.kind, 'steering');
-    assert.equal(orch.getState().signoffs.every((signoff) => signoff.stale), true);
+    assert.equal(
+      orch.getState().signoffs.every((signoff) => signoff.stale),
+      true,
+    );
     assert.equal(calls[1]!.roleId, 'developer');
     assert.equal(calls[1]!.steering.includes('Focus on the authentication flow.'), false);
 
@@ -446,7 +489,11 @@ test('team and stage runs reject each other through the shared workspace lease',
     const team = new TeamOrchestrator({
       executionPersistence: persistence,
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     await team.createTeamRun({ workspace, goal: 'Should conflict.', roles: roles.slice(0, 1) });
     const teamErr = await team.start().then(
@@ -500,7 +547,11 @@ test('restart reconciliation interrupts in-flight turns, reclaims stale claims, 
       messageBus: bus,
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     const created = await first.createTeamRun({
       workspace,
@@ -614,7 +665,14 @@ test('out of the box the engine composes the real scheduler and completion gate 
             assigned = true;
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Verify the build.\nAcceptance: report evidence.' }],
+              messages: [
+                {
+                  from: 'lead',
+                  kind: 'task',
+                  to: 'developer',
+                  body: 'Verify the build.\nAcceptance: report evidence.',
+                },
+              ],
             };
           }
           if (input.role.id === 'developer') {
@@ -638,8 +696,22 @@ test('out of the box the engine composes the real scheduler and completion gate 
       workspace,
       goal: 'Compose the dedicated team modules.',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer',
+          name: 'Developer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: true,
+        },
       ],
     });
     await orch.start();
@@ -698,7 +770,14 @@ test('the default completion gate keeps a run open while a review finding is unr
       workspace,
       goal: 'Do not stop while a finding is open.',
       roles: [
-        { id: 'coordinator', name: 'Coordinator', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
+        {
+          id: 'coordinator',
+          name: 'Coordinator',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
       ],
     });
     await orch.start();
@@ -766,7 +845,12 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
             return {
               status: 'completed',
               messages: [
-                { from: 'coordinator', kind: 'task', to: 'developer', body: 'Implement feature X\nAcceptance: it works.' },
+                {
+                  from: 'coordinator',
+                  kind: 'task',
+                  to: 'developer',
+                  body: 'Implement feature X\nAcceptance: it works.',
+                },
               ],
             };
           }
@@ -787,8 +871,22 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
       workspace,
       goal: 'Assign and complete one task.',
       roles: [
-        { id: 'coordinator', name: 'Coordinator', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+        {
+          id: 'coordinator',
+          name: 'Coordinator',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer',
+          name: 'Developer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: true,
+        },
       ],
     });
     await orch.start();
@@ -801,7 +899,10 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
     const agentDir = path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer');
     const done = await fs.readdir(path.join(agentDir, 'done')).catch(() => [] as string[]);
     const todo = await fs.readdir(path.join(agentDir, 'todo')).catch(() => [] as string[]);
-    assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'a developer task was filed to done');
+    assert.ok(
+      done.some((n) => /TASK-\d+\.json/.test(n)),
+      'a developer task was filed to done',
+    );
     assert.equal(todo.filter((n) => n.endsWith('.json')).length, 0, 'no developer task left queued');
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
@@ -819,9 +920,30 @@ test('the lead assigns a task that is queued, claimed, run with its content, and
 /** A team whose first role is the Lead, plus a developer and a tester. */
 function leadTeam(): typeof roles {
   return [
-    { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-    { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
-    { id: 'tester', name: 'Tester', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+    {
+      id: 'lead',
+      name: 'Lead',
+      tool: 'codex' as const,
+      responsibilities: [],
+      canWriteCode: false,
+      requiredForSignoff: true,
+    },
+    {
+      id: 'developer',
+      name: 'Developer',
+      tool: 'codex' as const,
+      responsibilities: [],
+      canWriteCode: true,
+      requiredForSignoff: true,
+    },
+    {
+      id: 'tester',
+      name: 'Tester',
+      tool: 'codex' as const,
+      responsibilities: [],
+      canWriteCode: true,
+      requiredForSignoff: false,
+    },
   ];
 }
 
@@ -850,7 +972,9 @@ test('a new run schedules the Lead first; no worker role runs until the Lead ass
           if (input.role.id === 'lead') {
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: it works.' }],
+              messages: [
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: it works.' },
+              ],
             };
           }
           return {
@@ -892,7 +1016,9 @@ test('a Lead task addressed to a role kind routes to an idle same-kind instance'
             await orch.pauseRole('developer', 'already working on another task');
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement pooled feature\nAcceptance: works.' }],
+              messages: [
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Implement pooled feature\nAcceptance: works.' },
+              ],
             };
           }
           if (input.role.id === 'developer-2') {
@@ -911,9 +1037,30 @@ test('a Lead task addressed to a role kind routes to an idle same-kind instance'
       workspace,
       goal: 'Route to an idle developer instance.',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'developer', name: 'Developer #1', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
-        { id: 'developer-2', name: 'Developer #2', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer',
+          name: 'Developer #1',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer-2',
+          name: 'Developer #2',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: true,
+        },
       ],
     });
     await orch.start();
@@ -922,8 +1069,12 @@ test('a Lead task addressed to a role kind routes to an idle same-kind instance'
     assert.equal(final.status, 'completed');
     assert.deepEqual(order, ['lead', 'developer-2']);
     assert.match(assignedTitle, /Implement pooled feature/);
-    const dev1Todo = await fs.readdir(path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer', 'todo')).catch(() => [] as string[]);
-    const dev2Done = await fs.readdir(path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer-2', 'done')).catch(() => [] as string[]);
+    const dev1Todo = await fs
+      .readdir(path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer', 'todo'))
+      .catch(() => [] as string[]);
+    const dev2Done = await fs
+      .readdir(path.join(workspace, '.tiger', 'team', final.runId, 'agents', 'developer-2', 'done'))
+      .catch(() => [] as string[]);
     assert.equal(dev1Todo.filter((name) => name.endsWith('.json')).length, 0);
     assert.equal(dev2Done.filter((name) => name.endsWith('.json')).length, 1);
   } finally {
@@ -937,7 +1088,11 @@ test('every user prompt is queued for the Lead in FIFO order and addressed to th
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     // Created but not started: steering is allowed while paused, so we can assert routing
     // and FIFO without racing the run loop.
@@ -948,13 +1103,25 @@ test('every user prompt is queued for the Lead in FIFO order and addressed to th
     const state = orch.getState();
     // The goal and both later prompts are queued for the Lead, in arrival order (FIFO),
     // not routed to whichever role would run next.
-    assert.deepEqual(state.directives.map((directive) => directive.body), ['First goal.', 'Second prompt.', 'Third prompt.']);
-    assert.equal(state.directives.every((directive) => directive.status === 'pending'), true);
+    assert.deepEqual(
+      state.directives.map((directive) => directive.body),
+      ['First goal.', 'Second prompt.', 'Third prompt.'],
+    );
+    assert.equal(
+      state.directives.every((directive) => directive.status === 'pending'),
+      true,
+    );
     assert.equal(state.pendingSteeringCount, 3);
 
     const steering = (await orch.listMessages()).filter((message) => message.kind === 'steering');
-    assert.deepEqual(steering.map((message) => message.body), ['First goal.', 'Second prompt.', 'Third prompt.']);
-    assert.equal(steering.every((message) => message.to === 'lead'), true);
+    assert.deepEqual(
+      steering.map((message) => message.body),
+      ['First goal.', 'Second prompt.', 'Third prompt.'],
+    );
+    assert.equal(
+      steering.every((message) => message.to === 'lead'),
+      true,
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -985,7 +1152,11 @@ test('a worker completion routes back to the Lead before the next worker (no aut
                 ],
               };
             }
-            return { status: 'completed', messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }], signoffs: [{}] };
+            return {
+              status: 'completed',
+              messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }],
+              signoffs: [{}],
+            };
           }
           return {
             status: 'completed',
@@ -1028,7 +1199,9 @@ test('a task retries once, then parks after consecutive timeout/parse failures a
             return leadTurns === 1
               ? {
                   status: 'completed',
-                  messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement unstable task\nAcceptance: done.' }],
+                  messages: [
+                    { from: 'lead', kind: 'task', to: 'developer', body: 'Implement unstable task\nAcceptance: done.' },
+                  ],
                 }
               : {
                   status: 'completed',
@@ -1053,7 +1226,11 @@ test('a task retries once, then parks after consecutive timeout/parse failures a
     await orch.start();
 
     await waitFor(
-      () => messages.some((message) => message.kind === 'blocker' && message.to === 'lead' && /parked after 2 consecutive/i.test(message.body)),
+      () =>
+        messages.some(
+          (message) =>
+            message.kind === 'blocker' && message.to === 'lead' && /parked after 2 consecutive/i.test(message.body),
+        ),
       'parked task blocker',
       8000,
     );
@@ -1067,7 +1244,11 @@ test('a task retries once, then parks after consecutive timeout/parse failures a
     assert.equal(parked?.status, 'blocked');
     assert.equal(parked?.task.failureCount, 2);
     assert.match(parked?.task.blockedReason ?? '', /output was invalid/);
-    assert.equal(await board.claimNext('developer', '2020-01-01T00:00:00.000Z'), null, 'parked tasks are not claimable');
+    assert.equal(
+      await board.claimNext('developer', '2020-01-01T00:00:00.000Z'),
+      null,
+      'parked tasks are not claimable',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1092,21 +1273,79 @@ test('company mode claims one write task plus read-only work, while legacy still
       goal: 'Batch company work.',
       orchestrationMode: 'company',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'developer-a', name: 'Developer A', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-        { id: 'developer-b', name: 'Developer B', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-        { id: 'analyst', name: 'Analyst', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-        { id: 'reviewer', name: 'Reviewer', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer-a',
+          name: 'Developer A',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer-b',
+          name: 'Developer B',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'analyst',
+          name: 'Analyst',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'reviewer',
+          name: 'Reviewer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
       ],
     });
     const companyBoard = new TaskBoard(path.join(workspace, '.tiger', 'team', company.runId));
-    await companyBoard.enqueue({ roleId: 'developer-a', title: 'Write A', body: 'write A', createdAt: '2020-01-01T00:00:01.000Z' });
-    await companyBoard.enqueue({ roleId: 'developer-b', title: 'Write B', body: 'write B', createdAt: '2020-01-01T00:00:02.000Z' });
-    await companyBoard.enqueue({ roleId: 'analyst', title: 'Analyze', body: 'analyze', createdAt: '2020-01-01T00:00:03.000Z' });
-    await companyBoard.enqueue({ roleId: 'reviewer', title: 'Review', body: 'review', createdAt: '2020-01-01T00:00:04.000Z' });
+    await companyBoard.enqueue({
+      roleId: 'developer-a',
+      title: 'Write A',
+      body: 'write A',
+      createdAt: '2020-01-01T00:00:01.000Z',
+    });
+    await companyBoard.enqueue({
+      roleId: 'developer-b',
+      title: 'Write B',
+      body: 'write B',
+      createdAt: '2020-01-01T00:00:02.000Z',
+    });
+    await companyBoard.enqueue({
+      roleId: 'analyst',
+      title: 'Analyze',
+      body: 'analyze',
+      createdAt: '2020-01-01T00:00:03.000Z',
+    });
+    await companyBoard.enqueue({
+      roleId: 'reviewer',
+      title: 'Review',
+      body: 'review',
+      createdAt: '2020-01-01T00:00:04.000Z',
+    });
 
     const claimed = await (companyOrch as any).claimNextAgentTasks('lead', { readOnlyLimit: 2 });
-    assert.deepEqual(claimed.map((entry: { roleId: string }) => entry.roleId), ['developer-a', 'analyst', 'reviewer']);
+    assert.deepEqual(
+      claimed.map((entry: { roleId: string }) => entry.roleId),
+      ['developer-a', 'analyst', 'reviewer'],
+    );
     assert.deepEqual(await companyBoard.counts('developer-a'), { todo: 0, inProgress: 1, done: 0 });
     assert.deepEqual(await companyBoard.counts('developer-b'), { todo: 1, inProgress: 0, done: 0 });
     assert.deepEqual(await companyBoard.counts('analyst'), { todo: 0, inProgress: 1, done: 0 });
@@ -1119,14 +1358,45 @@ test('company mode claims one write task plus read-only work, while legacy still
         workspace: legacyWorkspace,
         goal: 'Legacy work.',
         roles: [
-          { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-          { id: 'analyst', name: 'Analyst', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-          { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+          {
+            id: 'lead',
+            name: 'Lead',
+            tool: 'codex' as const,
+            responsibilities: [],
+            canWriteCode: false,
+            requiredForSignoff: true,
+          },
+          {
+            id: 'analyst',
+            name: 'Analyst',
+            tool: 'codex' as const,
+            responsibilities: [],
+            canWriteCode: false,
+            requiredForSignoff: false,
+          },
+          {
+            id: 'developer',
+            name: 'Developer',
+            tool: 'codex' as const,
+            responsibilities: [],
+            canWriteCode: true,
+            requiredForSignoff: false,
+          },
         ],
       });
       const legacyBoard = new TaskBoard(path.join(legacyWorkspace, '.tiger', 'team', legacy.runId));
-      await legacyBoard.enqueue({ roleId: 'analyst', title: 'Analyze legacy', body: 'analyze', createdAt: '2020-01-01T00:00:01.000Z' });
-      await legacyBoard.enqueue({ roleId: 'developer', title: 'Write legacy', body: 'write', createdAt: '2020-01-01T00:00:02.000Z' });
+      await legacyBoard.enqueue({
+        roleId: 'analyst',
+        title: 'Analyze legacy',
+        body: 'analyze',
+        createdAt: '2020-01-01T00:00:01.000Z',
+      });
+      await legacyBoard.enqueue({
+        roleId: 'developer',
+        title: 'Write legacy',
+        body: 'write',
+        createdAt: '2020-01-01T00:00:02.000Z',
+      });
       const single = await (legacyOrch as any).claimNextAgentTask('lead');
       assert.equal(single?.roleId, 'analyst');
       assert.deepEqual(await legacyBoard.counts('analyst'), { todo: 0, inProgress: 1, done: 0 });
@@ -1154,19 +1424,119 @@ test('company mode may claim two write tasks when worktree-per-task isolation is
       goal: 'Batch isolated write work.',
       orchestrationMode: 'company',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'developer-a', name: 'Developer A', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-        { id: 'developer-b', name: 'Developer B', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer-a',
+          name: 'Developer A',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer-b',
+          name: 'Developer B',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
       ],
     });
     const board = new TaskBoard(path.join(workspace, '.tiger', 'team', run.runId));
-    await board.enqueue({ roleId: 'developer-a', title: 'Write A', body: 'write A', createdAt: '2020-01-01T00:00:01.000Z' });
-    await board.enqueue({ roleId: 'developer-b', title: 'Write B', body: 'write B', createdAt: '2020-01-01T00:00:02.000Z' });
+    await board.enqueue({
+      roleId: 'developer-a',
+      title: 'Write A',
+      body: 'write A',
+      createdAt: '2020-01-01T00:00:01.000Z',
+    });
+    await board.enqueue({
+      roleId: 'developer-b',
+      title: 'Write B',
+      body: 'write B',
+      createdAt: '2020-01-01T00:00:02.000Z',
+    });
 
     const claimed = await (orch as any).claimNextAgentTasks('lead');
-    assert.deepEqual(claimed.map((entry: { roleId: string }) => entry.roleId), ['developer-a', 'developer-b']);
+    assert.deepEqual(
+      claimed.map((entry: { roleId: string }) => entry.roleId),
+      ['developer-a', 'developer-b'],
+    );
     assert.deepEqual(await board.counts('developer-a'), { todo: 0, inProgress: 1, done: 0 });
     assert.deepEqual(await board.counts('developer-b'), { todo: 0, inProgress: 1, done: 0 });
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
+test('per-task worktree isolation records Team worktree paths under .tiger/worktrees', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-task-worktree-root-'));
+  try {
+    await initGitRepo(workspace);
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      worktreePerTask: true,
+    });
+    const run = await orch.createTeamRun({
+      workspace,
+      goal: 'Isolate write work.',
+      roles: [
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer',
+          name: 'Developer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+      ],
+    });
+    const turn: TeamTurnRecord = {
+      id: 'turn-task-worktree',
+      runId: run.runId,
+      roleId: 'developer',
+      roleName: 'Developer',
+      status: 'running',
+      round: 1,
+      startedAt: '2020-01-01T00:00:00.000Z',
+      messageSeqs: [],
+      appliedDirectiveIds: [],
+    };
+    const task: AgentTask = {
+      id: 'TASK-0001',
+      roleId: 'developer',
+      title: 'Write isolated change',
+      body: 'write',
+      status: 'in-progress',
+      createdAt: '2020-01-01T00:00:00.000Z',
+    };
+    const privateWorktree = orch as unknown as {
+      maybeCreateTaskWorktree(turn: TeamTurnRecord, task: AgentTask): Promise<string>;
+    };
+    const cwd = await privateWorktree.maybeCreateTaskWorktree(turn, task);
+    const expectedRoot = path.join(workspace, '.tiger', 'worktrees');
+    assert.equal(path.resolve(path.dirname(cwd)), path.resolve(expectedRoot));
+    assert.equal(cwd.includes(`${path.sep}.kaplan${path.sep}`), false);
+
+    const record = orch.getState().taskWorktrees?.[0];
+    assert.ok(record, 'task worktree state should be persisted');
+    assert.equal(path.resolve(path.dirname(record.path)), path.resolve(expectedRoot));
+    assert.equal(record.path.includes(`${path.sep}.kaplan${path.sep}`), false);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1185,17 +1555,51 @@ test('company mode keeps one writer when write cap is raised without worktree is
       goal: 'Preserve shared-workspace writer cap.',
       orchestrationMode: 'company',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'developer-a', name: 'Developer A', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-        { id: 'developer-b', name: 'Developer B', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer-a',
+          name: 'Developer A',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer-b',
+          name: 'Developer B',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
       ],
     });
     const board = new TaskBoard(path.join(workspace, '.tiger', 'team', run.runId));
-    await board.enqueue({ roleId: 'developer-a', title: 'Write A', body: 'write A', createdAt: '2020-01-01T00:00:01.000Z' });
-    await board.enqueue({ roleId: 'developer-b', title: 'Write B', body: 'write B', createdAt: '2020-01-01T00:00:02.000Z' });
+    await board.enqueue({
+      roleId: 'developer-a',
+      title: 'Write A',
+      body: 'write A',
+      createdAt: '2020-01-01T00:00:01.000Z',
+    });
+    await board.enqueue({
+      roleId: 'developer-b',
+      title: 'Write B',
+      body: 'write B',
+      createdAt: '2020-01-01T00:00:02.000Z',
+    });
 
     const claimed = await (orch as any).claimNextAgentTasks('lead');
-    assert.deepEqual(claimed.map((entry: { roleId: string }) => entry.roleId), ['developer-a']);
+    assert.deepEqual(
+      claimed.map((entry: { roleId: string }) => entry.roleId),
+      ['developer-a'],
+    );
     assert.deepEqual(await board.counts('developer-a'), { todo: 0, inProgress: 1, done: 0 });
     assert.deepEqual(await board.counts('developer-b'), { todo: 1, inProgress: 0, done: 0 });
   } finally {
@@ -1230,7 +1634,10 @@ test('company mode does not force the Lead between normal read-only worker compl
             }
             return { status: 'completed', messages: [{ from: 'lead', kind: 'chat', body: 'waiting' }] };
           }
-          return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: `${input.role.id} done` }] };
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'chat', body: `${input.role.id} done` }],
+          };
         },
       },
     });
@@ -1239,9 +1646,30 @@ test('company mode does not force the Lead between normal read-only worker compl
       goal: 'Run read-only company workers.',
       orchestrationMode: 'company',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'analyst', name: 'Analyst', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-        { id: 'reviewer', name: 'Reviewer', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'analyst',
+          name: 'Analyst',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'reviewer',
+          name: 'Reviewer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
       ],
     });
     await orch.start();
@@ -1262,9 +1690,30 @@ test('company mode defers all-busy same-kind tasks until an instance becomes idl
       goal: 'Fair kind queue.',
       orchestrationMode: 'company',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true },
-        { id: 'developer', name: 'Developer #1', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
-        { id: 'developer-2', name: 'Developer #2', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: false },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+        {
+          id: 'developer',
+          name: 'Developer #1',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer-2',
+          name: 'Developer #2',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: false,
+        },
       ],
     });
     const internal = (orch as any).state as TeamRunState;
@@ -1311,7 +1760,16 @@ test('company mode completion waits for an explicit Lead project-complete decisi
       workspace,
       goal: 'Complete only by Lead decision.',
       orchestrationMode: 'company',
-      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+      roles: [
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+      ],
     });
     ((companyOrch as any).state as TeamRunState).status = 'running';
     const stoppedBeforeDecision = await (companyOrch as any).completeOrStopFromGate();
@@ -1333,7 +1791,16 @@ test('company mode completion waits for an explicit Lead project-complete decisi
       await legacyOrch.createTeamRun({
         workspace: legacyWorkspace,
         goal: 'Legacy completes at gate.',
-        roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+        roles: [
+          {
+            id: 'lead',
+            name: 'Lead',
+            tool: 'codex' as const,
+            responsibilities: [],
+            canWriteCode: false,
+            requiredForSignoff: true,
+          },
+        ],
       });
       ((legacyOrch as any).state as TeamRunState).status = 'running';
       assert.equal(await (legacyOrch as any).completeOrStopFromGate(), true);
@@ -1373,7 +1840,10 @@ test('no Lead-assigned work idles/waits instead of round-robin turns or churning
     // and without churning to the round cap.
     assert.equal(final.status, 'blocked');
     assert.match(final.message ?? '', /waiting/i);
-    assert.equal(order.every((roleId) => roleId === 'lead'), true);
+    assert.equal(
+      order.every((roleId) => roleId === 'lead'),
+      true,
+    );
     assert.equal(final.turns.filter((turn) => turn.roleId === 'developer').length, 0);
     assert.equal(final.turns.filter((turn) => turn.roleId === 'tester').length, 0);
     // Idle after the goal turn (productive) plus one unproductive turn — far below maxRounds.
@@ -1398,7 +1868,9 @@ test('a non-Lead role cannot delegate laterally; the attempt is blocked and re-r
           if (input.role.id === 'lead') {
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: works.' }],
+              messages: [
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Implement feature\nAcceptance: works.' },
+              ],
             };
           }
           if (input.role.id === 'developer') {
@@ -1412,7 +1884,11 @@ test('a non-Lead role cannot delegate laterally; the attempt is blocked and re-r
               signoffs: [{}],
             };
           }
-          return { status: 'completed', messages: [{ from: input.role.id, kind: 'signoff', body: 'tester done' }], signoffs: [{}] };
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: 'tester done' }],
+            signoffs: [{}],
+          };
         },
       },
     });
@@ -1456,9 +1932,22 @@ test('a pending user prompt is processed by the Lead before an already-queued wo
           order.push(input.role.id);
           if (input.role.id === 'lead') {
             // The Lead processes the pending prompt; the developer already has queued work.
-            return { status: 'completed', messages: [{ from: 'lead', kind: 'decision', body: 'Prompt acknowledged; proceed with the queued developer task.' }] };
+            return {
+              status: 'completed',
+              messages: [
+                {
+                  from: 'lead',
+                  kind: 'decision',
+                  body: 'Prompt acknowledged; proceed with the queued developer task.',
+                },
+              ],
+            };
           }
-          return { status: 'completed', messages: [{ from: input.role.id, kind: 'signoff', body: `${input.role.id} done` }], signoffs: [{}] };
+          return {
+            status: 'completed',
+            messages: [{ from: input.role.id, kind: 'signoff', body: `${input.role.id} done` }],
+            signoffs: [{}],
+          };
         },
       },
     });
@@ -1467,7 +1956,12 @@ test('a pending user prompt is processed by the Lead before an already-queued wo
     // goal) is still pending. The buggy ordering would claim and run the developer first;
     // the Lead must run first.
     const board = new TaskBoard(path.join(workspace, '.tiger', 'team', created.runId));
-    await board.enqueue({ roleId: 'developer', title: 'Pre-queued work', body: 'Do the already-queued work.', createdAt: nowForTest() });
+    await board.enqueue({
+      roleId: 'developer',
+      title: 'Pre-queued work',
+      body: 'Do the already-queued work.',
+      createdAt: nowForTest(),
+    });
     await orch.start();
     const final = await waitForTerminal(orch);
 
@@ -1509,12 +2003,20 @@ test('after a worker completes with a user prompt pending, the Lead runs before 
               ],
             };
           }
-          return { status: 'completed', messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }], signoffs: [{}] };
+          return {
+            status: 'completed',
+            messages: [{ from: 'lead', kind: 'signoff', body: 'lead done' }],
+            signoffs: [{}],
+          };
         }
         // developer: hold the first task in progress until the test injects a user prompt.
         devTurns += 1;
         if (devTurns === 1) await devGate;
-        return { status: 'completed', messages: [{ from: 'developer', kind: 'signoff', body: 'dev done' }], signoffs: [{}] };
+        return {
+          status: 'completed',
+          messages: [{ from: 'developer', kind: 'signoff', body: 'dev done' }],
+          signoffs: [{}],
+        };
       },
     },
   });
@@ -1582,7 +2084,10 @@ test('steering a run that has idled to a waiting state resumes the loop so the L
     const final = await waitForTerminal(orch);
 
     assert.equal(final.status, 'completed');
-    assert.ok(final.signoffs.some((s) => s.roleId === 'lead' && !s.stale), 'the resumed Lead processed the prompt and signed off');
+    assert.ok(
+      final.signoffs.some((s) => s.roleId === 'lead' && !s.stale),
+      'the resumed Lead processed the prompt and signed off',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1603,9 +2108,7 @@ test('Stop halts a run without disposing sessions, Resume re-enters it, and Clos
         runCount += 1;
         // Block until Stop/Close aborts the turn, so the run sits in a controllable running
         // state instead of completing on its own.
-        await new Promise<void>((resolve) =>
-          input.signal.addEventListener('abort', () => resolve(), { once: true }),
-        );
+        await new Promise<void>((resolve) => input.signal.addEventListener('abort', () => resolve(), { once: true }));
         return { status: 'stopped', reason: 'aborted' };
       },
       async disposeRun(_runId, opts) {
@@ -1688,7 +2191,10 @@ test('a complete TaskDirective files the in-flight board task done and a needs_w
     // The developer's task ended in done/ via the explicit complete directive.
     const doneDir = path.join(workspace, '.tiger', 'team', created.runId, 'agents', 'developer', 'done');
     const done = await fs.readdir(doneDir).catch(() => [] as string[]);
-    assert.ok(done.some((n) => /TASK-\d+\.json/.test(n)), 'the task was filed done by the directive');
+    assert.ok(
+      done.some((n) => /TASK-\d+\.json/.test(n)),
+      'the task was filed done by the directive',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1700,7 +2206,11 @@ test('the snapshot done-gate exposes the open blockers keeping a run from comple
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     // Created but not started: the goal is a pending steering directive and no required role
     // has signed off → the done-gate must report not-satisfied with explicit blockers.
@@ -1708,8 +2218,14 @@ test('the snapshot done-gate exposes the open blockers keeping a run from comple
     const gate = TeamOrchestrator.computeDoneGate(orch.getState());
     assert.equal(gate.satisfied, false);
     assert.ok(gate.openBlockers.length > 0, 'open blockers are listed');
-    assert.ok(gate.openBlockers.some((b) => b.code === 'steering_pending'), 'the pending goal prompt is a blocker');
-    assert.ok(gate.openBlockers.some((b) => b.code === 'verification_missing'), 'no verification yet is a blocker');
+    assert.ok(
+      gate.openBlockers.some((b) => b.code === 'steering_pending'),
+      'the pending goal prompt is a blocker',
+    );
+    assert.ok(
+      gate.openBlockers.some((b) => b.code === 'verification_missing'),
+      'no verification yet is a blocker',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1727,7 +2243,14 @@ test('a structured VerificationDirective is recorded with its command/exitCode a
           if (input.role.id === 'lead') {
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Run verification.\nAcceptance: report command evidence.' }],
+              messages: [
+                {
+                  from: 'lead',
+                  kind: 'task',
+                  to: 'developer',
+                  body: 'Run verification.\nAcceptance: report command evidence.',
+                },
+              ],
             };
           }
           if (input.role.id === 'developer') {
@@ -1789,14 +2312,25 @@ test('Lead-originated verification is ignored for completion-gate evidence', asy
     await orch.createTeamRun({
       workspace,
       goal: 'Lead must not verify directly.',
-      roles: [{ id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: true }],
+      roles: [
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: true,
+        },
+      ],
     });
     await orch.start();
     const final = await waitForTerminal(orch);
 
     assert.equal(final.status, 'blocked');
     assert.equal(final.verifications.length, 0);
-    assert.ok((await orch.listMessages()).some((message) => message.kind === 'verification' && message.from === 'lead'));
+    assert.ok(
+      (await orch.listMessages()).some((message) => message.kind === 'verification' && message.from === 'lead'),
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1819,7 +2353,9 @@ test('a timed-out turn preserves transcript messages but cannot apply authority-
           if (input.role.id === 'lead') {
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Implement timeout task\nAcceptance: done.' }],
+              messages: [
+                { from: 'lead', kind: 'task', to: 'developer', body: 'Implement timeout task\nAcceptance: done.' },
+              ],
             };
           }
 
@@ -1836,8 +2372,12 @@ test('a timed-out turn preserves transcript messages but cannot apply authority-
             taskDirectives: input.assignedTask
               ? [{ taskId: input.assignedTask.id, action: 'complete', summary: 'claimed done before timeout' }]
               : undefined,
-            verifications: [{ command: 'npm test', exitCode: 0, outcome: 'passed', summary: 'claimed green before timeout' }],
-            coordinationDirectives: [{ verb: 'sendMessage', fromRoleId: 'developer', toRoleId: 'lead', body: 'This should not be delivered.' }],
+            verifications: [
+              { command: 'npm test', exitCode: 0, outcome: 'passed', summary: 'claimed green before timeout' },
+            ],
+            coordinationDirectives: [
+              { verb: 'sendMessage', fromRoleId: 'developer', toRoleId: 'lead', body: 'This should not be delivered.' },
+            ],
           };
         },
       },
@@ -1852,18 +2392,31 @@ test('a timed-out turn preserves transcript messages but cannot apply authority-
     assert.equal(developerTurns, 1, 'the developer timed out once');
     assert.ok(claimedTaskId, 'the developer had an in-flight board task');
     const transcript = await orch.listMessages();
-    assert.ok(transcript.some((message) => message.body === 'Partial transcript before timeout.'), 'partial chat message was preserved');
-    assert.ok(transcript.some((message) => message.body === 'npm test passed before timeout.'), 'partial verification message was preserved');
+    assert.ok(
+      transcript.some((message) => message.body === 'Partial transcript before timeout.'),
+      'partial chat message was preserved',
+    );
+    assert.ok(
+      transcript.some((message) => message.body === 'npm test passed before timeout.'),
+      'partial verification message was preserved',
+    );
 
     const state = orch.getState();
     assert.equal(state.signoffs.length, 0, 'timed-out SignOffDirective must not record a sign-off');
-    assert.equal(state.verifications.length, 0, 'timed-out verification directives/messages must not record passed verification');
+    assert.equal(
+      state.verifications.length,
+      0,
+      'timed-out verification directives/messages must not record passed verification',
+    );
     assert.deepEqual(state.inboxes?.lead ?? [], [], 'timed-out coordination directives must not populate inboxes');
 
     const board = new TaskBoard(path.join(workspace, '.tiger', 'team', created.runId));
     const task = await board.findTask('developer', claimedTaskId);
     assert.equal(task?.status, 'todo', 'the timed-out complete TaskDirective must not file the task done');
-    assert.ok(messages.some((message) => /timed out/i.test(message.body)), 'the failure was still reported to the transcript');
+    assert.ok(
+      messages.some((message) => /timed out/i.test(message.body)),
+      'the failure was still reported to the transcript',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -1875,12 +2428,23 @@ test('addRole/removeRole/reconfigureRole mutate the live run and a paused role i
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     await orch.createTeamRun({ workspace, goal: 'Manage roles.', roles: leadTeam() });
 
     // Add a role.
-    await orch.addRole({ id: 'designer', name: 'Designer', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: false });
+    await orch.addRole({
+      id: 'designer',
+      name: 'Designer',
+      tool: 'codex',
+      responsibilities: [],
+      canWriteCode: false,
+      requiredForSignoff: false,
+    });
     assert.ok(orch.getState().roles.some((r) => r.id === 'designer'));
 
     // Reconfigure it.
@@ -1889,12 +2453,23 @@ test('addRole/removeRole/reconfigureRole mutate the live run and a paused role i
     assert.equal(designer?.canWriteCode, true);
     assert.equal(designer?.model, 'gpt-5');
     const secondLeadErr = await orch
-      .addRole({ id: 'lead-2', name: 'Tech Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: true })
-      .then(() => null, (e: unknown) => e as { status?: number });
+      .addRole({
+        id: 'lead-2',
+        name: 'Tech Lead',
+        tool: 'codex',
+        responsibilities: [],
+        canWriteCode: false,
+        requiredForSignoff: true,
+      })
+      .then(
+        () => null,
+        (e: unknown) => e as { status?: number },
+      );
     assert.equal(secondLeadErr?.status, 409);
-    const morphLeadErr = await orch
-      .reconfigureRole('designer', { name: 'Team Lead' })
-      .then(() => null, (e: unknown) => e as { status?: number });
+    const morphLeadErr = await orch.reconfigureRole('designer', { name: 'Team Lead' }).then(
+      () => null,
+      (e: unknown) => e as { status?: number },
+    );
     assert.equal(morphLeadErr?.status, 409);
     assert.equal(orch.getState().roles.find((r) => r.id === 'designer')?.name, 'Designer');
 
@@ -1904,10 +2479,16 @@ test('addRole/removeRole/reconfigureRole mutate the live run and a paused role i
 
     // Remove it.
     await orch.removeRole('designer');
-    assert.equal(orch.getState().roles.some((r) => r.id === 'designer'), false);
+    assert.equal(
+      orch.getState().roles.some((r) => r.id === 'designer'),
+      false,
+    );
 
     // The Lead cannot be removed.
-    const err = await orch.removeRole('lead').then(() => null, (e: unknown) => e as { status?: number });
+    const err = await orch.removeRole('lead').then(
+      () => null,
+      (e: unknown) => e as { status?: number },
+    );
     assert.equal(err?.status, 409);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
@@ -1920,7 +2501,11 @@ test('listRuns and exportRun surface a persisted run read-only', async () => {
     const orch = new TeamOrchestrator({
       executionPersistence: new MemoryExecutionPersistence(),
       completionGate: neverComplete(),
-      runner: { async runRoleTurn() { return { status: 'completed' }; } },
+      runner: {
+        async runRoleTurn() {
+          return { status: 'completed' };
+        },
+      },
     });
     const created = await orch.createTeamRun({ workspace, goal: 'History and export.', roles: leadTeam() });
 
@@ -1959,7 +2544,14 @@ test('an ambiguous prose verification is recorded inconclusive (skipped) and kee
             assigned = true;
             return {
               status: 'completed',
-              messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Verify ambiguously.\nAcceptance: report evidence.' }],
+              messages: [
+                {
+                  from: 'lead',
+                  kind: 'task',
+                  to: 'developer',
+                  body: 'Verify ambiguously.\nAcceptance: report evidence.',
+                },
+              ],
             };
           }
           if (input.role.id === 'developer') {
@@ -1981,8 +2573,22 @@ test('an ambiguous prose verification is recorded inconclusive (skipped) and kee
       workspace,
       goal: 'Infer ambiguous verification.',
       roles: [
-        { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: false, requiredForSignoff: false },
-        { id: 'developer', name: 'Developer', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+        {
+          id: 'lead',
+          name: 'Lead',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: false,
+          requiredForSignoff: false,
+        },
+        {
+          id: 'developer',
+          name: 'Developer',
+          tool: 'codex' as const,
+          responsibilities: [],
+          canWriteCode: true,
+          requiredForSignoff: true,
+        },
       ],
     });
     await orch.start();
@@ -1995,7 +2601,10 @@ test('an ambiguous prose verification is recorded inconclusive (skipped) and kee
     // And the done-gate is NOT satisfied by an inconclusive verification.
     assert.notEqual(final.status, 'completed');
     const gate = TeamOrchestrator.computeDoneGate(final);
-    assert.ok(gate.openBlockers.some((b) => b.code === 'verification_failed'), 'the inconclusive verification blocks the gate');
+    assert.ok(
+      gate.openBlockers.some((b) => b.code === 'verification_failed'),
+      'the inconclusive verification blocks the gate',
+    );
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
   }
@@ -2026,7 +2635,15 @@ test('a sendMessage inbox entry is preserved when the recipient turn fails, then
               messages: [{ from: 'lead', kind: 'task', to: 'developer', body: 'Build the feature\nAcceptance: done.' }],
               coordinationDirectives:
                 leadTurns === 1
-                  ? [{ verb: 'sendMessage', fromRoleId: 'lead', toRoleId: 'developer', title: 'Heads up', body: 'Watch the edge case.' }]
+                  ? [
+                      {
+                        verb: 'sendMessage',
+                        fromRoleId: 'lead',
+                        toRoleId: 'developer',
+                        title: 'Heads up',
+                        body: 'Watch the edge case.',
+                      },
+                    ]
                   : undefined,
             };
           }
@@ -2035,7 +2652,11 @@ test('a sendMessage inbox entry is preserved when the recipient turn fails, then
           devTurns += 1;
           inboxSeen.push(input.inbox?.length ?? 0);
           if (devTurns === 1) return { status: 'failed', reason: 'transient failure' };
-          return { status: 'completed', messages: [{ from: 'developer', kind: 'signoff', body: 'done' }], signoffs: [{}] };
+          return {
+            status: 'completed',
+            messages: [{ from: 'developer', kind: 'signoff', body: 'done' }],
+            signoffs: [{}],
+          };
         },
       },
     });
@@ -2061,13 +2682,18 @@ test('a sendMessage inbox entry is preserved when the recipient turn fails, then
 test('the Lead can re-assign a completed task title for rework (not silently deduped)', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-rework-'));
   try {
-    const created = await new TeamOrchestrator({ executionPersistence: new MemoryExecutionPersistence() }).createTeamRun(
-      { workspace, goal: 'unused', roles: leadTeam() },
-    );
+    const created = await new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+    }).createTeamRun({ workspace, goal: 'unused', roles: leadTeam() });
     const runDir = path.join(workspace, '.tiger', 'team', created.runId);
     const board = new TaskBoard(runDir);
     // First assignment of "Fix the bug" → claimed → completed.
-    await board.enqueue({ roleId: 'developer', title: 'Fix the bug', body: 'first pass', createdAt: '2020-01-01T00:00:00.000Z' });
+    await board.enqueue({
+      roleId: 'developer',
+      title: 'Fix the bug',
+      body: 'first pass',
+      createdAt: '2020-01-01T00:00:00.000Z',
+    });
     const claimed = await board.claimNext('developer', '2020-01-01T00:01:00.000Z');
     await board.complete(claimed!, '2020-01-01T00:02:00.000Z');
     assert.deepEqual(await board.counts('developer'), { todo: 0, inProgress: 0, done: 1 });
@@ -2076,7 +2702,12 @@ test('the Lead can re-assign a completed task title for rework (not silently ded
     // must enqueue a fresh todo (the regression: openTitles excludes done, so this is allowed).
     const openTitles = await board.openTitles('developer');
     assert.equal(openTitles.has('Fix the bug'), false, 'no OPEN task with that title remains');
-    await board.enqueue({ roleId: 'developer', title: 'Fix the bug', body: 'rework pass', createdAt: '2020-01-01T00:03:00.000Z' });
+    await board.enqueue({
+      roleId: 'developer',
+      title: 'Fix the bug',
+      body: 'rework pass',
+      createdAt: '2020-01-01T00:03:00.000Z',
+    });
     assert.deepEqual(await board.counts('developer'), { todo: 1, inProgress: 0, done: 1 });
   } finally {
     await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
@@ -2092,7 +2723,18 @@ test('computeDoneGate does not double-count an open handoff in board_pending and
     tigerRoot: '/x/.tiger',
     status: 'running',
     goal: 'g',
-    roles: [{ id: 'lead', name: 'Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: true, status: 'idle', taskCounts: { todo: 0, inProgress: 0, done: 0 } }],
+    roles: [
+      {
+        id: 'lead',
+        name: 'Lead',
+        tool: 'codex',
+        responsibilities: [],
+        canWriteCode: false,
+        requiredForSignoff: true,
+        status: 'idle',
+        taskCounts: { todo: 0, inProgress: 0, done: 0 },
+      },
+    ],
     round: 0,
     turnCount: 0,
     currentTurn: null,
@@ -2108,8 +2750,14 @@ test('computeDoneGate does not double-count an open handoff in board_pending and
     createdAt: '2020-01-01T00:00:00.000Z',
   } as unknown as TeamRunState);
   // No handoff, no board work → neither blocker present.
-  assert.equal(base.openBlockers.some((b) => b.code === 'board_pending'), false);
-  assert.equal(base.openBlockers.some((b) => b.code === 'handoff_pending'), false);
+  assert.equal(
+    base.openBlockers.some((b) => b.code === 'board_pending'),
+    false,
+  );
+  assert.equal(
+    base.openBlockers.some((b) => b.code === 'handoff_pending'),
+    false,
+  );
 
   // Now: the target role has ONE in-progress task that IS the open handoff. It must surface as a
   // handoff_pending blocker but NOT also as a board_pending blocker (the count nets to zero).
@@ -2120,10 +2768,30 @@ test('computeDoneGate does not double-count an open handoff in board_pending and
     status: 'running',
     goal: 'g',
     roles: [
-      { id: 'lead', name: 'Lead', tool: 'codex', responsibilities: [], canWriteCode: false, requiredForSignoff: true, status: 'idle', taskCounts: { todo: 0, inProgress: 0, done: 0 } },
-      { id: 'dev', name: 'Dev', tool: 'codex', responsibilities: [], canWriteCode: true, requiredForSignoff: false, status: 'idle', taskCounts: { todo: 0, inProgress: 1, done: 0 } },
+      {
+        id: 'lead',
+        name: 'Lead',
+        tool: 'codex',
+        responsibilities: [],
+        canWriteCode: false,
+        requiredForSignoff: true,
+        status: 'idle',
+        taskCounts: { todo: 0, inProgress: 0, done: 0 },
+      },
+      {
+        id: 'dev',
+        name: 'Dev',
+        tool: 'codex',
+        responsibilities: [],
+        canWriteCode: true,
+        requiredForSignoff: false,
+        status: 'idle',
+        taskCounts: { todo: 0, inProgress: 1, done: 0 },
+      },
     ],
-    handoffs: [{ id: 'h1', taskId: 'TASK-0001', fromRoleId: 'lead', toRoleId: 'dev', createdAt: '2020-01-01T00:00:00.000Z' }],
+    handoffs: [
+      { id: 'h1', taskId: 'TASK-0001', fromRoleId: 'lead', toRoleId: 'dev', createdAt: '2020-01-01T00:00:00.000Z' },
+    ],
     round: 0,
     turnCount: 0,
     currentTurn: null,
@@ -2138,8 +2806,15 @@ test('computeDoneGate does not double-count an open handoff in board_pending and
     materialChangeAt: '2020-01-01T00:00:00.000Z',
     createdAt: '2020-01-01T00:00:00.000Z',
   } as unknown as TeamRunState);
-  assert.ok(withHandoff.openBlockers.some((b) => b.code === 'handoff_pending'), 'the open handoff is surfaced');
-  assert.equal(withHandoff.openBlockers.some((b) => b.code === 'board_pending'), false, 'the handoff task is not also board_pending');
+  assert.ok(
+    withHandoff.openBlockers.some((b) => b.code === 'handoff_pending'),
+    'the open handoff is surfaced',
+  );
+  assert.equal(
+    withHandoff.openBlockers.some((b) => b.code === 'board_pending'),
+    false,
+    'the handoff task is not also board_pending',
+  );
 });
 
 test('resume rejects a genuinely ended run but a stopped run is resumable', async () => {

@@ -322,7 +322,8 @@ const tr: MessageSchema = {
       intro: 'Mevcut istem kütüphanesi deposundan yeniden kullanılabilir istem dosyalarına göz atın.',
       loading: 'İstem kütüphanesi yükleniyor...',
       emptyTitle: 'Henüz istem yok.',
-      emptyDesc: 'Mevcut İstemler çalışma alanında istem dosyaları oluşturun, ardından burada yönetmek için bu kategoriyi yenileyin.',
+      emptyDesc:
+        'Mevcut İstemler çalışma alanında istem dosyaları oluşturun, ardından burada yönetmek için bu kategoriyi yenileyin.',
       refreshLibrary: 'İstem kütüphanesini yenile',
       listLabel: 'İstem kütüphanesi dosyaları',
       selected: 'Seçili istem',
@@ -337,9 +338,11 @@ const tr: MessageSchema = {
       refreshStatus: 'Durumu yenile',
       loading: 'Cue yapılandırması yükleniyor...',
       disabledTitle: 'Cue motoru etkin değil.',
-      disabledDesc: 'Backend\'i KAPLAN_CUE_ENABLED=1 ile başlatarak .kaplan/cue.json yükleyin ve olay tabanlı pipeline\'ları etkinleştirin.',
+      disabledDesc:
+        "Backend'i KAPLAN_CUE_ENABLED=1 ile başlatarak .kaplan/cue.json yükleyin ve olay tabanlı pipeline'ları etkinleştirin.",
       emptyTitle: 'Cue aboneliği yok.',
-      emptyDesc: 'Çalışma alanınızdaki .kaplan/cue.json içinde abonelikler tanımlayın, ardından Cue yapılandırmasını yeniden yükleyin.',
+      emptyDesc:
+        'Çalışma alanınızdaki .kaplan/cue.json içinde abonelikler tanımlayın, ardından Cue yapılandırmasını yeniden yükleyin.',
       refreshCueStatus: 'Cue durumunu yenile',
       subscriptionsLabel: 'Cue abonelikleri',
     },
@@ -514,7 +517,8 @@ const tr: MessageSchema = {
       diff: 'Diff',
       promoteTitle: "Merge this attempt's branch into the workspace base branch",
       promote: 'Promote',
-      empty: 'No attempts recorded yet - this run behaves as a single implicit attempt. Start a new attempt to sample another solution.',
+      empty:
+        'No attempts recorded yet - this run behaves as a single implicit attempt. Start a new attempt to sample another solution.',
       newTitle: 'Re-run the same goal as a new attempt (its work is isolated on its own branch)',
       newAttempt: '+ New attempt',
     },
@@ -568,7 +572,8 @@ const tr: MessageSchema = {
     },
     launcher: {
       title: 'Assemble an AI Team',
-      description: 'Pick the project folder, choose a team template, describe the goal, and the role agents will plan, build, review, and only stop once every required role signs off. Steer them anytime.',
+      description:
+        'Pick the project folder, choose a team template, describe the goal, and the role agents will plan, build, review, and only stop once every required role signs off. Steer them anytime.',
       goal: 'Goal',
       lead: 'Lead',
       build: 'Build',
@@ -606,7 +611,8 @@ const tr: MessageSchema = {
       role: 'Role',
       provider: 'Provider',
       empty: 'No metrics yet.',
-      naTip: 'Token/cost totals need a usage-reporting runner - the CLIs run as interactive PTYs and do not self-report usage.',
+      naTip:
+        'Token/cost totals need a usage-reporting runner - the CLIs run as interactive PTYs and do not self-report usage.',
     },
     roleControls: {
       oneLeadRequired: 'Exactly one Lead role is required.',
@@ -687,7 +693,8 @@ const tr: MessageSchema = {
       responsibilitiesPlaceholder: 'Responsibilities, one per line...',
       mayEditSource: 'may edit project source',
       requiredForSignoff: 'required for sign-off',
-      permissionHint: 'Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).',
+      permissionHint:
+        'Every role runs autonomously and writes its own turn output, so all roles use a write-capable permission. The "may edit project source" flag governs whether a role changes project code (enforced via its persona, not the sandbox).',
       createTemplate: 'Create template',
     },
     terminal: {
@@ -738,7 +745,8 @@ const tr: MessageSchema = {
       editTitle: 'Edit subscription',
       saveChanges: 'Save changes',
       default: 'Default',
-      promptVarsHint: "Template vars: {'{{'}CUE_FILE_PATH{'}}'}, {'{{'}CUE_SOURCE{'}}'}, {'{{'}CUE_SOURCE_OUTPUT{'}}'}, {'{{'}CUE_EVENT{'}}'}.",
+      promptVarsHint:
+        "Template vars: {'{{'}CUE_FILE_PATH{'}}'}, {'{{'}CUE_SOURCE{'}}'}, {'{{'}CUE_SOURCE_OUTPUT{'}}'}, {'{{'}CUE_EVENT{'}}'}.",
       intervalHint: 'How often to fire. Use s / m / h.',
       events: {
         fileChanged: 'File changed',
@@ -995,7 +1003,6 @@ const tr: MessageSchema = {
     },
   },
   tiger: {
-
     view: {
       tiger: 'Tiger',
       templates: 'Templates',
@@ -1013,7 +1020,7 @@ const tr: MessageSchema = {
       runAnyway: 'Run anyway',
     },
     stages: {
-      'brainstorming': { title: 'Brainstorming' },
+      brainstorming: { title: 'Brainstorming' },
       'writing-plan': { title: 'Writing Plan' },
       'writing-tasks': { title: 'Writing Tasks' },
       'merge-tasks': { title: 'Merge Tasks' },
@@ -1059,7 +1066,8 @@ const tr: MessageSchema = {
       forgetAriaLabel: 'Forget project {name} (does not delete files)',
       forgetTitle: 'Forget (does not delete files)',
       forgetDialogTitle: 'Forget project',
-      forgetDialogMessage: 'Forget “{name}”? This removes it from the project list but does not delete any files on disk.',
+      forgetDialogMessage:
+        'Forget “{name}”? This removes it from the project list but does not delete any files on disk.',
       forgetDialogConfirm: 'Forget',
       noPromptYet: '(no prompt yet)',
       folderMissing: 'Folder is missing',
@@ -1459,7 +1467,7 @@ const tr: MessageSchema = {
       cannotRead: 'Bu klasör okunamıyor',
     },
     page: {
-      lead: 'Sistem durumu ve uygulama tercihleri. Kaplan her şeyi MySQL\'e kaydeder, böylece bir backend yeniden başlatmasından sonra bile çalışma kaldığı yerden devam eder.',
+      lead: "Sistem durumu ve uygulama tercihleri. Kaplan her şeyi MySQL'e kaydeder, böylece bir backend yeniden başlatmasından sonra bile çalışma kaldığı yerden devam eder.",
       checking: 'Sistem durumu kontrol ediliyor…',
       loadError: 'Sistem durumu yüklenemedi',
       systemStatus: 'Sistem durumu',
@@ -1472,7 +1480,7 @@ const tr: MessageSchema = {
       dbWarn: 'MySQL kalıcı kayıt sistemidir. Kullanılamadığı sürece kalıcılık ve devam etme bozulur.',
       legacyImport: 'Eski içe aktarma',
       legacyLead:
-        'Açılışta Kaplan, eski dosya tabanlı durumu (projeler ve çalıştırma şablonları) MySQL\'e aktarır. Bu sayılar, içe aktarılanlar dahil şu anda mevcut olanları yansıtır.',
+        "Açılışta Kaplan, eski dosya tabanlı durumu (projeler ve çalıştırma şablonları) MySQL'e aktarır. Bu sayılar, içe aktarılanlar dahil şu anda mevcut olanları yansıtır.",
       projectsAvailable: 'Mevcut projeler',
       runTemplates: 'Çalıştırma şablonları',
       preferences: 'Tercihler',
@@ -1482,4 +1490,3 @@ const tr: MessageSchema = {
 } satisfies MessageSchema;
 
 export default tr;
-

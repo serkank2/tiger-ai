@@ -26,10 +26,7 @@ async function loadStatus() {
   try {
     // Health is the DB-readiness probe; projects + templates evidence that legacy
     // file-state was imported into MySQL on startup.
-    const [h, templates] = await Promise.all([
-      api.getHealth(),
-      api.listTigerTemplates().catch(() => []),
-    ]);
+    const [h, templates] = await Promise.all([api.getHealth(), api.listTigerTemplates().catch(() => [])]);
     health.value = h;
     templateCount.value = templates.length;
     await tiger.loadProjects().catch(() => {});
@@ -54,12 +51,7 @@ onMounted(loadStatus);
     </header>
 
     <StateView v-if="loading && !health" kind="loading" :title="t('settings.page.checking')" />
-    <StateView
-      v-else-if="error && !health"
-      kind="error"
-      :title="t('settings.page.loadError')"
-      :description="error"
-    >
+    <StateView v-else-if="error && !health" kind="error" :title="t('settings.page.loadError')" :description="error">
       <BaseButton @click="loadStatus">{{ t('common.retry') }}</BaseButton>
     </StateView>
 
@@ -77,7 +69,9 @@ onMounted(loadStatus);
             <dt>{{ t('settings.page.database') }}</dt>
             <dd>
               <span class="pill" :class="dbReady ? 'ok' : 'bad'" role="status">
-                <span class="dot" aria-hidden="true" />{{ dbReady ? t('common.status.ready') : t('settings.page.unavailable') }}
+                <span class="dot" aria-hidden="true" />{{
+                  dbReady ? t('common.status.ready') : t('settings.page.unavailable')
+                }}
               </span>
               <span v-if="health?.db.name" class="muted">{{ health.db.name }}</span>
             </dd>

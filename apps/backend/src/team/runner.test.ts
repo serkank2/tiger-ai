@@ -144,11 +144,10 @@ test('runRoleTurn completes one fake role turn and appends a TeamMessage to the 
     assert.match(result.messages[0]?.body ?? '', /Fake team role turn completed/);
     assert.equal(manager.getDefinition(result.terminalId)?.protected, true);
 
-    const routed = await manager.routeInput(
-      { mode: 'all' },
-      'broadcast should not reach protected team terminals',
-      { appendNewline: false, startTerminalOnSend: false },
-    );
+    const routed = await manager.routeInput({ mode: 'all' }, 'broadcast should not reach protected team terminals', {
+      appendNewline: false,
+      startTerminalOnSend: false,
+    });
     assert.deepEqual(routed.failed, [{ termId: result.terminalId, code: 'PROTECTED' }]);
 
     const transcript = await readTranscriptMessages(paths, 'team-run-1');
@@ -241,13 +240,28 @@ test('runRoleTurn keeps run artifacts under canonical paths when executing in an
 
     assert.equal(result.outcome.state, 'completed');
     assert.equal(manager.getDefinition(result.terminalId)?.cwd, isolated);
-    assert.equal(result.promptPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.prompt.md'));
-    assert.equal(result.outputPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.output.md'));
+    assert.equal(
+      result.promptPath,
+      path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.prompt.md'),
+    );
+    assert.equal(
+      result.outputPath,
+      path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.output.md'),
+    );
     assert.equal(result.markerPath, path.join(paths.root, 'team', 'team-run-canonical', '.runtime', 'turn-iso.done'));
 
-    const artifactLog = await fs.readFile(path.join(paths.root, 'team', 'team-run-canonical', 'artifacts.ndjson'), 'utf8');
+    const artifactLog = await fs.readFile(
+      path.join(paths.root, 'team', 'team-run-canonical', 'artifacts.ndjson'),
+      'utf8',
+    );
     assert.match(artifactLog, /turn-iso\.prompt\.md/);
-    assert.equal(await fs.stat(path.join(isolated, '.tiger')).then(() => true, () => false), false);
+    assert.equal(
+      await fs.stat(path.join(isolated, '.tiger')).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    );
   } finally {
     await manager.killAll();
     await fs.rm(workspace, { recursive: true, force: true });
@@ -332,7 +346,13 @@ test('createTeamTurnRunner preserves canonical run paths while using the schedul
     assert.equal(manager.getDefinition(`team-${runId}-${engineRole.id}`)?.cwd, isolated);
     const artifactLog = await fs.readFile(path.join(paths.runDir, 'artifacts.ndjson'), 'utf8');
     assert.match(artifactLog, /turn-adapter\.prompt\.md/);
-    assert.equal(await fs.stat(path.join(isolated, '.tiger')).then(() => true, () => false), false);
+    assert.equal(
+      await fs.stat(path.join(isolated, '.tiger')).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    );
   } finally {
     await runner.disposeRun?.(runId, { kill: true });
     await manager.killAll();
@@ -366,7 +386,7 @@ test('runRoleTurn still fails when completed output has zero valid TeamMessage b
   }
 });
 
-test('runRoleTurn builds the launch command from the role\'s own agent config, not just config defaults', async () => {
+test("runRoleTurn builds the launch command from the role's own agent config, not just config defaults", async () => {
   // Regression guard for FINDING-005: runRoleTurn normalizes the role (dropping its
   // agent/model/effort/permission) before building the launch command. The launch params must still
   // be derived from the raw role so a role driven through its `agent` block keeps its per-role CLI

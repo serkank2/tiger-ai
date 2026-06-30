@@ -20,9 +20,15 @@ describe('Settings and Limits responsive CSS', () => {
 
     expect(limits).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
     expect(limits).toContain('min-width: 760px;');
-    expect(limits).toMatch(/@media \(max-width: 920px\) \{[\s\S]*?\.provider-grid,[\s\S]*?\.gate-panel \{[\s\S]*?grid-template-columns: 1fr;/);
-    expect(limits).toMatch(/@media \(max-width: 920px\) \{[\s\S]*?\.rule-row \{[\s\S]*?grid-template-columns: 1fr 1fr;/);
+    expect(limits).toMatch(
+      /@media \(max-width: 920px\) \{[\s\S]*?\.provider-grid,[\s\S]*?\.gate-panel \{[\s\S]*?grid-template-columns: 1fr;/,
+    );
+    expect(limits).toMatch(
+      /@media \(max-width: 920px\) \{[\s\S]*?\.rule-row \{[\s\S]*?grid-template-columns: 1fr 1fr;/,
+    );
     expect(limits).toMatch(/@media \(max-width: 920px\) \{[\s\S]*?\.history-table \{[\s\S]*?overflow-x: auto;/);
-    expect(limits).toMatch(/@media \(max-width: 560px\) \{[\s\S]*?\.rule-row,[\s\S]*?\.snapshot-meta,[\s\S]*?\.gate-meta \{[\s\S]*?grid-template-columns: 1fr;/);
+    expect(limits).toMatch(
+      /@media \(max-width: 560px\) \{[\s\S]*?\.rule-row,[\s\S]*?\.snapshot-meta,[\s\S]*?\.gate-meta \{[\s\S]*?grid-template-columns: 1fr;/,
+    );
   });
 });

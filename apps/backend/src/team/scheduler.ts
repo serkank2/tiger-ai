@@ -194,7 +194,11 @@ function choosePhase(state: TeamSchedulerState): TeamPhase {
   return fallbackPhase(state.tasks, state.findings, state.doneGate);
 }
 
-function fallbackPhase(tasks: TeamTaskState | undefined, findings: TeamFindingState | undefined, doneGate: DoneGateState | undefined): TeamPhase {
+function fallbackPhase(
+  tasks: TeamTaskState | undefined,
+  findings: TeamFindingState | undefined,
+  doneGate: DoneGateState | undefined,
+): TeamPhase {
   if ((findings?.needsFix ?? 0) > 0 || (findings?.open ?? 0) > 0) return 'implementation';
   if ((findings?.needsVerification ?? 0) > 0) return 'testing';
   if ((tasks?.needsAnalysis ?? 0) > 0) return 'analysis';
@@ -242,7 +246,7 @@ function toTurn(role: TeamRole, phase: TeamPhase, state: TeamSchedulerState, wri
 
 function selectionReason(state: TeamSchedulerState): string {
   return state.coordinatorDecision?.roleIds?.length || state.coordinatorDecision?.phase
-    ? state.coordinatorDecision.reason ?? 'coordinator policy decision'
+    ? (state.coordinatorDecision.reason ?? 'coordinator policy decision')
     : 'deterministic phase fallback';
 }
 
@@ -282,6 +286,10 @@ function sortedRoles(roles: TeamRole[]): TeamRole[] {
     .map((entry) => entry.role);
 }
 
-function boundary(atBoundary: boolean, drainSteeringBeforeNextTurn: boolean, checkDoneGate: boolean): TeamSchedulerBoundary {
+function boundary(
+  atBoundary: boolean,
+  drainSteeringBeforeNextTurn: boolean,
+  checkDoneGate: boolean,
+): TeamSchedulerBoundary {
   return { atBoundary, drainSteeringBeforeNextTurn, checkDoneGate };
 }

@@ -95,9 +95,18 @@ test('composePrompt reports measurable size and is smaller than the legacy pream
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-compose-size-'));
   try {
     const paths = await ensureScaffold(dir, 'Improve the project while keeping prompts lean.');
-    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'claude-01-brainstorming.md'), '# Analysis\nA'.repeat(80));
-    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'codex-01-brainstorming.md'), '# Risks\nB'.repeat(60));
-    await fs.writeFile(path.join(paths.stageDir('brainstorming'), 'codex-02-brainstorming.md'), '# Success\nC'.repeat(70));
+    await fs.writeFile(
+      path.join(paths.stageDir('brainstorming'), 'claude-01-brainstorming.md'),
+      '# Analysis\nA'.repeat(80),
+    );
+    await fs.writeFile(
+      path.join(paths.stageDir('brainstorming'), 'codex-01-brainstorming.md'),
+      '# Risks\nB'.repeat(60),
+    );
+    await fs.writeFile(
+      path.join(paths.stageDir('brainstorming'), 'codex-02-brainstorming.md'),
+      '# Success\nC'.repeat(70),
+    );
 
     const planOutputPath = paths.outputFile('writing-plan', 'claude', 1);
     const planMarkerPath = paths.markerFile('writing-plan', 'run-plan');

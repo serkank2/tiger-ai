@@ -70,7 +70,11 @@ test('compact is a no-op (returns false) for a session that never started', asyn
   const { sess, mgr } = session('claude');
   const ok = await sess.compact(new AbortController().signal);
   assert.equal(ok, false);
-  assert.deepEqual((mgr as unknown as { writes: string[] }).writes, [], 'no /compact must be written to a dead session');
+  assert.deepEqual(
+    (mgr as unknown as { writes: string[] }).writes,
+    [],
+    'no /compact must be written to a dead session',
+  );
 });
 
 test('compact returns false immediately when the abort signal is already aborted', async () => {

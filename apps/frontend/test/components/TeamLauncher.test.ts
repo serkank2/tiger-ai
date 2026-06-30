@@ -18,7 +18,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/composables/useApi', () => ({ useApi: () => mocks.api }));
 vi.mock('~/stores/notices', () => ({ useNoticesStore: () => mocks.notices }));
 vi.mock('~/composables/useDialog', () => ({ useDialog: () => mocks.dialog }));
-vi.mock('~/components/team/TeamTemplateEditor.vue', () => ({ default: { name: 'TeamTemplateEditor', template: '<div />' } }));
+vi.mock('~/components/team/TeamTemplateEditor.vue', () => ({
+  default: { name: 'TeamTemplateEditor', template: '<div />' },
+}));
 
 const BaseButtonStub = {
   props: ['disabled', 'loading'],

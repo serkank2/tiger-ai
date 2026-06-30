@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type {
-  ExecutionStatus,
-  FindingsSummary,
-  ReviewStatus,
-  TaskSummary,
-} from '../orchestrator/types.js';
+import type { ExecutionStatus, FindingsSummary, ReviewStatus, TaskSummary } from '../orchestrator/types.js';
 import type { RoleInstance, SignOff, SteeringDirective, VerificationRecord } from './types.js';
 import {
   evaluateCompletion,
@@ -335,7 +330,13 @@ test('evaluateCompletion: one fresh sign-off satisfies multiple required instanc
 test('evaluateCompletion: a blocked required instance keeps its kind from satisfying the gate', () => {
   const input = greenInput();
   input.roles = [
-    roleInstance({ id: 'developer', name: 'Developer #1', canWriteCode: true, requiredForSignoff: true, status: 'blocked' }),
+    roleInstance({
+      id: 'developer',
+      name: 'Developer #1',
+      canWriteCode: true,
+      requiredForSignoff: true,
+      status: 'blocked',
+    }),
     roleInstance({ id: 'developer-2', name: 'Developer #2', canWriteCode: true, requiredForSignoff: true }),
     roleInstance({ id: 'developer-3', name: 'Developer #3', canWriteCode: true, requiredForSignoff: true }),
   ];
@@ -344,7 +345,9 @@ test('evaluateCompletion: a blocked required instance keeps its kind from satisf
   const result = evaluateCompletion(input);
   assert.equal(result.complete, false);
   assert.deepEqual(result.pendingRoleIds, ['developer']);
-  assert.ok(result.blockers.some((blocker) => blocker.code === 'signoff_missing' && /blocked instance/i.test(blocker.message)));
+  assert.ok(
+    result.blockers.some((blocker) => blocker.code === 'signoff_missing' && /blocked instance/i.test(blocker.message)),
+  );
 });
 
 test('evaluateCompletion: a withdrawn (done=false) latest sign-off counts as missing', () => {
@@ -398,13 +401,7 @@ test('evaluateCompletion: multiple open gates are all reported', () => {
   const result = evaluateCompletion(input);
   assert.equal(result.complete, false);
   const present = new Set(result.blockers.map((b) => b.code));
-  for (const code of [
-    'tasks_blocked',
-    'findings_open',
-    'verification_failed',
-    'steering_pending',
-    'signoff_missing',
-  ]) {
+  for (const code of ['tasks_blocked', 'findings_open', 'verification_failed', 'steering_pending', 'signoff_missing']) {
     assert.ok(present.has(code as never), `expected blocker ${code}`);
   }
 });

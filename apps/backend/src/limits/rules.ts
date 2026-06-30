@@ -1,11 +1,5 @@
 import { isAgentType } from '../orchestrator/types.js';
-import type {
-  LimitProvider,
-  LimitRule,
-  LimitRuleDecision,
-  LimitSelectedWindow,
-  LimitSnapshot,
-} from './types.js';
+import type { LimitProvider, LimitRule, LimitRuleDecision, LimitSelectedWindow, LimitSnapshot } from './types.js';
 
 export const DEFAULT_LIMIT_STALE_AFTER_MS = 15 * 60 * 1000;
 
@@ -57,11 +51,16 @@ export function normalizeRuleInput(
 
   const thresholdRaw = input.thresholdPercent ?? existing?.thresholdPercent;
   const thresholdPercent = typeof thresholdRaw === 'string' ? Number(thresholdRaw) : thresholdRaw;
-  if (typeof thresholdPercent !== 'number' || !Number.isFinite(thresholdPercent) || thresholdPercent < 0 || thresholdPercent > 100) {
+  if (
+    typeof thresholdPercent !== 'number' ||
+    !Number.isFinite(thresholdPercent) ||
+    thresholdPercent < 0 ||
+    thresholdPercent > 100
+  ) {
     throw new LimitRuleValidationError('thresholdPercent must be a number between 0 and 100');
   }
 
-  const enabled = input.enabled === undefined ? existing?.enabled ?? true : Boolean(input.enabled);
+  const enabled = input.enabled === undefined ? (existing?.enabled ?? true) : Boolean(input.enabled);
 
   const id =
     (typeof input.id === 'string' && input.id.trim()) ||
@@ -101,7 +100,9 @@ function latestSnapshots(snapshots: LimitSnapshot[]): LimitSnapshot[] {
     const current = byKey.get(key);
     if (!current || toTime(snapshot.checkedAt) >= toTime(current.checkedAt)) byKey.set(key, snapshot);
   }
-  return [...byKey.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.windowKey.localeCompare(b.windowKey));
+  return [...byKey.values()].sort(
+    (a, b) => a.provider.localeCompare(b.provider) || a.windowKey.localeCompare(b.windowKey),
+  );
 }
 
 function selectedWindow(snapshot: LimitSnapshot, stale: boolean): LimitSelectedWindow {
@@ -219,10 +220,7 @@ export const DEFAULT_WARN_PERCENT = 75;
  * {@link evaluateLimitRules} this does not block execution — it is purely advisory for the UI.
  * Failed/unparseable snapshots (ok:false or percentUsed === null) are ignored.
  */
-export function evaluateLimitWarnings(
-  snapshots: LimitSnapshot[],
-  opts: { warnPercent?: number } = {},
-): LimitWarning[] {
+export function evaluateLimitWarnings(snapshots: LimitSnapshot[], opts: { warnPercent?: number } = {}): LimitWarning[] {
   const warnPercent = opts.warnPercent ?? DEFAULT_WARN_PERCENT;
   const warnings: LimitWarning[] = [];
   for (const snapshot of latestSnapshots(snapshots)) {

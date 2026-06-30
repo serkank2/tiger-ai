@@ -33,7 +33,9 @@ const statusLabel = computed(() => {
   if (props.state?.progress === 'persisting') return t('prompts.generation.status.savingResult');
   return t(`prompts.generation.status.${status}`);
 });
-const isBusy = computed(() => props.starting || generation.value?.status === 'pending' || generation.value?.status === 'running');
+const isBusy = computed(
+  () => props.starting || generation.value?.status === 'pending' || generation.value?.status === 'running',
+);
 const canSubmit = computed(() => rough.value.trim().length > 0 && !props.starting);
 
 function submit(): void {
@@ -106,7 +108,11 @@ function submit(): void {
 
         <div v-if="isBusy" class="state inline">
           <Spinner
-            :label="generation.status === 'pending' ? t('prompts.generation.queuedForGeneration') : t('prompts.generation.generationRunning')"
+            :label="
+              generation.status === 'pending'
+                ? t('prompts.generation.queuedForGeneration')
+                : t('prompts.generation.generationRunning')
+            "
           />
           <p v-if="state?.progress && state.progress !== 'idle'">
             {{ t('prompts.generation.progress') }}: {{ String(state.progress).replaceAll('_', ' ') }}

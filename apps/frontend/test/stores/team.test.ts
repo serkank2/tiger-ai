@@ -2,7 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, reactive } from 'vue';
 import { useTeamStore } from '~/stores/team';
-import type { RoleSnapshot, RoleTemplate, TeamArtifact, TeamChanges, TeamMessage, TeamMessagePage, TeamRunState, TeamTemplate } from '~/types';
+import type {
+  RoleSnapshot,
+  RoleTemplate,
+  TeamArtifact,
+  TeamChanges,
+  TeamMessage,
+  TeamMessagePage,
+  TeamRunState,
+  TeamTemplate,
+} from '~/types';
 
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (msg: unknown) => void>();
@@ -213,7 +222,9 @@ describe('useTeamStore', () => {
 
     mocks.api.listTeamTemplates.mockResolvedValue({ teams: [template()], roles: [roleTemplate] });
     mocks.api.getTeamState.mockResolvedValue({ state: state() });
-    mocks.api.listTeamMessages.mockResolvedValue(page([message('m1'), message('m2', { seq: 2 }), message('m3', { seq: 3 })]));
+    mocks.api.listTeamMessages.mockResolvedValue(
+      page([message('m1'), message('m2', { seq: 2 }), message('m3', { seq: 3 })]),
+    );
     mocks.api.listTeamArtifacts.mockResolvedValue([]);
 
     mocks.conn.status = 'connected';

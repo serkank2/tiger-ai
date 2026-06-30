@@ -58,16 +58,13 @@ function viewDiff(a: TeamAttemptSnapshot): void {
 
 <template>
   <details class="attempts" open>
-    <summary>{{ t('team.attempts.title') }} <span v-if="attempts.length" class="n">{{ attempts.length }}</span></summary>
+    <summary>
+      {{ t('team.attempts.title') }} <span v-if="attempts.length" class="n">{{ attempts.length }}</span>
+    </summary>
 
     <div class="a-body">
       <ul v-if="attempts.length" class="a-list">
-        <li
-          v-for="a in attempts"
-          :key="a.id"
-          class="attempt"
-          :class="{ current: a.current, promoted: a.promoted }"
-        >
+        <li v-for="a in attempts" :key="a.id" class="attempt" :class="{ current: a.current, promoted: a.promoted }">
           <div class="a-row">
             <span class="a-num">#{{ a.attemptNumber }}</span>
             <span class="a-status" :class="`st-${a.status}`">{{ t(STATUS_KEY[a.status]) }}</span>
@@ -79,7 +76,9 @@ function viewDiff(a: TeamAttemptSnapshot): void {
             <span v-if="a.branch" class="a-branch" :title="a.branch">Branch: {{ a.branch }}</span>
           </div>
           <div class="a-actions">
-            <BaseButton size="sm" variant="ghost" :title="t('team.attempts.viewDiffTitle')" @click="viewDiff(a)">{{ t('team.attempts.diff') }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" :title="t('team.attempts.viewDiffTitle')" @click="viewDiff(a)">{{
+              t('team.attempts.diff')
+            }}</BaseButton>
             <BaseButton
               v-if="canPromote(a)"
               size="sm"
@@ -87,7 +86,8 @@ function viewDiff(a: TeamAttemptSnapshot): void {
               :loading="team.isBusy(`attempt-promote:${a.id}`)"
               :title="t('team.attempts.promoteTitle')"
               @click="promote(a)"
-            >{{ t('team.attempts.promote') }}</BaseButton>
+              >{{ t('team.attempts.promote') }}</BaseButton
+            >
           </div>
         </li>
       </ul>
@@ -103,7 +103,8 @@ function viewDiff(a: TeamAttemptSnapshot): void {
         :loading="team.isBusy('attempt-new')"
         :title="t('team.attempts.newTitle')"
         @click="startNewAttempt"
-      >{{ t('team.attempts.newAttempt') }}</BaseButton>
+        >{{ t('team.attempts.newAttempt') }}</BaseButton
+      >
     </div>
   </details>
 </template>
@@ -123,9 +124,23 @@ summary {
   letter-spacing: 0.05em;
   color: var(--text-dim);
 }
-summary .n { color: var(--text-faint); }
-.a-body { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-2); }
-.a-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+summary .n {
+  color: var(--text-faint);
+}
+.a-body {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.a-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .attempt {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -134,10 +149,21 @@ summary .n { color: var(--text-faint); }
   flex-direction: column;
   gap: 4px;
 }
-.attempt.current { border-color: var(--accent); }
-.attempt.promoted { border-color: var(--green); }
-.a-row { display: flex; align-items: center; gap: var(--space-2); }
-.a-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.attempt.current {
+  border-color: var(--accent);
+}
+.attempt.promoted {
+  border-color: var(--green);
+}
+.a-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.a-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 .a-status {
   font-size: var(--text-xs);
   font-weight: 600;
@@ -145,10 +171,19 @@ summary .n { color: var(--text-faint); }
   letter-spacing: 0.04em;
   color: var(--text-dim);
 }
-.st-running { color: var(--accent); }
-.st-completed, .st-promoted { color: var(--green); }
-.st-failed { color: var(--red); }
-.st-superseded { color: var(--slate); }
+.st-running {
+  color: var(--accent);
+}
+.st-completed,
+.st-promoted {
+  color: var(--green);
+}
+.st-failed {
+  color: var(--red);
+}
+.st-superseded {
+  color: var(--slate);
+}
 .a-tag {
   font-size: var(--text-xs);
   text-transform: uppercase;
@@ -157,10 +192,24 @@ summary .n { color: var(--text-faint); }
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
 }
-.a-tag.cur { color: var(--accent); border-color: var(--accent); }
-.a-tag.prom { color: var(--green); border-color: var(--green); }
-.a-meta { display: flex; gap: var(--space-2); font-size: var(--text-xs); color: var(--text-dim); flex-wrap: wrap; }
-.a-sum { font-variant-numeric: tabular-nums; }
+.a-tag.cur {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.a-tag.prom {
+  color: var(--green);
+  border-color: var(--green);
+}
+.a-meta {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.a-sum {
+  font-variant-numeric: tabular-nums;
+}
 .a-branch {
   font-family: var(--font-mono, monospace);
   color: var(--text-faint);
@@ -169,7 +218,17 @@ summary .n { color: var(--text-faint); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.a-actions { display: flex; gap: var(--space-2); margin-top: 2px; }
-.empty { margin: 0; font-size: var(--text-xs); color: var(--text-faint); }
-.new-attempt { align-self: flex-start; }
+.a-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+.empty {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+.new-attempt {
+  align-self: flex-start;
+}
 </style>

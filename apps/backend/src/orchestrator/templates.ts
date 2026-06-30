@@ -68,7 +68,7 @@ export const BUILTIN_TEMPLATES: RunTemplate[] = [
     configs: allStages(
       {},
       {
-        'brainstorming': { claudeAgents: 2, codexAgents: 1 },
+        brainstorming: { claudeAgents: 2, codexAgents: 1 },
         'writing-plan': { claudeAgents: 2, codexAgents: 1 },
         'writing-tasks': { claudeAgents: 2, codexAgents: 2 },
         'executing-plan': { claudeAgents: 3, codexAgents: 2 },
@@ -80,7 +80,12 @@ export const BUILTIN_TEMPLATES: RunTemplate[] = [
 
 /** A filesystem-safe slug for a template name (used as the .md filename). */
 export function templateSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'template';
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'template'
+  );
 }
 
 /** Serialize a template to Markdown: frontmatter (name/description) + a JSON block. */

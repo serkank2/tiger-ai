@@ -51,7 +51,11 @@ function toRoleStatus(status: EngineRoleStatus): RoleStatus {
 
 /** Derive a short, human display name for a run from its goal. */
 function deriveRunName(state: EngineTeamRunState): string {
-  const firstLine = state.goal.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  const firstLine =
+    state.goal
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
   if (!firstLine) return 'Team Run';
   return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
 }
@@ -199,10 +203,7 @@ function toPendingSteering(state: EngineTeamRunState): SteeringDirective[] {
  * UI consumes. `recentMessages` is the conversation tail to seed the chat panel;
  * pass `[]` for live `team.state` pushes (messages ride the `team.message` event).
  */
-export function toTeamRunStateDto(
-  state: EngineTeamRunState,
-  recentMessages: TeamMessage[] = [],
-): TeamRunState {
+export function toTeamRunStateDto(state: EngineTeamRunState, recentMessages: TeamMessage[] = []): TeamRunState {
   return {
     id: state.runId,
     name: deriveRunName(state),
@@ -216,7 +217,12 @@ export function toTeamRunStateDto(
     pendingSteering: toPendingSteering(state),
     tasks: state.tasks,
     findings: state.findings,
-    turns: state.turns.map((turn) => toTurnSnapshot(turn, state.roles.find((role) => role.id === turn.roleId))),
+    turns: state.turns.map((turn) =>
+      toTurnSnapshot(
+        turn,
+        state.roles.find((role) => role.id === turn.roleId),
+      ),
+    ),
     verifications: state.verifications.map(toVerificationSnapshot),
     signoffs: state.signoffs.map(toSignoffSnapshot),
     metrics: computeRunMetrics(state),

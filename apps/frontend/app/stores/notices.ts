@@ -22,7 +22,11 @@ export const useNoticesStore = defineStore('notices', () => {
       const removed = items.value.shift();
       if (removed) clearTimer(removed.id);
     }
-    if (import.meta.client) timers.set(id, setTimeout(() => dismiss(id), ttl));
+    if (import.meta.client)
+      timers.set(
+        id,
+        setTimeout(() => dismiss(id), ttl),
+      );
   }
 
   function dismiss(id: number) {

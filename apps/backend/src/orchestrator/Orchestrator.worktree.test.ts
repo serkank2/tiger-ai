@@ -44,9 +44,16 @@ test('decideRunCwd returns the worktree path only when fully enabled, else the t
 test('classifyMergeResult distinguishes clean, fast-forward, conflict and failure', () => {
   assert.equal(classifyMergeResult({ ok: true, stdout: 'Fast-forward\n', stderr: '' }), 'fast-forward');
   assert.equal(classifyMergeResult({ ok: true, stdout: 'Already up to date.\n', stderr: '' }), 'fast-forward');
-  assert.equal(classifyMergeResult({ ok: true, stdout: 'Merge made by the recursive strategy.\n', stderr: '' }), 'merged');
   assert.equal(
-    classifyMergeResult({ ok: false, stdout: 'CONFLICT (content): Merge conflict in a.txt\n', stderr: 'Automatic merge failed' }),
+    classifyMergeResult({ ok: true, stdout: 'Merge made by the recursive strategy.\n', stderr: '' }),
+    'merged',
+  );
+  assert.equal(
+    classifyMergeResult({
+      ok: false,
+      stdout: 'CONFLICT (content): Merge conflict in a.txt\n',
+      stderr: 'Automatic merge failed',
+    }),
     'conflict',
   );
   assert.equal(classifyMergeResult({ ok: false, stdout: '', stderr: 'fatal: not a git repository' }), 'failed');
@@ -198,10 +205,14 @@ test(
       await waitForIdle(orch, 'executing-plan');
 
       assert.ok(cwds.length >= 1, 'an agent terminal should have been registered');
-      for (const c of cwds) assert.equal(path.resolve(c), path.resolve(paths.root), 'cwd must be the shared tiger root');
+      for (const c of cwds)
+        assert.equal(path.resolve(c), path.resolve(paths.root), 'cwd must be the shared tiger root');
       // No managed worktrees were ever created.
       assert.equal(
-        await fs.stat(path.join(workspace, '.tiger', 'worktrees')).then(() => true, () => false),
+        await fs.stat(path.join(workspace, '.tiger', 'worktrees')).then(
+          () => true,
+          () => false,
+        ),
         false,
         'no worktrees directory should exist when the flag is off',
       );

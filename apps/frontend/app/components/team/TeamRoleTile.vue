@@ -58,14 +58,26 @@ function onTileKeydown(ev: KeyboardEvent): void {
       </div>
       <div class="meta">
         <span class="status">{{ statusLabel }}</span>
-        <span v-if="role.turnCount" class="turns" :title="t('team.roleTile.turnsTaken', { n: role.turnCount })">Turns {{ role.turnCount }}</span>
-        <span v-if="role.canWriteCode" class="flag write" :title="t('team.roleTile.mayEditSource')">{{ t('team.roleTile.code') }}</span>
-        <span v-if="role.requiredForSignoff" class="flag sign" :title="t('team.roleTile.requiredSignoff')">{{ t('team.roleTile.signoff') }}</span>
+        <span v-if="role.turnCount" class="turns" :title="t('team.roleTile.turnsTaken', { n: role.turnCount })"
+          >Turns {{ role.turnCount }}</span
+        >
+        <span v-if="role.canWriteCode" class="flag write" :title="t('team.roleTile.mayEditSource')">{{
+          t('team.roleTile.code')
+        }}</span>
+        <span v-if="role.requiredForSignoff" class="flag sign" :title="t('team.roleTile.requiredSignoff')">{{
+          t('team.roleTile.signoff')
+        }}</span>
       </div>
       <div v-if="role.tasks && (role.tasks.todo || role.tasks.inProgress || role.tasks.done)" class="tasks">
-        <span v-if="role.tasks.todo" class="tq todo" :title="t('team.roleTile.queuedTasks')">Todo {{ role.tasks.todo }}</span>
-        <span v-if="role.tasks.inProgress" class="tq prog" :title="t('team.roleTile.inProgress')">Active {{ role.tasks.inProgress }}</span>
-        <span v-if="role.tasks.done" class="tq done" :title="t('team.roleTile.completedTasks')">Done {{ role.tasks.done }}</span>
+        <span v-if="role.tasks.todo" class="tq todo" :title="t('team.roleTile.queuedTasks')"
+          >Todo {{ role.tasks.todo }}</span
+        >
+        <span v-if="role.tasks.inProgress" class="tq prog" :title="t('team.roleTile.inProgress')"
+          >Active {{ role.tasks.inProgress }}</span
+        >
+        <span v-if="role.tasks.done" class="tq done" :title="t('team.roleTile.completedTasks')"
+          >Done {{ role.tasks.done }}</span
+        >
       </div>
       <p v-if="role.statusNote" class="note">{{ role.statusNote }}</p>
     </div>
@@ -101,10 +113,18 @@ function onTileKeydown(ev: KeyboardEvent): void {
   font-size: var(--text-xs);
   opacity: 0.75;
 }
-.role-tile.s-working { border-color: var(--accent); }
-.role-tile.s-blocked { border-color: var(--amber); }
-.role-tile.s-failed { border-color: var(--red); }
-.role-tile.signed { border-color: var(--green); }
+.role-tile.s-working {
+  border-color: var(--accent);
+}
+.role-tile.s-blocked {
+  border-color: var(--amber);
+}
+.role-tile.s-failed {
+  border-color: var(--red);
+}
+.role-tile.signed {
+  border-color: var(--green);
+}
 .dot {
   width: 8px;
   height: 8px;
@@ -114,16 +134,31 @@ function onTileKeydown(ev: KeyboardEvent): void {
   flex: none;
   transition: background-color var(--dur-base) var(--ease-standard);
 }
-.s-working .dot, .s-thinking .dot { background: var(--accent); }
-.s-blocked .dot { background: var(--amber); }
-.s-failed .dot { background: var(--red); }
-.s-done .dot, .signed .dot { background: var(--green); }
+.s-working .dot,
+.s-thinking .dot {
+  background: var(--accent);
+}
+.s-blocked .dot {
+  background: var(--amber);
+}
+.s-failed .dot {
+  background: var(--red);
+}
+.s-done .dot,
+.signed .dot {
+  background: var(--green);
+}
 .dot.pulse {
   animation: pulse 1.4s var(--ease-in-out) infinite;
 }
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
-  50% { box-shadow: 0 0 0 5px transparent; }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .dot.pulse {
@@ -173,8 +208,14 @@ function onTileKeydown(ev: KeyboardEvent): void {
   border: 1px solid var(--border-strong);
   color: var(--text-faint);
 }
-.flag.write { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.flag.sign { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.flag.write {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.flag.sign {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
 .tasks {
   display: flex;
   gap: var(--space-2);
@@ -185,8 +226,12 @@ function onTileKeydown(ev: KeyboardEvent): void {
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
 }
-.tq.prog { color: var(--accent); }
-.tq.done { color: var(--green); }
+.tq.prog {
+  color: var(--accent);
+}
+.tq.done {
+  color: var(--green);
+}
 .note {
   margin: 4px 0 0;
   font-size: var(--text-xs);

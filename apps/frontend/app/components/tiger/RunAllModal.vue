@@ -144,7 +144,9 @@ watch(selectedKey, () => {
     <div v-if="appliedTemplate" class="template-note">
       <b>{{ appliedTemplate.name }}</b>
       <span>{{ appliedTemplate.description || t('tiger.runAll.noDescription') }}</span>
-      <small>{{ appliedTemplate.builtin ? t('tiger.runAll.builtInTemplate') : t('tiger.runAll.customTemplate') }}</small>
+      <small>{{
+        appliedTemplate.builtin ? t('tiger.runAll.builtInTemplate') : t('tiger.runAll.customTemplate')
+      }}</small>
     </div>
 
     <label class="from">
@@ -158,11 +160,18 @@ watch(selectedKey, () => {
     </label>
 
     <div class="stages">
-      <details v-for="stage in TIGER_STAGES" :key="stage.id" :open="stage.id === fromStage" :class="{ skipped: !willRun(stage.id) }">
+      <details
+        v-for="stage in TIGER_STAGES"
+        :key="stage.id"
+        :open="stage.id === fromStage"
+        :class="{ skipped: !willRun(stage.id) }"
+      >
         <summary>
           <span class="snum">{{ stage.number }}</span>
           <span class="stitle">{{ stage.title }}</span>
-          <span v-if="stage.optional" class="sopt" :title="t('tiger.runAll.optionalStage')">{{ t('tiger.runAll.optional') }}</span>
+          <span v-if="stage.optional" class="sopt" :title="t('tiger.runAll.optionalStage')">{{
+            t('tiger.runAll.optional')
+          }}</span>
           <span v-if="!willRun(stage.id)" class="sskip">{{ t('tiger.runAll.skipped') }}</span>
           <span v-else class="ssum">{{ stageSummary(stage.id) }}</span>
         </summary>
@@ -182,7 +191,9 @@ watch(selectedKey, () => {
 
     <template #footer>
       <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-      <BaseButton variant="primary" :loading="starting" :disabled="!canStart" @click="start">{{ t('tiger.runAll.startAutoRun') }}</BaseButton>
+      <BaseButton variant="primary" :loading="starting" :disabled="!canStart" @click="start">{{
+        t('tiger.runAll.startAutoRun')
+      }}</BaseButton>
     </template>
   </BaseModal>
 </template>

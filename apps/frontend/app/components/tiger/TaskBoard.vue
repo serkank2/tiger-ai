@@ -11,19 +11,8 @@ const emit = defineEmits<{ retry: [] }>();
 
 const { t } = useT();
 
-const EXEC = [
-  { k: 'not_started' },
-  { k: 'in_progress' },
-  { k: 'done' },
-  { k: 'blocked' },
-] as const;
-const REVIEW = [
-  { k: 'pending' },
-  { k: 'reviewing' },
-  { k: 'approved' },
-  { k: 'needs_fix' },
-  { k: 'fixed' },
-] as const;
+const EXEC = [{ k: 'not_started' }, { k: 'in_progress' }, { k: 'done' }, { k: 'blocked' }] as const;
+const REVIEW = [{ k: 'pending' }, { k: 'reviewing' }, { k: 'approved' }, { k: 'needs_fix' }, { k: 'fixed' }] as const;
 </script>
 
 <template>
@@ -33,12 +22,7 @@ const REVIEW = [
   </div>
 
   <div v-else-if="error" class="board">
-    <EmptyState
-      tone="danger"
-      icon="⚠️"
-      :title="t('tiger.taskBoard.errorStateTitle')"
-      :description="error"
-    >
+    <EmptyState tone="danger" icon="⚠️" :title="t('tiger.taskBoard.errorStateTitle')" :description="error">
       <template #actions>
         <BaseButton variant="secondary" @click="emit('retry')">{{ t('tiger.taskBoard.retry') }}</BaseButton>
       </template>
@@ -66,8 +50,12 @@ const REVIEW = [
         <span class="title">{{ item.title }}</span>
         <span class="spacer" />
         <span v-if="item.assignedAgent && item.assignedAgent !== '-'" class="agent">{{ item.assignedAgent }}</span>
-        <span class="badge" :class="`ex-${item.executionStatus}`">{{ t('tiger.taskBoard.executionStatus.' + item.executionStatus) }}</span>
-        <span class="badge" :class="`rv-${item.reviewStatus}`">{{ t('tiger.taskBoard.reviewStatus.' + item.reviewStatus) }}</span>
+        <span class="badge" :class="`ex-${item.executionStatus}`">{{
+          t('tiger.taskBoard.executionStatus.' + item.executionStatus)
+        }}</span>
+        <span class="badge" :class="`rv-${item.reviewStatus}`">{{
+          t('tiger.taskBoard.reviewStatus.' + item.reviewStatus)
+        }}</span>
       </div>
     </div>
   </div>

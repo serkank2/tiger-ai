@@ -162,9 +162,24 @@ test('stale fixing findings are reclaimed, claimed again, and completed', async 
       ttlMs: 1000,
       nowMs: Date.parse('2026-01-01T00:00:00.000Z'),
     });
-    assert.deepEqual(reclaimed.map((f) => f.id), ['FINDING-001']);
-    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__open.md')).then(() => true).catch(() => false), true);
-    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__fixing.md')).then(() => true).catch(() => false), false);
+    assert.deepEqual(
+      reclaimed.map((f) => f.id),
+      ['FINDING-001'],
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'FINDING-001__open.md'))
+        .then(() => true)
+        .catch(() => false),
+      true,
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'FINDING-001__fixing.md'))
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
     assert.match(await fs.readFile(path.join(dir, 'FINDING-001__open.md'), 'utf8'), /Missing null check/);
 
     const next = await claimNextFinding(dir, {
@@ -199,7 +214,13 @@ test('fresh fixing findings are not reclaimed or double-claimed', async () => {
 
     const reclaimed = await reclaimStaleFindings(dir, { locksDir, ttlMs: 60_000, nowMs: Date.now() });
     assert.equal(reclaimed.length, 0);
-    assert.equal(await fs.stat(path.join(dir, 'FINDING-001__fixing.md')).then(() => true).catch(() => false), true);
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'FINDING-001__fixing.md'))
+        .then(() => true)
+        .catch(() => false),
+      true,
+    );
     assert.equal((await listFindings(dir)).find((f) => f.id === 'FINDING-001')!.status, 'fixing');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

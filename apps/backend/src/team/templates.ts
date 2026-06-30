@@ -123,7 +123,9 @@ export function buildRoleTemplate(config: TigerConfig, raw: unknown): RoleTempla
     name,
     description: typeof raw.description === 'string' ? raw.description.trim() || undefined : undefined,
     persona: typeof raw.persona === 'string' ? raw.persona : '',
-    responsibilities: Array.isArray(raw.responsibilities) ? (raw.responsibilities as unknown[]).map((r) => String(r)) : [],
+    responsibilities: Array.isArray(raw.responsibilities)
+      ? (raw.responsibilities as unknown[]).map((r) => String(r))
+      : [],
     agent: extractAgentConfig(raw),
     canWriteCode: raw.canWriteCode === true,
     requiredForSignoff: raw.requiredForSignoff !== false,
@@ -150,7 +152,12 @@ function extractAgentConfig(raw: Record<string, unknown>): RoleAgentConfig {
 
 /** A filesystem/id-safe slug for a team or role name. */
 export function teamTemplateSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'team';
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'team'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +268,7 @@ const ROLE_BUSINESS_ANALYST: RoleTemplate = {
     'measurably looks like). Write acceptance criteria as testable statements. Enumerate edge cases across the ' +
     'happy / null / empty / upstream-error paths. Use this spec schema: success metrics, acceptance criteria, edge-case ' +
     'matrix, out-of-scope, rollback/failure path, BA-to-Tester cases, and open questions. Your acceptance criteria ' +
-    'become the Tester\'s cases. Work as a continuous read-only contributor in parallel with development and feed the ' +
+    "become the Tester's cases. Work as a continuous read-only contributor in parallel with development and feed the " +
     'Lead updated requirements, risks, and clarifications as they emerge. State plainly what is OUT of scope. Flag ' +
     'scope creep and missing requirements early and loudly. You do not write code; you define and defend the requirements.',
   responsibilities: [
@@ -314,7 +321,7 @@ const ROLE_DEVELOPER: RoleTemplate = {
     'null/empty path AND the error path. Run the project’s own build and tests before you claim done, and paste the ' +
     'real result. In company mode other developers may be editing in parallel — each of you runs in an isolated git ' +
     'worktree that is merged back on completion, so stay strictly within your assigned task and files, keep changes ' +
-    'minimal and atomic, and avoid reaching into another task\'s area so the merges stay clean. Report exactly what ' +
+    "minimal and atomic, and avoid reaching into another task's area so the merges stay clean. Report exactly what " +
     'you changed and any residual risk — do not oversell.',
   responsibilities: [
     'Implement the assigned task with the smallest fully-correct change',
@@ -605,8 +612,18 @@ function assembleFullTemplate(): TeamTemplate {
     variantRole(ROLE_PRODUCT_STRATEGIST, { fullPermission: true }),
     variantRole(ROLE_BUSINESS_ANALYST, { fullPermission: true }),
     variantRole(ROLE_ARCHITECT, { fullPermission: true }),
-    variantRole(ROLE_DEVELOPER, { id: 'developer-1', name: 'Developer 1 (Claude)', tool: 'claude', fullPermission: true }),
-    variantRole(ROLE_DEVELOPER, { id: 'developer-2', name: 'Developer 2 (Codex)', tool: 'codex', fullPermission: true }),
+    variantRole(ROLE_DEVELOPER, {
+      id: 'developer-1',
+      name: 'Developer 1 (Claude)',
+      tool: 'claude',
+      fullPermission: true,
+    }),
+    variantRole(ROLE_DEVELOPER, {
+      id: 'developer-2',
+      name: 'Developer 2 (Codex)',
+      tool: 'codex',
+      fullPermission: true,
+    }),
     variantRole(ROLE_DEVELOPER, {
       id: 'developer-3',
       name: 'Developer 3 (Antigravity)',
@@ -647,7 +664,15 @@ export const BUILTIN_TEAM_TEMPLATES: TeamTemplate[] = [
   assembleTeam(
     'Full Delivery Team',
     'A full delivery team adding an Architect for design and a DevOps/Verifier for objective verification.',
-    [ROLE_LEAD, ROLE_BUSINESS_ANALYST, ROLE_ARCHITECT, ROLE_DEVELOPER, ROLE_TESTER, ROLE_REVIEWER, ROLE_DEVOPS_VERIFIER],
+    [
+      ROLE_LEAD,
+      ROLE_BUSINESS_ANALYST,
+      ROLE_ARCHITECT,
+      ROLE_DEVELOPER,
+      ROLE_TESTER,
+      ROLE_REVIEWER,
+      ROLE_DEVOPS_VERIFIER,
+    ],
   ),
   assembleTeam(
     'Product Sprint',

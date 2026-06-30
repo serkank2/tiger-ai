@@ -68,9 +68,15 @@ test('lockDispatchableJobs returns dispatchable jobs in dispatch order', async (
 
 test('lockReclaimableJobs only returns running jobs with expired leases or matching owner', async () => {
   const repo = new MemoryQueueRepository(false);
-  await repo.insertJob(job({ id: 'expired', status: 'running', leaseOwner: 'other', leaseExpiresAt: '2000-01-01T00:00:00.000Z' }));
-  await repo.insertJob(job({ id: 'mine', status: 'running', leaseOwner: 'me', leaseExpiresAt: '2999-01-01T00:00:00.000Z' }));
-  await repo.insertJob(job({ id: 'live', status: 'running', leaseOwner: 'other', leaseExpiresAt: '2999-01-01T00:00:00.000Z' }));
+  await repo.insertJob(
+    job({ id: 'expired', status: 'running', leaseOwner: 'other', leaseExpiresAt: '2000-01-01T00:00:00.000Z' }),
+  );
+  await repo.insertJob(
+    job({ id: 'mine', status: 'running', leaseOwner: 'me', leaseExpiresAt: '2999-01-01T00:00:00.000Z' }),
+  );
+  await repo.insertJob(
+    job({ id: 'live', status: 'running', leaseOwner: 'other', leaseExpiresAt: '2999-01-01T00:00:00.000Z' }),
+  );
   await repo.insertJob(job({ id: 'noexpiry', status: 'running', leaseOwner: 'other', leaseExpiresAt: null }));
   await repo.insertJob(job({ id: 'queued', status: 'queued' }));
 
@@ -116,10 +122,34 @@ test('replacePositions renumbers requested ids first, then the rest, contiguousl
 test('getLatestLimitSnapshotsByWindow returns the latest snapshot per window', async () => {
   const repo = new MemoryQueueRepository(false);
   // Two windows for claude, each with an older + newer snapshot; one codex window (filtered out).
-  repo.addLimitSnapshot({ provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: null, checkedAt: '2026-06-19T01:00:00.000Z' });
-  repo.addLimitSnapshot({ provider: 'claude', windowKey: '5h', percentUsed: 55, resetAt: null, checkedAt: '2026-06-19T03:00:00.000Z' });
-  repo.addLimitSnapshot({ provider: 'claude', windowKey: '7d', percentUsed: 40, resetAt: null, checkedAt: '2026-06-19T02:00:00.000Z' });
-  repo.addLimitSnapshot({ provider: 'codex', windowKey: '5h', percentUsed: 99, resetAt: null, checkedAt: '2026-06-19T04:00:00.000Z' });
+  repo.addLimitSnapshot({
+    provider: 'claude',
+    windowKey: '5h',
+    percentUsed: 10,
+    resetAt: null,
+    checkedAt: '2026-06-19T01:00:00.000Z',
+  });
+  repo.addLimitSnapshot({
+    provider: 'claude',
+    windowKey: '5h',
+    percentUsed: 55,
+    resetAt: null,
+    checkedAt: '2026-06-19T03:00:00.000Z',
+  });
+  repo.addLimitSnapshot({
+    provider: 'claude',
+    windowKey: '7d',
+    percentUsed: 40,
+    resetAt: null,
+    checkedAt: '2026-06-19T02:00:00.000Z',
+  });
+  repo.addLimitSnapshot({
+    provider: 'codex',
+    windowKey: '5h',
+    percentUsed: 99,
+    resetAt: null,
+    checkedAt: '2026-06-19T04:00:00.000Z',
+  });
 
   const claude = await repo.getLatestLimitSnapshotsByWindow('claude');
   const byWindow = new Map(claude.map((s) => [s.windowKey, s.percentUsed]));

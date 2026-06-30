@@ -36,7 +36,7 @@ come with a regression test that fails before the fix and passes after.
 - **Architecture boundaries:** REST is the control-plane, the WebSocket is the data-plane.
   Keep one Pinia store per domain on the frontend, and a single authoritative writer per
   persisted artifact on the backend.
-- **Comments explain *why*, not *what*.** Prefer a short rationale on a non-obvious decision
+- **Comments explain _why_, not _what_.** Prefer a short rationale on a non-obvious decision
   over narrating the code.
 - **Errors are values to handle, not noise to swallow.** Surface failures to the user with a
   clear message; never silently `catch {}` something the user needs to know about.
@@ -44,7 +44,7 @@ come with a regression test that fails before the fix and passes after.
 ## Commit & PR conventions
 
 - Write focused commits with imperative subject lines (e.g. `team: stop dropping steering on
-  a failed Lead turn`).
+a failed Lead turn`).
 - Keep PRs scoped to one logical change. Describe **what** changed, **why**, and **how you
   verified it** (commands run, manual checks).
 - Reference any issue the PR closes.

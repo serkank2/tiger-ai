@@ -100,7 +100,9 @@ watch(shouldPollPreviews, syncPreviewPoll);
         :title="t('terminals.cantReachBackend')"
         :description="`${apiBase} — ${terminals.loadError}`"
       >
-        <p class="dim">{{ t('terminals.backendHintPrefix') }} <code>npm run dev</code> {{ t('terminals.backendHintSuffix') }}</p>
+        <p class="dim">
+          {{ t('terminals.backendHintPrefix') }} <code>npm run dev</code> {{ t('terminals.backendHintSuffix') }}
+        </p>
         <button class="retry" @click="loadTerminals">{{ t('common.retry') }}</button>
       </StateView>
     </div>

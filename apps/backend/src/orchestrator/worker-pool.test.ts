@@ -29,7 +29,10 @@ test('runPool processes every item exactly once', async () => {
   await runPool(items, 3, async (item) => {
     seen.push(item);
   });
-  assert.deepEqual(seen.sort((a, b) => a - b), items);
+  assert.deepEqual(
+    seen.sort((a, b) => a - b),
+    items,
+  );
 });
 
 test('drainPool caps concurrency while draining a shared queue', async () => {

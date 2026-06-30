@@ -221,7 +221,13 @@ test('per-task files: split, list, claim-by-rename, finish, review', () => {
       const claimed = await claimNextTaskFile(dir, 'claude-01', '2026-02-02T00:00:00.000Z');
       assert.equal(claimed?.record.id, 'TASK-001');
       assert.match(claimed!.block, /Set up the backend/);
-      assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), true);
+      assert.equal(
+        await fs
+          .stat(path.join(dir, 'TASK-001__in_progress.md'))
+          .then(() => true)
+          .catch(() => false),
+        true,
+      );
 
       // No not_started left → next claim returns null.
       assert.equal(await claimNextTaskFile(dir, 'codex-01', '2026-02-02T00:00:00.000Z'), null);
@@ -245,12 +251,11 @@ test('stale in_progress task files are reclaimed, claimed again, and completed',
   try {
     await splitTasksToFiles(SAMPLE, dir);
 
-    const claimed = await claimNextTaskFile(
-      dir,
-      'claude-01',
-      '2026-02-02T00:00:00.000Z',
-      { locksDir, agentType: 'claude', ttlMs: 60_000 },
-    );
+    const claimed = await claimNextTaskFile(dir, 'claude-01', '2026-02-02T00:00:00.000Z', {
+      locksDir,
+      agentType: 'claude',
+      ttlMs: 60_000,
+    });
     assert.equal(claimed?.record.id, 'TASK-001');
     assert.match(claimed!.block, /Create the Express server/);
 
@@ -272,17 +277,31 @@ test('stale in_progress task files are reclaimed, claimed again, and completed',
       ttlMs: 1000,
       nowMs: Date.parse('2026-01-01T00:00:00.000Z'),
     });
-    assert.deepEqual(reclaimed.map((r) => r.id), ['TASK-001']);
-    assert.equal(await fs.stat(path.join(dir, 'TASK-001__not_started.md')).then(() => true).catch(() => false), true);
-    assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), false);
+    assert.deepEqual(
+      reclaimed.map((r) => r.id),
+      ['TASK-001'],
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'TASK-001__not_started.md'))
+        .then(() => true)
+        .catch(() => false),
+      true,
+    );
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'TASK-001__in_progress.md'))
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
     assert.match(await fs.readFile(path.join(dir, 'TASK-001__not_started.md'), 'utf8'), /Create the Express server/);
 
-    const next = await claimNextTaskFile(
-      dir,
-      'codex-01',
-      '2026-02-02T01:00:00.000Z',
-      { locksDir, agentType: 'codex', ttlMs: 1000 },
-    );
+    const next = await claimNextTaskFile(dir, 'codex-01', '2026-02-02T01:00:00.000Z', {
+      locksDir,
+      agentType: 'codex',
+      ttlMs: 1000,
+    });
     assert.equal(next?.record.id, 'TASK-001');
     await finishTaskFile(dir, 'TASK-001', 'done', '2026-02-02T02:00:00.000Z');
     await releaseLock(path.join(locksDir, 'TASK-001.lock'));
@@ -301,16 +320,21 @@ test('fresh in_progress task files are not reclaimed or double-claimed', async (
   const locksDir = path.join(dir, 'locks');
   try {
     await splitTasksToFiles(SAMPLE, dir);
-    await claimNextTaskFile(
-      dir,
-      'claude-01',
-      '2026-02-02T00:00:00.000Z',
-      { locksDir, agentType: 'claude', ttlMs: 60_000 },
-    );
+    await claimNextTaskFile(dir, 'claude-01', '2026-02-02T00:00:00.000Z', {
+      locksDir,
+      agentType: 'claude',
+      ttlMs: 60_000,
+    });
 
     const reclaimed = await reclaimStaleTaskClaims(dir, { locksDir, ttlMs: 60_000, nowMs: Date.now() });
     assert.equal(reclaimed.length, 0);
-    assert.equal(await fs.stat(path.join(dir, 'TASK-001__in_progress.md')).then(() => true).catch(() => false), true);
+    assert.equal(
+      await fs
+        .stat(path.join(dir, 'TASK-001__in_progress.md'))
+        .then(() => true)
+        .catch(() => false),
+      true,
+    );
     assert.equal(await claimNextTaskFile(dir, 'codex-01', '2026-02-02T00:10:00.000Z'), null);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

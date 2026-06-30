@@ -60,8 +60,20 @@ test('MemoryTeamPersistence round-trip: create run -> roles -> messages -> sign-
   ]);
   assert.equal(roles.length, 2);
 
-  const m1 = await p.appendMessage({ runId: run.id, fromKind: 'role', fromRole: 'lead', kind: 'chat', body: 'Kickoff' });
-  const m2 = await p.appendMessage({ runId: run.id, fromKind: 'role', fromRole: 'developer', kind: 'handoff', body: 'On it' });
+  const m1 = await p.appendMessage({
+    runId: run.id,
+    fromKind: 'role',
+    fromRole: 'lead',
+    kind: 'chat',
+    body: 'Kickoff',
+  });
+  const m2 = await p.appendMessage({
+    runId: run.id,
+    fromKind: 'role',
+    fromRole: 'developer',
+    kind: 'handoff',
+    body: 'On it',
+  });
   const m3 = await p.appendMessage({ runId: run.id, fromKind: 'user', kind: 'steering', body: 'Focus on auth' });
   assert.deepEqual([m1.seq, m2.seq, m3.seq], [1, 2, 3], 'seq is assigned monotonically');
 
@@ -83,7 +95,10 @@ test('MemoryTeamPersistence round-trip: create run -> roles -> messages -> sign-
     ['Kickoff', 'On it', 'Focus on auth'],
     'messages return in append (seq) order',
   );
-  assert.deepEqual(messages.map((m) => m.seq), [1, 2, 3]);
+  assert.deepEqual(
+    messages.map((m) => m.seq),
+    [1, 2, 3],
+  );
 });
 
 test('listMessages(runId, afterSeq) returns strictly increasing seq order', async () => {
@@ -107,7 +122,11 @@ test('listMessages(runId, afterSeq) returns strictly increasing seq order', asyn
   assert.equal(afterCursor[0]?.seq, 11, 'afterSeq is exclusive');
 
   const windowed = await p.listMessages(run.id, 10, 5);
-  assert.deepEqual(windowed.map((m) => m.seq), [11, 12, 13, 14, 15], 'limit windows the cursor result');
+  assert.deepEqual(
+    windowed.map((m) => m.seq),
+    [11, 12, 13, 14, 15],
+    'limit windows the cursor result',
+  );
 });
 
 test('MemoryTeamPersistence records turns, directives, verifications and reflects them in loadRun', async () => {
@@ -117,7 +136,13 @@ test('MemoryTeamPersistence records turns, directives, verifications and reflect
   const turn = await p.recordTurn({ runId: run.id, roleKey: 'developer', ordinal: 1, status: 'running' });
   await p.recordTurn({ id: turn.id, runId: run.id, roleKey: 'developer', ordinal: 1, status: 'done' });
   const directive = await p.recordDirective({ runId: run.id, targetRole: 'developer', body: 'Prioritize tests' });
-  const verification = await p.recordVerification({ runId: run.id, roleKey: 'tester', kind: 'test', passed: true, summary: '12/12 green' });
+  const verification = await p.recordVerification({
+    runId: run.id,
+    roleKey: 'tester',
+    kind: 'test',
+    passed: true,
+    summary: '12/12 green',
+  });
 
   const loaded = await p.loadRun(run.id);
   assert.ok(loaded);
@@ -149,7 +174,12 @@ test('run lease: conflict, refresh and finish', async () => {
 
 test('reconcileTeamOnBoot interrupts stale running runs and their active turns', async () => {
   const p = new MemoryTeamPersistence();
-  const run = await p.createRun({ workspace: WS, tigerRoot: TIGER_ROOT, owner: { type: 'manual', id: 'old' }, ttlMs: 1_000 });
+  const run = await p.createRun({
+    workspace: WS,
+    tigerRoot: TIGER_ROOT,
+    owner: { type: 'manual', id: 'old' },
+    ttlMs: 1_000,
+  });
   await p.recordTurn({ runId: run.id, roleKey: 'developer', status: 'running' });
 
   // Force the lease to be expired so a fresh boot owner treats it as stale.
@@ -185,7 +215,9 @@ test('TEAM_MIGRATION is idempotent by construction and leaves existing schema un
   assert.ok(TEAM_MIGRATION.id.length > 0, 'migration has a stable id');
 
   for (const table of TEAM_TABLES) {
-    const stmt = TEAM_MIGRATION.statements.find((s) => new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, 'i').test(s));
+    const stmt = TEAM_MIGRATION.statements.find((s) =>
+      new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`, 'i').test(s),
+    );
     assert.ok(stmt, `migration creates ${table}`);
   }
 

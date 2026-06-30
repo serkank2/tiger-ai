@@ -1,7 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import { nanoid } from 'nanoid';
-import { STAGE_ORDER, type OrchestratorState, type StageId, type StageRunConfig, type TigerConfig } from '../orchestrator/types.js';
+import {
+  STAGE_ORDER,
+  type OrchestratorState,
+  type StageId,
+  type StageRunConfig,
+  type TigerConfig,
+} from '../orchestrator/types.js';
 import type { ExecutionOwner } from '../orchestrator/persistence.js';
 import type { QueueService, QueueControlEvent } from '../services/QueueService.js';
 import type { QueueJob, QueueTargetType, QueueTeamTargetPayload, QueueTerminalTargetPayload } from './types.js';
@@ -202,7 +208,10 @@ export class Scheduler {
     this.activeJobId = job.id;
     let leaseRefresh: NodeJS.Timeout | null = null;
     try {
-      leaseRefresh = setInterval(() => void this.queue.refreshLease(job.id, this.owner, this.leaseMs), Math.max(1000, this.leaseMs / 2));
+      leaseRefresh = setInterval(
+        () => void this.queue.refreshLease(job.id, this.owner, this.leaseMs),
+        Math.max(1000, this.leaseMs / 2),
+      );
       leaseRefresh.unref();
       const targetType = effectiveTargetType(job);
       if (targetType === 'terminal') {
@@ -216,7 +225,11 @@ export class Scheduler {
       await this.runProjectJob(job);
     } catch (err) {
       const targetType = effectiveTargetType(job);
-      await this.queue.failJob(job.id, messageFromUnknown(err), targetType === 'project' ? undefined : `${targetType}_dispatch`);
+      await this.queue.failJob(
+        job.id,
+        messageFromUnknown(err),
+        targetType === 'project' ? undefined : `${targetType}_dispatch`,
+      );
     } finally {
       if (leaseRefresh) clearInterval(leaseRefresh);
       this.orchestrator.setExecutionOwner(null);
@@ -241,7 +254,8 @@ export class Scheduler {
       const latest = await this.queue.getJob(job.id);
       if (!latest || latest.status !== 'running') return;
 
-      const step = steps.find((s) => s.stepKey === stage) ?? (await this.queue.listSteps(job.id)).find((s) => s.stepKey === stage);
+      const step =
+        steps.find((s) => s.stepKey === stage) ?? (await this.queue.listSteps(job.id)).find((s) => s.stepKey === stage);
       if (step?.status === 'completed' || step?.status === 'skipped') continue;
 
       const decision = await this.queue.evaluateJobRules(latest);
@@ -289,7 +303,8 @@ export class Scheduler {
       groupId: payload.groupId ?? null,
       cwd,
       initialCommand: payload.initialCommand ?? job.body ?? job.prompt,
-      shell: (payload.shell as TerminalDefinition['shell'] | undefined) ?? this.terminalTarget.state.settings.defaultShell,
+      shell:
+        (payload.shell as TerminalDefinition['shell'] | undefined) ?? this.terminalTarget.state.settings.defaultShell,
       env: payload.env,
       autostart: payload.autostart,
       protected: payload.protected,

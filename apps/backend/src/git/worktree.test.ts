@@ -82,7 +82,11 @@ test('full lifecycle: create -> isolate -> diff -> remove', { skip: !GIT_AVAILAB
       path.resolve(path.join(repo, '.tiger', 'worktrees')),
       'default worktree root should live under .tiger/worktrees',
     );
-    assert.equal(existsSync(path.join(repo, '.kaplan')), false, 'default worktree root must not create a .kaplan directory');
+    assert.equal(
+      existsSync(path.join(repo, '.kaplan')),
+      false,
+      'default worktree root must not create a .kaplan directory',
+    );
     assert.ok(existsSync(wt.path), 'worktree path should exist on disk');
     assert.ok(/^[0-9a-f]{7,40}$/.test(wt.baseRef), 'baseRef should be a resolved sha');
     assert.equal(await isGitRepo(wt.path), true);

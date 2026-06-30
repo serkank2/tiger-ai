@@ -21,11 +21,7 @@ export async function logStageStart(file: string, stage: StageId, cfg: StageRunC
   if (STAGE_META[stage].singleAgent) {
     const mergeAgent = cfg.mergeAgent ?? 'claude';
     const mergeModel =
-      mergeAgent === 'claude'
-        ? cfg.claudeModel
-        : mergeAgent === 'codex'
-          ? cfg.codexModel
-          : cfg.antigravityModel;
+      mergeAgent === 'claude' ? cfg.claudeModel : mergeAgent === 'codex' ? cfg.codexModel : cfg.antigravityModel;
     lines.push(`- Single agent: ${mergeAgent} (model: ${mergeModel || 'default'})`);
   } else {
     const counts = [`${cfg.claudeAgents} claude`, `${cfg.codexAgents} codex`];

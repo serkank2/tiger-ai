@@ -18,9 +18,7 @@ function contrast(hexA: string, hexB: string): number {
   const luminance = (hex: string): number => {
     const value = hex.replace('#', '');
     const rgb = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
-    const linear = rgb.map((channel) =>
-      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-    );
+    const linear = rgb.map((channel) => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
     return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
   };
   const [lighter, darker] = [luminance(hexA), luminance(hexB)].sort((a, b) => b - a);
@@ -47,17 +45,19 @@ describe('Team responsive layout and role tile accessibility', () => {
   it('stacks the Team workspace below the narrow breakpoint', () => {
     const teamView = source('TeamView.vue');
 
-    expect(teamView).toContain('grid-template-columns: minmax(260px, 320px) 1fr;');
+    expect(teamView).toContain('grid-template-columns: minmax(232px, 292px) 1fr;');
     expect(teamView).toContain('@media (max-width: 720px)');
     expect(teamView).toMatch(/\.workspace \{\r?\n\s+grid-template-columns: 1fr;\r?\n\s+\}/);
-    expect(teamView).toMatch(/\.rail \{[\s\S]*?border-right: 0;[\s\S]*?border-bottom: 1px solid var\(--border\);[\s\S]*?\}/);
+    expect(teamView).toMatch(
+      /\.rail \{[\s\S]*?border-right: 0;[\s\S]*?border-bottom: 1px solid var\(--border\);[\s\S]*?\}/,
+    );
   });
 
-  it('uses accessible Team surface typography, contrast, and non-decorative active backgrounds', () => {
+  it('uses compact Team surface typography, contrast, and non-decorative active backgrounds', () => {
     const teamView = source('TeamView.vue');
-    expect(teamView).toContain('--text-xs: 16px;');
-    expect(teamView).toContain('--text-sm: 16px;');
-    expect(teamView).toContain('--text-md: 16px;');
+    expect(teamView).toContain('--text-xs: 12px;');
+    expect(teamView).toContain('--text-sm: 13px;');
+    expect(teamView).toContain('--text-md: 15px;');
     expect(teamView).not.toContain('radial-gradient');
 
     const dim = /--text-dim:\s*(#[0-9a-fA-F]{6});/.exec(teamView)?.[1];
@@ -66,6 +66,16 @@ describe('Team responsive layout and role tile accessibility', () => {
     expect(faint).toBeTruthy();
     expect(contrast(dim!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
     expect(contrast(faint!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps the Team launcher within the compact Team scale', () => {
+    const launcher = source('TeamLauncher.vue');
+
+    expect(launcher).toContain('padding: var(--space-4);');
+    expect(launcher).toContain('max-width: 1100px;');
+    expect(launcher).toContain('grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);');
+    expect(launcher).toContain('font-size: var(--text-xl);');
+    expect(launcher).toContain('min-height: 176px;');
   });
 
   it('does not render Team mojibake or glyph-only operational labels', () => {
@@ -91,7 +101,7 @@ describe('Team responsive layout and role tile accessibility', () => {
     }
   });
 
-  it('does not hard-code sub-16px Team component text', () => {
+  it('keeps compact Team typography centralized in variables', () => {
     const files = [
       'TeamAgentBadge.vue',
       'TeamAttemptsPanel.vue',

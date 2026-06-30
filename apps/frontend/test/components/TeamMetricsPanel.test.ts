@@ -38,7 +38,11 @@ describe('TeamMetricsPanel', () => {
     const naCells = wrapper.findAll('.v.na');
     expect(naCells).toHaveLength(2);
     expect(naCells.map((c) => c.text())).toEqual(['n/a', 'n/a']);
-    const tip = wrapper.findAll('.kv').find((k) => k.text().includes('Tokens'))?.attributes('title') ?? '';
+    const tip =
+      wrapper
+        .findAll('.kv')
+        .find((k) => k.text().includes('Tokens'))
+        ?.attributes('title') ?? '';
     expect(tip.toLowerCase()).toContain('usage');
   });
 

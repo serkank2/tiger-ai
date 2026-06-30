@@ -17,14 +17,10 @@ const readOnly = computed(() => team.readOnly);
 
 // Roles with a non-empty inbox (sendMessage verb deliveries pending their next turn).
 const inboxes = computed(() =>
-  team.roles
-    .map((r) => ({ id: r.id, name: r.name, count: r.inbox ?? 0 }))
-    .filter((r) => r.count > 0),
+  team.roles.map((r) => ({ id: r.id, name: r.name, count: r.inbox ?? 0 })).filter((r) => r.count > 0),
 );
 
-const hasAnything = computed(
-  () => handoffs.value.length > 0 || worktrees.value.length > 0 || inboxes.value.length > 0,
-);
+const hasAnything = computed(() => handoffs.value.length > 0 || worktrees.value.length > 0 || inboxes.value.length > 0);
 
 function roleName(id: string): string {
   return team.roles.find((r) => r.id === id)?.name ?? id;
@@ -101,31 +97,54 @@ async function discard(taskId: string): Promise<void> {
               :loading="team.isBusy(`worktree:${w.taskId}`)"
               data-testid="worktree-merge"
               @click="merge(w.taskId)"
-            >{{ t('team.coordination.mergeBack') }}</BaseButton>
+              >{{ t('team.coordination.mergeBack') }}</BaseButton
+            >
             <BaseButton
               size="sm"
               variant="ghost"
               :disabled="team.isBusy(`worktree:${w.taskId}`)"
               data-testid="worktree-discard"
               @click="discard(w.taskId)"
-            >{{ t('team.coordination.discard') }}</BaseButton>
+              >{{ t('team.coordination.discard') }}</BaseButton
+            >
           </template>
         </li>
       </ul>
       <p v-if="keptWorktrees.length" class="coord-hint">
-        {{ keptWorktrees.length }} worktree(s) were kept un-merged after a conflict. Resolve manually, then Merge back or Discard.
+        {{ keptWorktrees.length }} worktree(s) were kept un-merged after a conflict. Resolve manually, then Merge back
+        or Discard.
       </p>
     </div>
   </section>
 </template>
 
 <style scoped>
-.coord { padding: var(--space-2) var(--space-3); }
-.coord-title { font-size: var(--text-sm); margin: 0 0 var(--space-2); }
-.coord-empty { color: var(--text-dim); font-size: var(--text-xs); }
-.coord-block { margin-bottom: var(--space-3); }
-.coord-block h4 { font-size: var(--text-xs); color: var(--text-dim); margin: 0 0 var(--space-1); text-transform: uppercase; letter-spacing: 0.04em; }
-.coord-list { list-style: none; margin: 0; padding: 0; }
+.coord {
+  padding: var(--space-2) var(--space-3);
+}
+.coord-title {
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2);
+}
+.coord-empty {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+.coord-block {
+  margin-bottom: var(--space-3);
+}
+.coord-block h4 {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  margin: 0 0 var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.coord-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .coord-row {
   display: flex;
   align-items: flex-start;
@@ -135,7 +154,9 @@ async function discard(taskId: string): Promise<void> {
   padding: 3px 0;
   font-size: var(--text-sm);
 }
-.coord-row .spacer { flex: 1; }
+.coord-row .spacer {
+  flex: 1;
+}
 .flow {
   min-width: 0;
   max-width: 100%;
@@ -144,22 +165,75 @@ async function discard(taskId: string): Promise<void> {
   white-space: nowrap;
   font-weight: 600;
 }
-.task { flex: none; font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--accent); }
-.branch { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: var(--text-xs); color: var(--text-dim); }
-.ttl { flex: 1 1 12rem; min-width: 0; color: var(--text-dim); overflow-wrap: anywhere; line-height: var(--leading-snug); }
-.note { min-width: 0; color: var(--red); font-size: var(--text-xs); overflow-wrap: anywhere; }
-.coord-hint { color: var(--amber); font-size: var(--text-xs); margin: var(--space-1) 0 0; }
-.badge {
-  display: inline-flex; align-items: center; justify-content: center;
+.task {
   flex: none;
-  min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-sm);
-  font-size: var(--text-xs); font-weight: 700; border: 1px solid var(--border-strong);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  color: var(--accent);
 }
-.b-pending { color: var(--amber); border-color: var(--amber); }
-.b-done { color: var(--green); border-color: var(--green); }
-.b-inbox { color: var(--accent); border-color: var(--accent); }
-.wt-active { color: var(--text-dim); }
-.wt-merged { color: var(--green); border-color: var(--green); }
-.wt-conflict { color: var(--red); border-color: var(--red); }
-.wt-failed { color: var(--amber); border-color: var(--amber); }
+.branch {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.ttl {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+  line-height: var(--leading-snug);
+}
+.note {
+  min-width: 0;
+  color: var(--red);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.coord-hint {
+  color: var(--amber);
+  font-size: var(--text-xs);
+  margin: var(--space-1) 0 0;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  border: 1px solid var(--border-strong);
+}
+.b-pending {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.b-done {
+  color: var(--green);
+  border-color: var(--green);
+}
+.b-inbox {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.wt-active {
+  color: var(--text-dim);
+}
+.wt-merged {
+  color: var(--green);
+  border-color: var(--green);
+}
+.wt-conflict {
+  color: var(--red);
+  border-color: var(--red);
+}
+.wt-failed {
+  color: var(--amber);
+  border-color: var(--amber);
+}
 </style>

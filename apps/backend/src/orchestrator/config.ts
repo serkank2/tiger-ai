@@ -128,7 +128,11 @@ export function defaultTigerConfig(): TigerConfig {
       readyMaxWaitMs: 20000,
       doneIdleMs: 60000,
       markerPollMs: 1500,
-      agentTimeoutMs: envIntegerInRange('KAPLAN_AGENT_TIMEOUT_MS', DEFAULT_AGENT_TIMEOUT_MS, TIGER_TIMING_LIMITS.agentTimeoutMs),
+      agentTimeoutMs: envIntegerInRange(
+        'KAPLAN_AGENT_TIMEOUT_MS',
+        DEFAULT_AGENT_TIMEOUT_MS,
+        TIGER_TIMING_LIMITS.agentTimeoutMs,
+      ),
       settleMaxWaitMs: 8000,
       submitDelayMs: 800,
     },
@@ -301,7 +305,15 @@ function validateCliPatch(raw: unknown): string | null {
 
 function validateCliToolPatch(provider: Provider, raw: unknown): string | null {
   if (!isPlainRecord(raw)) return `cli.${provider} must be an object`;
-  const allowed = ['executable', 'models', 'modelFlag', 'effortFlag', 'effortConfigKey', 'extraArgs', 'permissionModes'];
+  const allowed = [
+    'executable',
+    'models',
+    'modelFlag',
+    'effortFlag',
+    'effortConfigKey',
+    'extraArgs',
+    'permissionModes',
+  ];
   const unknown = unknownKey(raw, allowed);
   if (unknown) return `unknown cli.${provider} field: ${unknown}`;
 
@@ -331,7 +343,13 @@ function validateCliToolPatch(provider: Provider, raw: unknown): string | null {
 
 function validateExecutionPatch(raw: unknown): string | null {
   if (!isPlainRecord(raw)) return 'execution must be an object';
-  const allowed = ['parallel', 'locking', 'continueOnFailure', 'deleteTigerOnComplete', ...Object.keys(TIGER_EXECUTION_LIMITS)];
+  const allowed = [
+    'parallel',
+    'locking',
+    'continueOnFailure',
+    'deleteTigerOnComplete',
+    ...Object.keys(TIGER_EXECUTION_LIMITS),
+  ];
   const unknown = unknownKey(raw, allowed);
   if (unknown) return `unknown execution field: ${unknown}`;
   for (const field of ['parallel', 'locking', 'continueOnFailure', 'deleteTigerOnComplete'] as const) {
@@ -381,7 +399,11 @@ function envIntegerInRange(name: string, fallback: number, limit: NumberLimit): 
 }
 
 function applyEnvOverrides(cfg: TigerConfig): TigerConfig {
-  const agentTimeoutMs = envIntegerInRange('KAPLAN_AGENT_TIMEOUT_MS', cfg.timing.agentTimeoutMs, TIGER_TIMING_LIMITS.agentTimeoutMs);
+  const agentTimeoutMs = envIntegerInRange(
+    'KAPLAN_AGENT_TIMEOUT_MS',
+    cfg.timing.agentTimeoutMs,
+    TIGER_TIMING_LIMITS.agentTimeoutMs,
+  );
   if (agentTimeoutMs === cfg.timing.agentTimeoutMs) return cfg;
   return { ...cfg, timing: { ...cfg.timing, agentTimeoutMs } };
 }
@@ -438,12 +460,7 @@ function isSafeToken(value: unknown): value is string {
  * builder double-quotes such values, so only quote-breaking characters are dangerous.
  */
 export function isModelLabel(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= 96 &&
-    /^[A-Za-z0-9 .()/_+\-]+$/.test(value)
-  );
+  return typeof value === 'string' && value.length > 0 && value.length <= 96 && /^[A-Za-z0-9 .()/_+\-]+$/.test(value);
 }
 
 /** A configured model identifier for a provider — a simple token, or (when allowed) a label. */

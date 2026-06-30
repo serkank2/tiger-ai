@@ -54,13 +54,7 @@ export interface PingMsg {
   ts?: number;
 }
 
-export type ClientMsg =
-  | AttachMsg
-  | DetachMsg
-  | InputMsg
-  | ResizeMsg
-  | BroadcastInputMsg
-  | PingMsg;
+export type ClientMsg = AttachMsg | DetachMsg | InputMsg | ResizeMsg | BroadcastInputMsg | PingMsg;
 
 // ---- Server -> Client ----
 

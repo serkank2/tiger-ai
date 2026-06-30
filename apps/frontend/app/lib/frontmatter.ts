@@ -9,7 +9,13 @@ export function serializePrompt(meta: PromptMeta, body: string): string {
   if (meta.title) out.push(`title: ${oneLine(meta.title)}`);
   if (meta.description) out.push(`description: ${oneLine(meta.description)}`);
   if (meta.tags?.length) {
-    const tags = meta.tags.map((t) => oneLine(t).replace(/[[\],]/g, ' ').trim()).filter(Boolean);
+    const tags = meta.tags
+      .map((t) =>
+        oneLine(t)
+          .replace(/[[\],]/g, ' ')
+          .trim(),
+      )
+      .filter(Boolean);
     if (tags.length) out.push(`tags: [${tags.join(', ')}]`);
   }
   if (meta.target) out.push(`target: ${oneLine(meta.target)}`);

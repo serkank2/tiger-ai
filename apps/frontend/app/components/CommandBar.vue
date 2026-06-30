@@ -153,11 +153,24 @@ function sendKey(ch: string) {
           {{ t('terminals.targetAll') }}
         </button>
       </div>
-      <select v-if="terminals.commandMode === 'group'" v-model="terminals.commandGroupId" class="gsel" :aria-label="t('terminals.targetGroup')">
+      <select
+        v-if="terminals.commandMode === 'group'"
+        v-model="terminals.commandGroupId"
+        class="gsel"
+        :aria-label="t('terminals.targetGroup')"
+      >
         <option :value="null" disabled>{{ t('terminals.chooseGroup') }}</option>
         <option v-for="g in groups.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
-      <BaseButton class="iconbtn" variant="ghost" icon-only :aria-label="t('terminals.manageGroups')" :title="t('terminals.manageGroups')" @click="emit('manageGroups')">🗂</BaseButton>
+      <BaseButton
+        class="iconbtn"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.manageGroups')"
+        :title="t('terminals.manageGroups')"
+        @click="emit('manageGroups')"
+        >🗂</BaseButton
+      >
     </div>
 
     <form class="cmd" @submit.prevent="send">
@@ -169,16 +182,30 @@ function sendKey(ch: string) {
         :aria-describedby="lengthWarning ? 'cmd-lenwarn' : undefined"
         spellcheck="false"
       />
-      <BaseButton type="submit" class="send" variant="primary" :disabled="!canSend">{{ t('terminals.send') }}</BaseButton>
-      <p v-if="lengthWarning" id="cmd-lenwarn" class="lenwarn" role="status" aria-live="polite">⚠ {{ lengthWarning }}</p>
+      <BaseButton type="submit" class="send" variant="primary" :disabled="!canSend">{{
+        t('terminals.send')
+      }}</BaseButton>
+      <p v-if="lengthWarning" id="cmd-lenwarn" class="lenwarn" role="status" aria-live="polite">
+        ⚠ {{ lengthWarning }}
+      </p>
     </form>
 
     <!-- Screen-reader-only broadcast outcome announcer (visual feedback is via toasts/input clear). -->
     <p class="sr-only" role="status" aria-live="polite">{{ sendStatus }}</p>
 
-    <BaseButton class="iconbtn" variant="ghost" icon-only :aria-label="t('terminals.openComposer')" :title="t('terminals.openComposer')" @click="emit('openComposer')">⤢</BaseButton>
+    <BaseButton
+      class="iconbtn"
+      variant="ghost"
+      icon-only
+      :aria-label="t('terminals.openComposer')"
+      :title="t('terminals.openComposer')"
+      @click="emit('openComposer')"
+      >⤢</BaseButton
+    >
 
-    <BaseButton class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{ t('nav.prompts') }}</BaseButton>
+    <BaseButton class="tiger" :title="t('terminals.openPrompts')" @click="emit('openPrompts')">{{
+      t('nav.prompts')
+    }}</BaseButton>
 
     <div class="keys">
       <button
@@ -202,7 +229,9 @@ function sendKey(ch: string) {
         :title="t('terminals.focusViewTitle')"
         :aria-label="t('terminals.focusView')"
         @click="terminals.layoutMode = 'focus'"
-      >▭</button>
+      >
+        ▭
+      </button>
       <button
         :class="{ on: terminals.layoutMode === 'grid' }"
         :aria-pressed="terminals.layoutMode === 'grid'"
@@ -210,10 +239,14 @@ function sendKey(ch: string) {
         :title="t('terminals.gridViewTitle')"
         :aria-label="t('terminals.gridView')"
         @click="terminals.layoutMode = 'grid'"
-      >▦</button>
+      >
+        ▦
+      </button>
     </div>
 
-    <BaseButton class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{ t('nav.templates') }}</BaseButton>
+    <BaseButton class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{
+      t('nav.templates')
+    }}</BaseButton>
     <BaseButton class="tiger" :title="t('terminals.openTiger')" @click="emit('openTiger')">Tiger</BaseButton>
     <BaseButton class="new" variant="secondary" @click="emit('create')">{{ t('terminals.newTerminal') }}</BaseButton>
   </header>

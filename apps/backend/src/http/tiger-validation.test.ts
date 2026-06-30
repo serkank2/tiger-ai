@@ -56,7 +56,8 @@ async function listen(app: express.Express): Promise<TestServer> {
 
 function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   const e = err as { code?: string; status?: number; statusCode?: number };
-  const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
+  const explicit =
+    typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
   const status = explicit && explicit >= 400 && explicit < 600 ? explicit : 500;
   res.status(status).json({ error: { message: err instanceof Error ? err.message : String(err), code: e.code } });
 }
@@ -85,7 +86,9 @@ async function makeRunTemplates(orchestrator: Orchestrator): Promise<RunTemplate
   return service;
 }
 
-async function tigerTemplateFixture(): Promise<TestServer & { orchestrator: Orchestrator; cleanup: () => Promise<void> }> {
+async function tigerTemplateFixture(): Promise<
+  TestServer & { orchestrator: Orchestrator; cleanup: () => Promise<void> }
+> {
   const manager = new TerminalManager();
   const orchestrator = new Orchestrator(manager);
   const runTemplates = await makeRunTemplates(orchestrator);
@@ -117,7 +120,9 @@ async function tigerTemplateFixture(): Promise<TestServer & { orchestrator: Orch
   };
 }
 
-async function tigerFixture(): Promise<TestServer & { workspace: string; orchestrator: Orchestrator; cleanup: () => Promise<void> }> {
+async function tigerFixture(): Promise<
+  TestServer & { workspace: string; orchestrator: Orchestrator; cleanup: () => Promise<void> }
+> {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-tiger-route-'));
   const manager = new TerminalManager();
   const orchestrator = new Orchestrator(manager);
@@ -204,13 +209,19 @@ test('template API works without an open project and enforces immutability and c
 
     const applied = await requestJson(f.baseUrl, 'POST', `/api/tiger/templates/${duplicate.id}/apply`);
     assert.equal(applied.status, 200);
-    assert.equal((applied.json as { configs: Record<string, { claudeAgents: number }> }).configs['writing-plan']?.claudeAgents, 2);
+    assert.equal(
+      (applied.json as { configs: Record<string, { claudeAgents: number }> }).configs['writing-plan']?.claudeAgents,
+      2,
+    );
 
     const removed = await requestJson(f.baseUrl, 'DELETE', `/api/tiger/templates/${duplicate.id}`);
     assert.equal(removed.status, 200);
     assert.ok(Array.isArray(removed.json));
     const remainingTemplates = removed.json as Array<{ name?: string }>;
-    assert.equal(remainingTemplates.some((t) => t.name === 'API Custom Copy'), false);
+    assert.equal(
+      remainingTemplates.some((t) => t.name === 'API Custom Copy'),
+      false,
+    );
 
     const builtinEdit = await requestJson(f.baseUrl, 'PUT', '/api/tiger/templates/builtin-optimum', {
       description: 'not allowed',
@@ -237,7 +248,10 @@ test('PUT /api/tiger/config rejects invalid timing, execution, executable, and p
       { name: 'negative timing', body: { timing: { ...defaults.timing, readyIdleMs: -1 } } },
       { name: 'out-of-range timing', body: { timing: { ...defaults.timing, agentTimeoutMs: 999_999_999 } } },
       { name: 'invalid execution number', body: { execution: { ...defaults.execution, maxConcurrent: 65 } } },
-      { name: 'unknown executable', body: { cli: { ...defaults.cli, claude: { ...defaults.cli.claude, executable: 'node' } } } },
+      {
+        name: 'unknown executable',
+        body: { cli: { ...defaults.cli, claude: { ...defaults.cli.claude, executable: 'node' } } },
+      },
       {
         name: 'unknown permission mode',
         body: {
@@ -291,7 +305,10 @@ test('stage run rejects out-of-range agent counts and unknown model or effort va
     ];
 
     for (const override of cases) {
-      const res = await requestJson(f.baseUrl, 'POST', '/api/tiger/stages/brainstorming/run', { ...valid, ...override });
+      const res = await requestJson(f.baseUrl, 'POST', '/api/tiger/stages/brainstorming/run', {
+        ...valid,
+        ...override,
+      });
       assert.equal(res.status, 400, JSON.stringify(override));
       assert.equal(f.orchestrator.getState().busy, false);
     }

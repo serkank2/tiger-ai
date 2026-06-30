@@ -199,7 +199,9 @@ onMounted(() => {
       :description="t('limits.view.noSnapshotsDesc')"
     >
       <template #actions>
-        <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">{{ t('common.refresh') }}</BaseButton>
+        <BaseButton variant="secondary" :loading="limits.refreshing" @click="refresh">{{
+          t('common.refresh')
+        }}</BaseButton>
       </template>
     </EmptyState>
 
@@ -234,7 +236,13 @@ onMounted(() => {
               <h2>{{ t('limits.view.windowCount', { n: provider.latest.length }) }}</h2>
             </div>
             <span class="status-pill" :class="{ bad: !provider.ok }">
-              {{ provider.ok ? t('common.ok').toLowerCase() : provider.error ? t('common.status.error').toLowerCase() : t('common.status.empty').toLowerCase() }}
+              {{
+                provider.ok
+                  ? t('common.ok').toLowerCase()
+                  : provider.error
+                    ? t('common.status.error').toLowerCase()
+                    : t('common.status.empty').toLowerCase()
+              }}
             </span>
           </header>
           <p class="provider-time">{{ t('limits.view.checkedAt', { date: fmtDate(provider.latestCheckedAt) }) }}</p>
@@ -259,7 +267,11 @@ onMounted(() => {
                 aria-valuemax="100"
                 :aria-label="`${snapshot.label} usage`"
               >
-                <div class="fill" :class="severityForPercent(snapshot.percentUsed)" :style="{ width: widthFor(snapshot) }" />
+                <div
+                  class="fill"
+                  :class="severityForPercent(snapshot.percentUsed)"
+                  :style="{ width: widthFor(snapshot) }"
+                />
               </div>
               <dl class="snapshot-meta">
                 <div>
@@ -290,8 +302,15 @@ onMounted(() => {
                 <div>
                   <dt>{{ t('limits.view.status') }}</dt>
                   <dd>
-                    <span class="status-pill compact" :class="{ bad: statusText(snapshot) === 'error', warn: statusText(snapshot) === 'stale' }">
-                      {{ statusText(snapshot) === 'error' ? t('common.status.error') : t('limits.freshness.' + statusText(snapshot)) }}
+                    <span
+                      class="status-pill compact"
+                      :class="{ bad: statusText(snapshot) === 'error', warn: statusText(snapshot) === 'stale' }"
+                    >
+                      {{
+                        statusText(snapshot) === 'error'
+                          ? t('common.status.error')
+                          : t('limits.freshness.' + statusText(snapshot))
+                      }}
                     </span>
                   </dd>
                 </div>
@@ -348,10 +367,19 @@ onMounted(() => {
                 :disabled="limits.savingRule"
               />
             </label>
-            <BaseCheckbox v-model="draftFor(rule).enabled" :label="t('limits.view.enabled')" :disabled="limits.savingRule" class="checkline" />
+            <BaseCheckbox
+              v-model="draftFor(rule).enabled"
+              :label="t('limits.view.enabled')"
+              :disabled="limits.savingRule"
+              class="checkline"
+            />
             <div class="rule-actions">
-              <BaseButton size="sm" :loading="limits.savingRule" :disabled="!isDirty(rule)" @click="saveRule(rule)">{{ t('common.save') }}</BaseButton>
-              <BaseButton size="sm" variant="danger" :disabled="limits.savingRule" @click="removeRule(rule)">{{ t('common.delete') }}</BaseButton>
+              <BaseButton size="sm" :loading="limits.savingRule" :disabled="!isDirty(rule)" @click="saveRule(rule)">{{
+                t('common.save')
+              }}</BaseButton>
+              <BaseButton size="sm" variant="danger" :disabled="limits.savingRule" @click="removeRule(rule)">{{
+                t('common.delete')
+              }}</BaseButton>
             </div>
           </article>
         </div>
@@ -372,12 +400,25 @@ onMounted(() => {
           </label>
           <label>
             <span>{{ t('limits.view.threshold') }}</span>
-            <input v-model.number="newRule.thresholdPercent" type="number" min="0" max="100" :disabled="limits.savingRule" />
+            <input
+              v-model.number="newRule.thresholdPercent"
+              type="number"
+              min="0"
+              max="100"
+              :disabled="limits.savingRule"
+            />
           </label>
-          <BaseCheckbox v-model="newRule.enabled" :label="t('limits.view.enabled')" :disabled="limits.savingRule" class="checkline" />
+          <BaseCheckbox
+            v-model="newRule.enabled"
+            :label="t('limits.view.enabled')"
+            :disabled="limits.savingRule"
+            class="checkline"
+          />
 
           <div class="rule-actions">
-            <BaseButton size="sm" variant="primary" :loading="limits.savingRule" @click="addRule">{{ t('limits.view.addRule') }}</BaseButton>
+            <BaseButton size="sm" variant="primary" :loading="limits.savingRule" @click="addRule">{{
+              t('limits.view.addRule')
+            }}</BaseButton>
           </div>
         </article>
       </section>

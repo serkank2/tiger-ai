@@ -81,7 +81,8 @@ describe('TeamCoordinationPanel', () => {
   });
 
   it('renders a long handoff title in a wrapping-safe title cell', () => {
-    const title = 'Spec: multiple same-kind agent instances with Lead idle-routing and a deliberately long title that must not collide with the task id';
+    const title =
+      'Spec: multiple same-kind agent instances with Lead idle-routing and a deliberately long title that must not collide with the task id';
     store.roles = [role('lead', 'Lead / Coordinator'), role('business-analyst', 'Business Analyst')];
     store.handoffs = [
       {
@@ -133,9 +134,7 @@ describe('TeamCoordinationPanel', () => {
 
   it('hides worktree actions in read-only (history) view', () => {
     store.readOnly = true;
-    store.taskWorktrees = [
-      { taskId: 'TASK-0001', roleId: 'dev', branch: 'b', status: 'conflict', createdAt: 't0' },
-    ];
+    store.taskWorktrees = [{ taskId: 'TASK-0001', roleId: 'dev', branch: 'b', status: 'conflict', createdAt: 't0' }];
     const wrapper = mount(TeamCoordinationPanel, mountOpts);
     expect(wrapper.find('[data-testid="worktree-merge"]').exists()).toBe(false);
   });

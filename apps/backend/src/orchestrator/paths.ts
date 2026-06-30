@@ -4,7 +4,7 @@ import { STAGE_ORDER } from './types.js';
 
 /** Static per-stage metadata: directories, system-prompt files, output naming, context sources. */
 export const STAGE_META: Record<StageId, StageMeta> = {
-  'brainstorming': {
+  brainstorming: {
     id: 'brainstorming',
     dir: 'brainstorming',
     promptFile: '01-brainstorming.md',
@@ -166,9 +166,4 @@ export class TigerPaths {
 }
 
 /** All directories created during scaffolding (relative to tiger/). */
-export const SCAFFOLD_DIRS: string[] = [
-  'system-prompts',
-  ...STAGE_DIRS,
-  'executing-plan/locks',
-  'task-review/locks',
-];
+export const SCAFFOLD_DIRS: string[] = ['system-prompts', ...STAGE_DIRS, 'executing-plan/locks', 'task-review/locks'];

@@ -5,17 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { ensureScaffold } from './scaffold.js';
 import { STAGE_META } from './paths.js';
-import {
-  EXECUTION_STATUSES,
-  FINAL_DECISIONS,
-  REVIEW_STATUSES,
-  STAGE_ORDER,
-} from './types.js';
-import {
-  FIX_FINDING_PROMPT,
-  SYSTEM_PROMPT_BY_STAGE,
-  SYSTEM_PROMPT_FILES,
-} from './prompt-files.js';
+import { EXECUTION_STATUSES, FINAL_DECISIONS, REVIEW_STATUSES, STAGE_ORDER } from './types.js';
+import { FIX_FINDING_PROMPT, SYSTEM_PROMPT_BY_STAGE, SYSTEM_PROMPT_FILES } from './prompt-files.js';
 
 function assertContainsAll(haystack: string, tokens: string[], context: string): void {
   for (const token of tokens) {
@@ -76,22 +67,11 @@ test('execution, review, fix, and final-review prompts preserve parser markers',
 
   assertContainsAll(
     SYSTEM_PROMPT_BY_STAGE['task-review'],
-    [
-      '## FINDING',
-      '### Related Task',
-      '### Severity',
-      '### Problem',
-      '### Recommended Fix',
-      'No findings.',
-    ],
+    ['## FINDING', '### Related Task', '### Severity', '### Problem', '### Recommended Fix', 'No findings.'],
     'task-review prompt',
   );
 
-  assertContainsAll(
-    FIX_FINDING_PROMPT,
-    ['FIX_RESULT: fixed', 'FIX_RESULT: wontfix'],
-    'fix-finding prompt',
-  );
+  assertContainsAll(FIX_FINDING_PROMPT, ['FIX_RESULT: fixed', 'FIX_RESULT: wontfix'], 'fix-finding prompt');
 
   assertContainsAll(
     SYSTEM_PROMPT_BY_STAGE['requesting-code-review'],
@@ -105,7 +85,10 @@ test('system prompt stage map and scaffold file list stay aligned', () => {
   assert.deepEqual(stageKeys, [...STAGE_ORDER].sort());
 
   const expectedFiles = STAGE_ORDER.map((stage) => STAGE_META[stage].promptFile);
-  assert.deepEqual(SYSTEM_PROMPT_FILES.map((file) => file.filename), expectedFiles);
+  assert.deepEqual(
+    SYSTEM_PROMPT_FILES.map((file) => file.filename),
+    expectedFiles,
+  );
 
   const filesByName = new Map(SYSTEM_PROMPT_FILES.map((file) => [file.filename, file.content]));
   for (const stage of STAGE_ORDER) {

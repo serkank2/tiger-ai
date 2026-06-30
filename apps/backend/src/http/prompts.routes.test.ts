@@ -48,7 +48,8 @@ async function listen(app: express.Express): Promise<TestServer> {
 
 function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   const e = err as { status?: number; statusCode?: number; code?: string };
-  const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
+  const explicit =
+    typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
   const status = explicit && explicit >= 400 && explicit < 600 ? explicit : 500;
   res.status(status).json({ error: { message: err instanceof Error ? err.message : String(err), code: e.code } });
 }

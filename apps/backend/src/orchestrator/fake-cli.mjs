@@ -27,7 +27,9 @@ async function hydrateFromInstruction(chunk) {
   const promptMatch = /read the file "([^"]+)"/i.exec(text);
   if (!promptMatch?.[1]) return;
   const prompt = await fs.readFile(promptMatch[1], 'utf8').catch(() => '');
-  out ??= /Save your deliverable to exactly this file \(absolute path\):\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
+  out ??= /Save your deliverable to exactly this file \(absolute path\):\s*\r?\n\s+([^\r\n]+)/
+    .exec(prompt)?.[1]
+    ?.trim();
   marker ??= /write the single word "done" into it:\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
 }
 
@@ -132,12 +134,16 @@ async function actLoop(text) {
   const promptMatch = /read the file "([^"]+)"/i.exec(text);
   if (!promptMatch?.[1]) return;
   const prompt = await fs.readFile(promptMatch[1], 'utf8').catch(() => '');
-  const o = /Save your deliverable to exactly this file \(absolute path\):\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
+  const o = /Save your deliverable to exactly this file \(absolute path\):\s*\r?\n\s+([^\r\n]+)/
+    .exec(prompt)?.[1]
+    ?.trim();
   const m = /write the single word "done" into it:\s*\r?\n\s+([^\r\n]+)/.exec(prompt)?.[1]?.trim();
   if (!o || !m) return;
   await fs.writeFile(
     o,
-    ['```TeamMessage', JSON.stringify({ kind: 'chat', to: 'all', body: 'Fake persistent turn done.' }), '```', ''].join('\n'),
+    ['```TeamMessage', JSON.stringify({ kind: 'chat', to: 'all', body: 'Fake persistent turn done.' }), '```', ''].join(
+      '\n',
+    ),
     'utf8',
   );
   await fs.writeFile(m, 'done', 'utf8');

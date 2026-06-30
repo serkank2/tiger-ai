@@ -23,7 +23,8 @@ const BaseButtonStub = {
   inheritAttrs: false,
   props: ['loading', 'disabled', 'variant', 'size', 'title', 'iconOnly', 'ariaLabel'],
   emits: ['click'],
-  template: '<button class="bb" :title="title" :disabled="disabled" @click="$emit(\'click\', $event)"><slot /></button>',
+  template:
+    '<button class="bb" :title="title" :disabled="disabled" @click="$emit(\'click\', $event)"><slot /></button>',
 };
 
 function attempt(overrides: Partial<TeamAttemptSnapshot> = {}): TeamAttemptSnapshot {
@@ -69,7 +70,10 @@ describe('TeamAttemptsPanel', () => {
   });
 
   it('lists attempts with status and diff summary', () => {
-    seedState([attempt({ id: 'a1', attemptNumber: 1 }), attempt({ id: 'a2', attemptNumber: 2, current: true, status: 'running' })]);
+    seedState([
+      attempt({ id: 'a1', attemptNumber: 1 }),
+      attempt({ id: 'a2', attemptNumber: 2, current: true, status: 'running' }),
+    ]);
     const wrapper = mountPanel();
     const rows = wrapper.findAll('.attempt');
     expect(rows).toHaveLength(2);
@@ -94,7 +98,10 @@ describe('TeamAttemptsPanel', () => {
 
   it('hides Promote once an attempt is already promoted (one promotion per run)', () => {
     seedState(
-      [attempt({ id: 'a1', status: 'promoted', promoted: true }), attempt({ id: 'a2', attemptNumber: 2, status: 'completed' })],
+      [
+        attempt({ id: 'a1', status: 'promoted', promoted: true }),
+        attempt({ id: 'a2', attemptNumber: 2, status: 'completed' }),
+      ],
       'a1',
     );
     const wrapper = mountPanel();

@@ -191,11 +191,13 @@ export function parseTeamOutput(output: string, defaults: ParseTeamOutputDefault
     for (const item of values) {
       try {
         if (block.kind === 'TeamMessage') {
-          parsed.messages.push(normalizeMessage(item, defaults, timestamp, {
-            blockIndex,
-            declaredType: block.kind,
-            parseWarnings,
-          }));
+          parsed.messages.push(
+            normalizeMessage(item, defaults, timestamp, {
+              blockIndex,
+              declaredType: block.kind,
+              parseWarnings,
+            }),
+          );
         } else if (block.kind === 'TaskDirective') {
           parsed.taskDirectives.push(normalizeTaskDirective(item));
         } else if (block.kind === 'VerificationDirective') {

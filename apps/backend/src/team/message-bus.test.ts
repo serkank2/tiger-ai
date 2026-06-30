@@ -141,7 +141,12 @@ test('parseTeamOutput forces VerificationDirective.roleId to the executing role,
 test('parseTeamOutput parses a handoff CoordinationDirective with verb/to/title/body', () => {
   const output = [
     '```CoordinationDirective',
-    JSON.stringify({ verb: 'handoff', to: 'tester', title: 'Verify login', body: 'Run the e2e login tests and report pass/fail.' }),
+    JSON.stringify({
+      verb: 'handoff',
+      to: 'tester',
+      title: 'Verify login',
+      body: 'Run the e2e login tests and report pass/fail.',
+    }),
     '```',
   ].join('\n');
 

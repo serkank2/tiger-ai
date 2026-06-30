@@ -80,7 +80,9 @@ export function isWorkspaceAllowed(
   if (!enforce) return { ok: true, path: resolved };
 
   // Enforcement on: the path must live inside an allow-listed root or the data dir.
-  const roots = [...allowlist, dataDir].filter((r): r is string => typeof r === 'string' && r.length > 0).map((r) => path.resolve(r));
+  const roots = [...allowlist, dataDir]
+    .filter((r): r is string => typeof r === 'string' && r.length > 0)
+    .map((r) => path.resolve(r));
   if (roots.some((root) => isInside(root, resolved))) {
     return { ok: true, path: resolved };
   }

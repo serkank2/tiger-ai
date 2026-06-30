@@ -13,7 +13,9 @@ interface Res {
   json: <T = unknown>() => T;
 }
 
-async function listen(getEngine: () => unknown): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
+async function listen(
+  getEngine: () => unknown,
+): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
   const app = express();
   app.use('/api/cue', express.json({ limit: '64kb' }), createCueRouter({} as AppCtx, getEngine as never));
   app.use(errorHandler());
@@ -24,11 +26,17 @@ async function listen(getEngine: () => unknown): Promise<{ req: (m: string, p: s
     req: (method, p, body) =>
       new Promise<Res>((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
-        const r = http.request(new URL(p, base), { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} }, (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }));
-        });
+        const r = http.request(
+          new URL(p, base),
+          { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} },
+          (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }),
+            );
+          },
+        );
         r.on('error', reject);
         if (payload) r.write(payload);
         r.end();

@@ -64,7 +64,9 @@ function applyServerError(message: string) {
 
 const cwdWindowsContext = computed(() => usesWindowsPathSyntax(settings.settings?.defaultCwd, form.defaultCwd));
 const defaultCwdShapeError = computed(() =>
-  form.defaultCwd.trim() ? absoluteLocalPathError(form.defaultCwd, 'Default working directory', cwdWindowsContext.value) : null,
+  form.defaultCwd.trim()
+    ? absoluteLocalPathError(form.defaultCwd, 'Default working directory', cwdWindowsContext.value)
+    : null,
 );
 const defaultCwdError = computed(
   () =>
@@ -75,8 +77,10 @@ const defaultCwdError = computed(
 const shellWindowsContext = computed(() =>
   usesWindowsPathSyntax(settings.settings?.defaultCwd, form.defaultCwd, form.shellPath),
 );
-const shellPathError = computed(() =>
-  serverErrors.shellPath ?? customShellPathError(form.shellKind, form.shellPath, 'Default shell path', shellWindowsContext.value),
+const shellPathError = computed(
+  () =>
+    serverErrors.shellPath ??
+    customShellPathError(form.shellKind, form.shellPath, 'Default shell path', shellWindowsContext.value),
 );
 const hasFieldError = computed(() => Boolean(defaultCwdError.value || shellPathError.value));
 const canSave = computed(() => !saving.value && !hasFieldError.value && cwdState.value !== 'checking');
@@ -118,9 +122,7 @@ async function save() {
 
   saving.value = true;
   const defaultShell =
-    form.shellKind === 'custom'
-      ? { kind: 'custom' as const, path: form.shellPath.trim() }
-      : { kind: form.shellKind };
+    form.shellKind === 'custom' ? { kind: 'custom' as const, path: form.shellPath.trim() } : { kind: form.shellKind };
   const patch: Partial<AppSettings> = {
     defaultShell,
     commandRouting: {
@@ -296,7 +298,9 @@ async function save() {
 
     <template #footer>
       <BaseButton variant="ghost" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-      <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">{{ t('common.save') }}</BaseButton>
+      <BaseButton variant="primary" :loading="saving" :disabled="!canSave" @click="save">{{
+        t('common.save')
+      }}</BaseButton>
     </template>
   </BaseModal>
 

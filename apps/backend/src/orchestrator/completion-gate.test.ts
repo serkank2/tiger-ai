@@ -4,11 +4,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TigerPaths } from './paths.js';
-import {
-  checkUpstreamArtifacts,
-  evaluateCompletionGate,
-  requiredSelfReport,
-} from './completion-gate.js';
+import { checkUpstreamArtifacts, evaluateCompletionGate, requiredSelfReport } from './completion-gate.js';
 
 test('requiredSelfReport maps stages and review phases to their tokens', () => {
   assert.equal(requiredSelfReport('executing-plan'), 'execution');

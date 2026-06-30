@@ -5,11 +5,22 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MemoryQueueRepository } from './MemoryQueueRepository.js';
-import { Scheduler, type QueueOrchestrator, type QueueTeamTargetRuntime, type QueueTerminalTargetRuntime } from './Scheduler.js';
+import {
+  Scheduler,
+  type QueueOrchestrator,
+  type QueueTeamTargetRuntime,
+  type QueueTerminalTargetRuntime,
+} from './Scheduler.js';
 import { QueueService } from '../services/QueueService.js';
 import { defaultTigerConfig } from '../orchestrator/config.js';
 import type { ExecutionOwner } from '../orchestrator/persistence.js';
-import { STAGE_ORDER, type OrchestratorState, type StageId, type StageRunConfig, type TigerConfig } from '../orchestrator/types.js';
+import {
+  STAGE_ORDER,
+  type OrchestratorState,
+  type StageId,
+  type StageRunConfig,
+  type TigerConfig,
+} from '../orchestrator/types.js';
 import type { TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
 import type { QueueJob } from './types.js';
 
@@ -178,9 +189,16 @@ test('Scheduler runs queued prompts strictly one at a time in queue order', asyn
     });
     assert.equal(first.targetType, 'project');
     assert.equal((await service.listSteps(first.id)).length, STAGE_ORDER.length);
-    await service.enqueue({ prompt: 'Second autonomous prompt', provider: 'codex', workspacePath: path.join(temp, 'second') });
+    await service.enqueue({
+      prompt: 'Second autonomous prompt',
+      provider: 'codex',
+      workspacePath: path.join(temp, 'second'),
+    });
     await scheduler.start();
-    await waitFor(async () => (await service.getState()).jobs.every((job) => job.status === 'completed'), 'queue completion');
+    await waitFor(
+      async () => (await service.getState()).jobs.every((job) => job.status === 'completed'),
+      'queue completion',
+    );
 
     assert.deepEqual(orchestrator.prompts, ['First autonomous prompt', 'Second autonomous prompt']);
     assert.equal(orchestrator.startedStages.length, STAGE_ORDER.length * 2);
@@ -227,7 +245,10 @@ test('Scheduler dispatches terminal target jobs and records the terminal id', as
     assert.equal(def.name, 'Run tests');
     assert.equal(def.cwd, cwd);
     assert.equal(def.initialCommand, 'npm test');
-    assert.deepEqual(terminal.upserted.map((item) => item.id), [def.id]);
+    assert.deepEqual(
+      terminal.upserted.map((item) => item.id),
+      [def.id],
+    );
     assert.deepEqual(terminal.started, [{ id: def.id, cols: 120, rows: 40 }]);
     assert.equal(terminal.saveCount, 1);
     assert.deepEqual((await service.getJob(job.id))?.targetRef, { terminalId: def.id });

@@ -66,7 +66,9 @@ describe('templates store', () => {
     expect(store.items).toEqual([base]);
 
     mocks.api.createTigerTemplate.mockResolvedValue([base, renamed]);
-    await expect(store.create({ name: 'Renamed', fromStage: 'writing-plan', configs: renamed.configs })).resolves.toEqual(renamed);
+    await expect(
+      store.create({ name: 'Renamed', fromStage: 'writing-plan', configs: renamed.configs }),
+    ).resolves.toEqual(renamed);
     expect(store.items).toEqual([base, renamed]);
     expect(store.savedMessage).toBe('Template saved');
 

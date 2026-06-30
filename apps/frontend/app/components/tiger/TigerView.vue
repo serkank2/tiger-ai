@@ -115,9 +115,7 @@ const hasFailed = computed(() => runs.value.some((r) => r.state === 'failed' || 
 
 // Once a stage has run (e.g. during a Run All), show the exact config it used (read-only);
 // otherwise show the editable local config for a manual single-stage run.
-const ranWithConfig = computed(
-  () => !!stageState.value?.config && stageState.value?.status !== 'not_started',
-);
+const ranWithConfig = computed(() => !!stageState.value?.config && stageState.value?.status !== 'not_started');
 const shownCfg = computed(() => (ranWithConfig.value ? stageState.value!.config! : runCfg));
 const cfgDisabled = computed(() => tiger.busy || ranWithConfig.value);
 // StageConfigPanel never mutates its prop; it emits the edited config and the parent
@@ -126,9 +124,7 @@ function onCfgUpdate(next: TigerStageRunConfig) {
   Object.assign(runCfg, next);
 }
 
-const atCycleLimit = computed(
-  () => (tiger.state?.correctionCycles ?? 0) >= (tiger.state?.maxCorrectionCycles ?? 0),
-);
+const atCycleLimit = computed(() => (tiger.state?.correctionCycles ?? 0) >= (tiger.state?.maxCorrectionCycles ?? 0));
 
 const prevIncomplete = computed(() => {
   const idx = TIGER_STAGES.findIndex((s) => s.id === selectedStage.value);
@@ -220,7 +216,9 @@ onMounted(() => {
       </div>
       <span class="spacer" />
       <code v-if="tiger.workspace" class="ws" :title="tiger.state?.tigerRoot ?? ''">{{ tiger.state?.tigerRoot }}</code>
-      <BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">{{ t('tiger.view.templates') }}</BaseButton>
+      <BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">{{
+        t('tiger.view.templates')
+      }}</BaseButton>
       <BaseButton v-if="tiger.initialized" variant="secondary" size="sm" @click="backToProjects">← Projects</BaseButton>
       <BaseButton variant="secondary" size="sm" @click="emit('back')">← Terminals</BaseButton>
     </header>
@@ -252,8 +250,8 @@ onMounted(() => {
         <h2>{{ t('tiger.view.newProject') }}</h2>
       </div>
       <p class="lead">
-        Pick a workspace folder and provide your project prompt. Tiger creates a <code>.tiger/</code> workspace
-        there (system prompts, config, logs) and drives Claude, Codex &amp; Antigravity CLI agents through the full workflow.
+        Pick a workspace folder and provide your project prompt. Tiger creates a <code>.tiger/</code> workspace there
+        (system prompts, config, logs) and drives Claude, Codex &amp; Antigravity CLI agents through the full workflow.
       </p>
       <div class="field">
         <span>{{ t('tiger.view.workspaceFolder') }}</span>
@@ -300,8 +298,17 @@ onMounted(() => {
           <span v-if="stageState?.continued" class="continued-badge">continued ✓</span>
           <span v-if="tiger.state?.autoAdvance" class="auto-badge">auto-advancing ▸</span>
           <span class="spacer" />
-          <BaseButton v-if="tiger.busy" class="stop" variant="danger" :loading="stopping" @click="stop">■ Stop</BaseButton>
-          <BaseButton v-if="hasFailed && !tiger.busy" class="retry" variant="secondary" :loading="retrying" @click="retryFailed">⟳ Retry failed</BaseButton>
+          <BaseButton v-if="tiger.busy" class="stop" variant="danger" :loading="stopping" @click="stop"
+            >■ Stop</BaseButton
+          >
+          <BaseButton
+            v-if="hasFailed && !tiger.busy"
+            class="retry"
+            variant="secondary"
+            :loading="retrying"
+            @click="retryFailed"
+            >⟳ Retry failed</BaseButton
+          >
           <BaseButton
             v-if="stageState?.status === 'failed' && !stageState?.continued && !tiger.busy"
             class="continue"
@@ -311,7 +318,9 @@ onMounted(() => {
           >
             → Continue despite failures
           </BaseButton>
-          <BaseButton class="run" variant="primary" :disabled="tiger.busy" @click="runStage(false)">▶ Run stage</BaseButton>
+          <BaseButton class="run" variant="primary" :disabled="tiger.busy" @click="runStage(false)"
+            >▶ Run stage</BaseButton
+          >
           <BaseButton
             class="run-all"
             variant="secondary"
@@ -332,10 +341,7 @@ onMounted(() => {
           Findings: {{ tiger.state.findings.fixed }} fixed · {{ tiger.state.findings.wontfix }} won't fix ·
           {{ tiger.state.findings.open + tiger.state.findings.fixing }} open · {{ tiger.state.findings.total }} total
         </p>
-        <p
-          v-else-if="selectedStage === 'task-review' && stageState?.status === 'completed'"
-          class="findings-line ok"
-        >
+        <p v-else-if="selectedStage === 'task-review' && stageState?.status === 'completed'" class="findings-line ok">
           ✓ Review found no problems — reviewed tasks approved.
         </p>
 
@@ -351,10 +357,26 @@ onMounted(() => {
 
         <div v-if="selectedStage === 'requesting-code-review'" class="route">
           <span class="rl">{{ t('tiger.view.correctionRouting') }}</span>
-          <span class="cycles">cycles {{ tiger.state?.correctionCycles ?? 0 }}/{{ tiger.state?.maxCorrectionCycles ?? 0 }}</span>
+          <span class="cycles"
+            >cycles {{ tiger.state?.correctionCycles ?? 0 }}/{{ tiger.state?.maxCorrectionCycles ?? 0 }}</span
+          >
           <span class="spacer" />
-          <BaseButton size="sm" variant="secondary" :disabled="tiger.busy || atCycleLimit" :loading="routing" @click="route('executing-plan')">↩ Back to Execution</BaseButton>
-          <BaseButton size="sm" variant="secondary" :disabled="tiger.busy || atCycleLimit" :loading="routing" @click="route('task-review')">↩ Back to Task Review</BaseButton>
+          <BaseButton
+            size="sm"
+            variant="secondary"
+            :disabled="tiger.busy || atCycleLimit"
+            :loading="routing"
+            @click="route('executing-plan')"
+            >↩ Back to Execution</BaseButton
+          >
+          <BaseButton
+            size="sm"
+            variant="secondary"
+            :disabled="tiger.busy || atCycleLimit"
+            :loading="routing"
+            @click="route('task-review')"
+            >↩ Back to Task Review</BaseButton
+          >
         </div>
       </div>
 
@@ -362,14 +384,25 @@ onMounted(() => {
         <AgentTile v-for="r in runs" :key="r.id" :run="r" />
       </div>
       <p v-else class="hint">
-        Configure the agents above and press “Run stage” to start. On the first run in a new workspace, an
-        agent tile may show a one-time “trust this folder” prompt — click into that tile and approve it once
-        (or pick a Full-access permission mode); afterwards runs are fully autonomous.
+        Configure the agents above and press “Run stage” to start. On the first run in a new workspace, an agent tile
+        may show a one-time “trust this folder” prompt — click into that tile and approve it once (or pick a Full-access
+        permission mode); afterwards runs are fully autonomous.
       </p>
 
-      <details v-if="selectedStage === 'executing-plan' || selectedStage === 'task-review' || (tiger.state?.tasks?.total ?? 0) > 0" class="panel" open>
+      <details
+        v-if="
+          selectedStage === 'executing-plan' || selectedStage === 'task-review' || (tiger.state?.tasks?.total ?? 0) > 0
+        "
+        class="panel"
+        open
+      >
         <summary>{{ t('tiger.view.tasks') }}</summary>
-        <TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" :error="tiger.loadError" @retry="tiger.load()" />
+        <TaskBoard
+          :tasks="tiger.state?.tasks ?? null"
+          :loading="tiger.loading && !tiger.loaded"
+          :error="tiger.loadError"
+          @retry="tiger.load()"
+        />
       </details>
 
       <details class="panel">
@@ -381,7 +414,12 @@ onMounted(() => {
     <FolderPicker
       v-if="showPicker"
       :initial="workspacePath || undefined"
-      @select="(p) => { workspacePath = p; showPicker = false; }"
+      @select="
+        (p) => {
+          workspacePath = p;
+          showPicker = false;
+        }
+      "
       @close="showPicker = false"
     />
     <RunAllModal v-if="showRunAll" @close="showRunAll = false" @open-templates="emit('openTemplates')" />

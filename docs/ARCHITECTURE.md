@@ -22,7 +22,7 @@ design notes are collected at the end.
 
 - **Control plane = REST.** Create/start/stop/configure. Side-effecting, request/response,
   small JSON bodies. Routers live in `apps/backend/src/http/` and are mounted under `/api`.
-- **Data plane = WebSocket.** Live terminal output and run-state updates are *pushed*; the
+- **Data plane = WebSocket.** Live terminal output and run-state updates are _pushed_; the
   frontend never polls for live data. On (re)connect the client re-attaches and reconciles a
   full snapshot, so output is never double-delivered. The hub lives in `apps/backend/src/ws/`.
 
@@ -31,7 +31,7 @@ byte stream and run-state deltas flow over a single multiplexed socket.
 
 ## Boot sequence & durability
 
-MySQL is the **system of record**. `apps/backend/src/index.ts` runs migrations *before* the
+MySQL is the **system of record**. `apps/backend/src/index.ts` runs migrations _before_ the
 HTTP server listens and **fails fast** (`process.exit(1)`) if the DB is unreachable after the
 retry window — Kaplan never silently boots on stale file state. After migration it:
 
@@ -74,7 +74,7 @@ brainstorming → writing-plan → writing-tasks → merge-tasks → executing-p
               → task-review → requesting-code-review
 ```
 
-- **Interactive, not headless.** Agents run as *interactive* CLIs in real PTYs (Claude, Codex,
+- **Interactive, not headless.** Agents run as _interactive_ CLIs in real PTYs (Claude, Codex,
   Antigravity, …), driven the same way a human would drive them. Completion is detected via a
   `.done` marker file, with output-idle and hard-timeout fallbacks. This is the project's
   defining execution model — agents are interactive PTY CLIs, not API calls.
@@ -105,10 +105,10 @@ brainstorming → writing-plan → writing-tasks → merge-tasks → executing-p
 - **Message bus** (`message-bus.ts`): the single authoritative writer of `conversation.jsonl`
   (append-only, `seq`-ordered). It **forces a message's `from` and a sign-off's `roleId` to the
   executing role**, so one agent can never impersonate another to self-assign work or sign off.
-- **Done-gate** (`completion.ts`): a pure, code-enforced gate. A run completes *only* when
+- **Done-gate** (`completion.ts`): a pure, code-enforced gate. A run completes _only_ when
   every gate is clear — all tasks done, no pending findings, **verification passed**, no pending
   steering, and **every required role holds a fresh sign-off** (a board with queued/in-progress
-  per-role work also blocks). `DoneGateState.openBlockers` lists exactly *why* a run is still
+  per-role work also blocks). `DoneGateState.openBlockers` lists exactly _why_ a run is still
   open, surfaced to the UI.
 - **Live WS events** (`TeamEvent`): `message`, `state`, `role`, `steering`, `done`, and
   `changes`. The orchestrator emits each; the WS layer fans them out as `team.<type>` frames.
@@ -120,7 +120,7 @@ brainstorming → writing-plan → writing-tasks → merge-tasks → executing-p
   `gh pr create` performs its own push.
 - **Changes view** (`changes.ts`): read-only working-tree diff vs HEAD (file list + colorized
   diff + ± summary), best-effort and degrading cleanly on a non-git workspace.
-- **Stop vs Close**: *Stop* pauses (sessions stay alive, resumable); *Close* permanently ends
+- **Stop vs Close**: _Stop_ pauses (sessions stay alive, resumable); _Close_ permanently ends
   the run (sessions killed, cannot resume).
 
 ### `queue/` + `services/QueueService.ts` — durable command queue
@@ -134,7 +134,7 @@ A MySQL-backed job queue (`MysqlQueueRepository.ts`) dispatched by a single `Sch
   reclaimed and re-dispatched.
 - **Backoff / retry.** `attempts` vs `max_attempts` with backoff (`retry.ts`); exhausted jobs
   are parked, not spun.
-- **Per-provider lanes.** `concurrency.ts` caps concurrency *per provider*
+- **Per-provider lanes.** `concurrency.ts` caps concurrency _per provider_
   (`claude`/`codex`/`antigravity`/`mixed`), env-tunable via `KAPLAN_QUEUE_CONCURRENCY_*`
   (default 1 each). `mixed` jobs occupy their own lane. This lets, e.g., 2 Claude + 2 Codex
   jobs run in parallel while bounding any single provider.
@@ -161,7 +161,7 @@ hammered.
 ### `security/` + `http/middleware/` — auth & origin
 
 Loopback-binding plus a **server-side Origin allowlist** (CORS only blocks reading the
-*response*; a simple cross-origin POST could still hit a route, so the Origin guard rejects
+_response_; a simple cross-origin POST could still hit a route, so the Origin guard rejects
 disallowed browser origins outright; non-browser local clients send no Origin and are allowed).
 Optional shared-token auth (`KAPLAN_AUTH_TOKEN`) gates `/api/*` (no-op when unset; liveness is
 always exempt), and an optional per-IP fixed-window rate limiter guards against abuse. A
@@ -212,9 +212,9 @@ MySQL pool (`db/pool.ts`), idempotent migrations keyed in `schema_migrations`
 - **Terminals.** PTYs are inherently stateful and racy; the promise-lock + generation-tag
   combination is what makes broadcast input and reconnect-reconcile safe.
 - **Tiger pipeline.** Driving real interactive CLIs (not headless API calls) means completion
-  is *observed*, not *returned* — hence the `.done` marker with idle/timeout fallbacks, and why
+  is _observed_, not _returned_ — hence the `.done` marker with idle/timeout fallbacks, and why
   worktree-per-task isolation matters for parallel safety.
-- **AI Team.** The done-gate is *pure and code-enforced* on purpose: agents can claim they're
+- **AI Team.** The done-gate is _pure and code-enforced_ on purpose: agents can claim they're
   finished, but only the gate decides, and it can't be talked past. Verification text like
   "0 errors" is treated as success, not failure.
 - **Queue.** `SKIP LOCKED` + lease/heartbeat is the durable, multi-scheduler-safe primitive;

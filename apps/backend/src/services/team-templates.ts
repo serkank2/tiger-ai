@@ -145,8 +145,7 @@ export class TeamTemplateService {
     const defaultName = await this.nextCopyName(source.name);
     const name = 'name' in raw ? normalizeTemplateName(raw.name) : defaultName;
     const description = normalizeDescription(raw.description, source.description);
-    const roles =
-      'roles' in raw ? this.parseRoles(raw.roles) : source.roles.map(cloneRoleTemplate);
+    const roles = 'roles' in raw ? this.parseRoles(raw.roles) : source.roles.map(cloneRoleTemplate);
     validateTeamTemplate(this.getConfig(), { name, description, roles });
     return this.repository.create({ id: nanoid(), name, description, roles, builtin: false, version: 1 });
   }
@@ -167,10 +166,7 @@ export class TeamTemplateService {
     const name = 'name' in raw ? normalizeTemplateName(raw.name) : current?.name;
     if (!name) throw configInputError('team template name is required');
     const description = normalizeDescription(raw.description, current?.description);
-    const roles =
-      'roles' in raw
-        ? this.parseRoles(raw.roles)
-        : current?.roles.map(cloneRoleTemplate);
+    const roles = 'roles' in raw ? this.parseRoles(raw.roles) : current?.roles.map(cloneRoleTemplate);
     if (!roles) throw configInputError('roles are required');
     validateTeamTemplate(this.getConfig(), { name, description, roles });
     return { name, description, roles };

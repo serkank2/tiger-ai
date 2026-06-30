@@ -41,7 +41,7 @@ export const useTerminalsStore = defineStore('terminals', () => {
   const loadError = ref<string | null>(null);
 
   const byId = computed<Record<string, TerminalDto>>(() => Object.fromEntries(items.value.map((t) => [t.id, t])));
-  const active = computed(() => (activeId.value ? byId.value[activeId.value] ?? null : null));
+  const active = computed(() => (activeId.value ? (byId.value[activeId.value] ?? null) : null));
   const someSelected = computed(() => selectedIds.value.length > 0);
   // "all" means all SELECTABLE (unprotected) terminals — protected ones are excluded from bulk.
   const allSelected = computed(() => {

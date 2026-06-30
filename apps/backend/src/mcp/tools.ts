@@ -154,7 +154,13 @@ export function buildTools(): McpToolDef[] {
           priority: args.priority,
           maxAttempts: args.maxAttempts,
         });
-        return { id: job.id, status: job.status, position: job.position, provider: job.provider, projectName: job.projectName };
+        return {
+          id: job.id,
+          status: job.status,
+          position: job.position,
+          provider: job.provider,
+          projectName: job.projectName,
+        };
       },
     }),
     // ----------------------------------------------------------------- tiger (read)
@@ -189,7 +195,12 @@ export function buildTools(): McpToolDef[] {
       description:
         'List messages from the active team run conversation, optionally only those after a given sequence number (for polling).',
       inputShape: {
-        afterSeq: z.number().int().nonnegative().optional().describe('Return only messages with seq greater than this value.'),
+        afterSeq: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe('Return only messages with seq greater than this value.'),
       },
       readOnly: true,
       async run(ctx, args) {
@@ -203,7 +214,7 @@ export function buildTools(): McpToolDef[] {
       name: 'post_team_steering',
       title: 'Post a team steering directive',
       description:
-        'Send a steering directive to the Lead of the active team run. Queued FIFO and picked up on the Lead\'s next turn. Fails if no steerable run is active.',
+        "Send a steering directive to the Lead of the active team run. Queued FIFO and picked up on the Lead's next turn. Fails if no steerable run is active.",
       inputShape: { body: z.string().min(1).describe('The steering directive text.') },
       readOnly: false,
       async run(ctx, args) {

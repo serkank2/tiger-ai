@@ -48,7 +48,12 @@ async function isFileOlderThan(file: string, ttlMs: number, nowMs = Date.now()):
   return !!st && nowMs - st.mtimeMs > ttlMs;
 }
 
-async function shouldReclaimClaimFile(file: string, lockFile: string | null, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+async function shouldReclaimClaimFile(
+  file: string,
+  lockFile: string | null,
+  ttlMs: number,
+  nowMs = Date.now(),
+): Promise<boolean> {
   if (lockFile && (await pathExists(lockFile))) return isLockStale(lockFile, ttlMs, nowMs);
   return isFileOlderThan(file, ttlMs, nowMs);
 }
@@ -63,7 +68,10 @@ export function parseFindingBlocks(content: string): { title: string; relatedTas
     const start = heads[h]!;
     const end = h + 1 < heads.length ? heads[h + 1]! : lines.length;
     const body = lines.slice(start, end).join('\n').trim();
-    const title = lines[start]!.replace(/^##\s+/, '').replace(/^FINDING[:\s-]*/i, '').trim() || 'finding';
+    const title =
+      lines[start]!.replace(/^##\s+/, '')
+        .replace(/^FINDING[:\s-]*/i, '')
+        .trim() || 'finding';
     const rel = /related task[:\s]*\**\s*(TASK-[A-Za-z0-9_-]+)/i.exec(body);
     out.push({ title, relatedTask: rel?.[1], body });
   }
@@ -83,8 +91,7 @@ export async function splitFindingsToFiles(
       n++;
       const id = `FINDING-${String(n).padStart(3, '0')}`;
       const header =
-        `# ${id}\n\n_Reported by ${log.label}` +
-        `${f.relatedTask ? ` · related task ${f.relatedTask}` : ''}._\n\n`;
+        `# ${id}\n\n_Reported by ${log.label}` + `${f.relatedTask ? ` · related task ${f.relatedTask}` : ''}._\n\n`;
       await fs.writeFile(path.join(dir, findingFileName(id, 'open')), header + f.body + '\n', 'utf8');
       recs.push({ id, status: 'open', title: f.title, relatedTask: f.relatedTask });
     }
@@ -136,10 +143,7 @@ export interface ReclaimStaleFindingsOptions {
 }
 
 /** Reset abandoned fixing findings so the atomic rename queue can claim them again. */
-export async function reclaimStaleFindings(
-  dir: string,
-  opts: ReclaimStaleFindingsOptions,
-): Promise<FindingRecord[]> {
+export async function reclaimStaleFindings(dir: string, opts: ReclaimStaleFindingsOptions): Promise<FindingRecord[]> {
   const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
   const reclaimed: FindingRecord[] = [];
   for (const name of names) {

@@ -225,7 +225,10 @@ export function useSocket() {
           const parts = Object.entries(counts).map(([c, n]) => `${n} ${labels[c] ?? c.toLowerCase()}`);
           // protected-only skips are intentional → info, not error
           const realFailure = failed.some((f) => f.code !== 'PROTECTED');
-          notices.push(`Sent to ${written}/${matched} — ${parts.join(', ')}`, written > 0 || !realFailure ? 'info' : 'error');
+          notices.push(
+            `Sent to ${written}/${matched} — ${parts.join(', ')}`,
+            written > 0 || !realFailure ? 'info' : 'error',
+          );
           if (counts.UNKNOWN) void terminals.fetchAll().catch(() => {});
         }
         break;
@@ -301,11 +304,7 @@ export function useSocket() {
    * Every waiter is settled: ok from server routing, not_sent if the frame cannot be
    * sent or is rejected, timeout after 5s, and disconnected if the socket closes first.
    */
-  function broadcast(
-    target: CommandTarget,
-    data: string,
-    appendNewline?: boolean,
-  ): Promise<BroadcastOutcome> {
+  function broadcast(target: CommandTarget, data: string, appendNewline?: boolean): Promise<BroadcastOutcome> {
     const id = `c${++msgSeq}`;
     const sent = raw({ type: 'term.broadcastInput', id, target, data, appendNewline });
     if (!sent) return Promise.resolve({ kind: 'not_sent', reason: 'socket_not_open' });

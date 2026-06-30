@@ -32,7 +32,11 @@ import { computeTeamChanges } from '../team/changes.js';
 import { commit as gitCommit, createPullRequest, stageAll } from '../git/write.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { badRequest, httpError, HttpError, notFound } from './errors.js';
-import type { TeamOrchestrationMode, TeamRunState as EngineTeamRunState, TeamRoleInstance } from '../team/TeamOrchestrator.js';
+import type {
+  TeamOrchestrationMode,
+  TeamRunState as EngineTeamRunState,
+  TeamRoleInstance,
+} from '../team/TeamOrchestrator.js';
 import type { TeamMessage } from '../team/types.js';
 import type { AgentType } from '../orchestrator/types.js';
 import { toAgentTypeOr } from '../orchestrator/types.js';
@@ -72,7 +76,11 @@ function toOrchHttpError(err: unknown): HttpError {
   if (err instanceof HttpError) return err;
   const e = err as { status?: number; message?: string };
   const status = typeof e.status === 'number' && e.status >= 400 && e.status < 600 ? e.status : 500;
-  return httpError(status, statusToErrorCode(status), status >= 500 ? 'internal error' : e.message ?? 'team request failed');
+  return httpError(
+    status,
+    statusToErrorCode(status),
+    status >= 500 ? 'internal error' : (e.message ?? 'team request failed'),
+  );
 }
 
 /** Map an HTTP status onto the matching stable error code (mirrors errors.ts statusToCode). */
@@ -125,7 +133,12 @@ function asString(value: unknown): string {
 }
 
 function slug(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
 }
 
 function parseTeamOrchestrationMode(value: unknown): TeamOrchestrationMode | undefined {
@@ -346,7 +359,12 @@ export function createTeamRouter(ctx: AppCtx): Router {
     await ensureScaffold(workspace, goal);
     rememberTeamProject(ctx, workspace);
     await ctx.save();
-    await orch.createTeamRun({ workspace, goal, roles, orchestrationMode: parseTeamOrchestrationMode(body.orchestrationMode) });
+    await orch.createTeamRun({
+      workspace,
+      goal,
+      roles,
+      orchestrationMode: parseTeamOrchestrationMode(body.orchestrationMode),
+    });
     await orch.start();
     res.json({ state: toTeamRunStateDto(orch.getState()) });
   });
@@ -422,9 +440,7 @@ export function createTeamRouter(ctx: AppCtx): Router {
       return;
     }
     const all =
-      state && state.runId === id
-        ? await orch.listMessages(0)
-        : await orch.listMessages(0, { workspace, runId: id });
+      state && state.runId === id ? await orch.listMessages(0) : await orch.listMessages(0, { workspace, runId: id });
 
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(req.query.limit) || DEFAULT_PAGE));
     const afterSeqRaw = Number(req.query.afterSeq);
@@ -659,7 +675,11 @@ export function createTeamRouter(ctx: AppCtx): Router {
     try {
       if (active && active.runId === id) {
         const dto = toTeamRunStateDto(active);
-        res.json({ attempts: dto.attempts ?? [], currentAttemptId: dto.currentAttemptId ?? null, promotedAttemptId: dto.promotedAttemptId ?? null });
+        res.json({
+          attempts: dto.attempts ?? [],
+          currentAttemptId: dto.currentAttemptId ?? null,
+          promotedAttemptId: dto.promotedAttemptId ?? null,
+        });
         return;
       }
       const workspace = active?.workspace ?? knownWorkspace(ctx);
@@ -668,7 +688,11 @@ export function createTeamRouter(ctx: AppCtx): Router {
       }
       const state = await orch.readRun(workspace, id);
       const dto = toTeamRunStateDto(state);
-      res.json({ attempts: dto.attempts ?? [], currentAttemptId: dto.currentAttemptId ?? null, promotedAttemptId: dto.promotedAttemptId ?? null });
+      res.json({
+        attempts: dto.attempts ?? [],
+        currentAttemptId: dto.currentAttemptId ?? null,
+        promotedAttemptId: dto.promotedAttemptId ?? null,
+      });
     } catch (err) {
       throw toOrchHttpError(err);
     }

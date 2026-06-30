@@ -22,7 +22,8 @@ function fmtDuration(ms: number | undefined): string {
 
 const tokensLabel = computed(() => (m.value?.tokens == null ? 'n/a' : String(m.value.tokens)));
 const costLabel = computed(() => (m.value?.cost == null ? 'n/a' : `$${m.value.cost.toFixed(2)}`));
-const naTip = 'Token/cost totals need a usage-reporting runner; the CLIs run as interactive PTYs and do not self-report usage.';
+const naTip =
+  'Token/cost totals need a usage-reporting runner; the CLIs run as interactive PTYs and do not self-report usage.';
 </script>
 
 <template>
@@ -30,14 +31,31 @@ const naTip = 'Token/cost totals need a usage-reporting runner; the CLIs run as 
     <summary>{{ t('team.metrics.title') }}</summary>
     <div v-if="m" class="m-body">
       <div class="totals">
-        <span class="kv"><span class="k">{{ t('team.metrics.duration') }}</span><span class="v">{{ fmtDuration(m.durationMs) }}</span></span>
-        <span class="kv"><span class="k">{{ t('team.metrics.turns') }}</span><span class="v">{{ m.turnCount }}</span></span>
-        <span class="kv" :title="naTip"><span class="k">{{ t('team.metrics.tokens') }}</span><span class="v na">{{ tokensLabel }}</span></span>
-        <span class="kv" :title="naTip"><span class="k">{{ t('team.metrics.cost') }}</span><span class="v na">{{ costLabel }}</span></span>
+        <span class="kv"
+          ><span class="k">{{ t('team.metrics.duration') }}</span
+          ><span class="v">{{ fmtDuration(m.durationMs) }}</span></span
+        >
+        <span class="kv"
+          ><span class="k">{{ t('team.metrics.turns') }}</span
+          ><span class="v">{{ m.turnCount }}</span></span
+        >
+        <span class="kv" :title="naTip"
+          ><span class="k">{{ t('team.metrics.tokens') }}</span
+          ><span class="v na">{{ tokensLabel }}</span></span
+        >
+        <span class="kv" :title="naTip"
+          ><span class="k">{{ t('team.metrics.cost') }}</span
+          ><span class="v na">{{ costLabel }}</span></span
+        >
       </div>
       <table v-if="m.perRole.length" class="per-role">
         <thead>
-          <tr><th>{{ t('team.metrics.role') }}</th><th>{{ t('team.metrics.provider') }}</th><th class="num">{{ t('team.metrics.turns') }}</th><th class="num">{{ t('team.metrics.duration') }}</th></tr>
+          <tr>
+            <th>{{ t('team.metrics.role') }}</th>
+            <th>{{ t('team.metrics.provider') }}</th>
+            <th class="num">{{ t('team.metrics.turns') }}</th>
+            <th class="num">{{ t('team.metrics.duration') }}</th>
+          </tr>
         </thead>
         <tbody>
           <tr v-for="r in m.perRole" :key="r.roleId">
@@ -68,22 +86,64 @@ summary {
   letter-spacing: 0.05em;
   color: var(--text-dim);
 }
-.m-body { margin-top: var(--space-2); }
-.totals { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-.kv { display: flex; flex-direction: column; }
-.k { font-size: var(--text-xs); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
-.v { font-variant-numeric: tabular-nums; color: var(--text); }
-.v.na { color: var(--text-faint); font-style: italic; }
-.per-role { width: 100%; margin-top: var(--space-2); border-collapse: collapse; }
-.per-role th, .per-role td {
+.m-body {
+  margin-top: var(--space-2);
+}
+.totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.kv {
+  display: flex;
+  flex-direction: column;
+}
+.k {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.v {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.v.na {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.per-role {
+  width: 100%;
+  margin-top: var(--space-2);
+  border-collapse: collapse;
+}
+.per-role th,
+.per-role td {
   text-align: left;
   padding: 2px 4px;
   font-size: var(--text-xs);
   border-bottom: 1px solid var(--border);
 }
-.per-role th { color: var(--text-faint); font-weight: 600; }
-.per-role .num { text-align: right; font-variant-numeric: tabular-nums; }
-.rn { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prov { color: var(--text-dim); }
-.empty { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--text-faint); }
+.per-role th {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.per-role .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rn {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prov {
+  color: var(--text-dim);
+}
+.empty {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
 </style>

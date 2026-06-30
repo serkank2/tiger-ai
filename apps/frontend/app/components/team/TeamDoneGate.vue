@@ -77,7 +77,9 @@ function blockerLabel(code: string): string {
   border-radius: var(--radius);
   padding: var(--space-3);
 }
-.done-gate.completed { border-color: var(--green); }
+.done-gate.completed {
+  border-color: var(--green);
+}
 .head {
   display: flex;
   align-items: center;
@@ -105,16 +107,25 @@ function blockerLabel(code: string): string {
   background: var(--accent);
   transition: width var(--dur-slow) var(--ease-standard);
 }
-.completed .fill, .satisfied .fill { background: var(--green); }
+.completed .fill,
+.satisfied .fill {
+  background: var(--green);
+}
 .state {
   margin: var(--space-2) 0 0;
   font-size: var(--text-sm);
   color: var(--text-dim);
   line-height: var(--leading-snug);
 }
-.state.ok { color: var(--green); }
-.state.warn { color: var(--amber); }
-.state.err { color: var(--red); }
+.state.ok {
+  color: var(--green);
+}
+.state.warn {
+  color: var(--amber);
+}
+.state.err {
+  color: var(--red);
+}
 .blockers {
   list-style: none;
   margin: var(--space-2) 0 0;

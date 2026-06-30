@@ -72,8 +72,7 @@ const PROBES: Record<AgentType, ProbeSpec> = {
     sendKeys: '/usage',
     captureMs: 5000,
     bestEffort: true,
-    bestEffortFailReason:
-      'Could not read Antigravity usage (agy may not expose a usage command in this version).',
+    bestEffortFailReason: 'Could not read Antigravity usage (agy may not expose a usage command in this version).',
   },
 };
 
@@ -100,7 +99,8 @@ function tail(s: string, max: number): string {
   return s.length > max ? s.slice(s.length - max) : s;
 }
 
-const HIGHLIGHT = /(%|\blimit\b|\bused\b|\bremaining\b|\breset|\bquota\b|\bweekly\b|\bsession\b|\bcredits?\b|\brate\b)/i;
+const HIGHLIGHT =
+  /(%|\blimit\b|\bused\b|\bremaining\b|\breset|\bquota\b|\bweekly\b|\bsession\b|\bcredits?\b|\brate\b)/i;
 
 // Section boundaries / chrome: hitting one of these resets the accumulated label context so junk
 // (headers, totals, command echoes) before a real "X limit:" label is discarded.
@@ -117,7 +117,12 @@ const BAR = /[█▌░▊▉▎▏]/;
 export function parseEntries(text: string): UsageEntry[] {
   const lines = text
     .split('\n')
-    .map((l) => l.replace(/^[\s│|>•·*─-]+/, '').replace(/[\s│|]+$/, '').trim())
+    .map((l) =>
+      l
+        .replace(/^[\s│|>•·*─-]+/, '')
+        .replace(/[\s│|]+$/, '')
+        .trim(),
+    )
     .filter(Boolean);
 
   const labelWindow: string[] = [];
@@ -128,7 +133,11 @@ export function parseEntries(text: string): UsageEntry[] {
 
     const pm = l.match(/(\d+)\s*%\s*(used|left)\b/i);
     if (pm) {
-      const label = labelWindow.join(' ').replace(/[:.]+$/, '').replace(/\s+/g, ' ').trim();
+      const label = labelWindow
+        .join(' ')
+        .replace(/[:.]+$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       entries.push({
         label: label || 'Usage',
         percent: Math.max(0, Math.min(100, Number(pm[1]))),
@@ -140,7 +149,11 @@ export function parseEntries(text: string): UsageEntry[] {
     }
     if (/resets?\b/i.test(l)) {
       const last = entries[entries.length - 1];
-      if (last && !last.reset) last.reset = l.replace(/^\(|\)$/g, '').replace(/\s+/g, ' ').trim();
+      if (last && !last.reset)
+        last.reset = l
+          .replace(/^\(|\)$/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
       labelWindow.length = 0;
       continue;
     }
@@ -174,7 +187,10 @@ function extractHighlights(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const rawLine of text.split('\n')) {
-    const l = rawLine.replace(/^[\s│|>•·*─-]+/, '').replace(/[\s│|]+$/, '').trim();
+    const l = rawLine
+      .replace(/^[\s│|>•·*─-]+/, '')
+      .replace(/[\s│|]+$/, '')
+      .trim();
     if (!l || l.length > 160) continue;
     if (!HIGHLIGHT.test(l)) continue;
     const hasNumber = /\d/.test(l);
@@ -303,10 +319,7 @@ export async function probeUsage(manager: TerminalManager, type: AgentType, cwd?
 }
 
 /** Probe every CLI concurrently (Antigravity is probed best-effort; a parse miss returns ok:false). */
-export async function probeAllUsage(
-  manager: TerminalManager,
-  cwd?: string,
-): Promise<Record<AgentType, UsageProbe>> {
+export async function probeAllUsage(manager: TerminalManager, cwd?: string): Promise<Record<AgentType, UsageProbe>> {
   const [claude, codex, antigravity] = await Promise.all([
     probeUsage(manager, 'claude', cwd),
     probeUsage(manager, 'codex', cwd),

@@ -169,7 +169,11 @@ async function remove(): Promise<void> {
   }
 }
 
-const TOOL_KEY: Record<TeamAgentType, string> = { claude: 'common.providers.claude', codex: 'common.providers.codex', antigravity: 'common.providers.antigravity' };
+const TOOL_KEY: Record<TeamAgentType, string> = {
+  claude: 'common.providers.claude',
+  codex: 'common.providers.codex',
+  antigravity: 'common.providers.antigravity',
+};
 const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
 </script>
 
@@ -187,14 +191,18 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
         :loading="team.isBusy(`role-pause:${role.id}`)"
         :title="t('team.roleControls.pauseTitle')"
         @click="team.pauseRole(role.id)"
-      >{{ t('team.controls.pause') }}</BaseButton>
+        >{{ t('team.controls.pause') }}</BaseButton
+      >
       <BaseButton
         size="sm"
         variant="ghost"
         :loading="team.isBusy(`role-resume:${role.id}`)"
         @click="team.resumeRole(role.id)"
-      >{{ t('team.controls.resume') }}</BaseButton>
-      <BaseButton size="sm" variant="ghost" @click="steerOpen = !steerOpen">{{ t('team.roleControls.steer') }}</BaseButton>
+        >{{ t('team.controls.resume') }}</BaseButton
+      >
+      <BaseButton size="sm" variant="ghost" @click="steerOpen = !steerOpen">{{
+        t('team.roleControls.steer')
+      }}</BaseButton>
       <BaseButton size="sm" variant="ghost" @click="openEdit">{{ t('common.edit') }}</BaseButton>
       <BaseButton
         v-if="canDuplicate"
@@ -203,7 +211,8 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
         :loading="team.isBusy('role-add')"
         :title="t('team.roleControls.addAnotherTitle')"
         @click="addInstance"
-      >{{ t('team.roleControls.addAnother') }}</BaseButton>
+        >{{ t('team.roleControls.addAnother') }}</BaseButton
+      >
       <BaseButton
         size="sm"
         variant="danger"
@@ -211,43 +220,70 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
         :loading="team.isBusy(`role-remove:${role.id}`)"
         :title="canRemove ? t('team.roleControls.removeTitle') : t('team.roleControls.keepOneLead')"
         @click="remove"
-      >{{ t('team.roleControls.remove') }}</BaseButton>
+        >{{ t('team.roleControls.remove') }}</BaseButton
+      >
     </div>
 
     <div v-if="steerOpen" class="rc-form">
-      <textarea v-model="steerText" rows="2" class="rc-input" :placeholder="t('team.roleControls.steerPlaceholder')" :aria-label="t('team.roleControls.steerAria')" />
+      <textarea
+        v-model="steerText"
+        rows="2"
+        class="rc-input"
+        :placeholder="t('team.roleControls.steerPlaceholder')"
+        :aria-label="t('team.roleControls.steerAria')"
+      />
       <div class="rc-form-btns">
-        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-steer:${role.id}`)" @click="sendSteer">{{ t('common.submit') }}</BaseButton>
+        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-steer:${role.id}`)" @click="sendSteer">{{
+          t('common.submit')
+        }}</BaseButton>
         <BaseButton size="sm" variant="ghost" @click="steerOpen = false">{{ t('common.cancel') }}</BaseButton>
       </div>
     </div>
 
     <div v-if="editOpen" class="rc-form">
-      <label class="fld"><span>{{ t('team.roleControls.name') }}</span><input v-model="edit.name" type="text" /></label>
-      <label class="fld"><span>{{ t('team.roleControls.tool') }}</span>
+      <label class="fld"
+        ><span>{{ t('team.roleControls.name') }}</span
+        ><input v-model="edit.name" type="text"
+      /></label>
+      <label class="fld"
+        ><span>{{ t('team.roleControls.tool') }}</span>
         <select v-model="edit.tool" @change="onToolChange">
           <option v-for="tool in TOOLS" :key="tool" :value="tool">{{ toolLabel(tool) }}</option>
         </select>
       </label>
-      <label class="fld"><span>{{ t('team.roleControls.model') }}</span>
+      <label class="fld"
+        ><span>{{ t('team.roleControls.model') }}</span>
         <select v-model="edit.model">
-          <option v-for="m in models(edit.tool, edit.model)" :key="m" :value="m">{{ m || t('team.roleControls.default') }}</option>
+          <option v-for="m in models(edit.tool, edit.model)" :key="m" :value="m">
+            {{ m || t('team.roleControls.default') }}
+          </option>
         </select>
       </label>
-      <label class="fld"><span>{{ t('team.roleControls.effort') }}</span>
+      <label class="fld"
+        ><span>{{ t('team.roleControls.effort') }}</span>
         <select v-model="edit.effort">
-          <option v-for="e in efforts(edit.tool, edit.effort)" :key="e" :value="e">{{ e || t('team.roleControls.default') }}</option>
+          <option v-for="e in efforts(edit.tool, edit.effort)" :key="e" :value="e">
+            {{ e || t('team.roleControls.default') }}
+          </option>
         </select>
       </label>
-      <label class="fld"><span>{{ t('team.roleControls.permission') }}</span>
+      <label class="fld"
+        ><span>{{ t('team.roleControls.permission') }}</span>
         <select v-model="edit.permission">
           <option v-for="p in permissions(edit.tool, edit.permission)" :key="p" :value="p">{{ p }}</option>
         </select>
       </label>
-      <label class="chk"><input v-model="edit.canWriteCode" type="checkbox" /> {{ t('team.roleControls.mayWriteCode') }}</label>
-      <label class="chk"><input v-model="edit.requiredForSignoff" type="checkbox" /> {{ t('team.roleControls.requiredForSignoff') }}</label>
+      <label class="chk"
+        ><input v-model="edit.canWriteCode" type="checkbox" /> {{ t('team.roleControls.mayWriteCode') }}</label
+      >
+      <label class="chk"
+        ><input v-model="edit.requiredForSignoff" type="checkbox" />
+        {{ t('team.roleControls.requiredForSignoff') }}</label
+      >
       <div class="rc-form-btns">
-        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-edit:${role.id}`)" @click="saveEdit">{{ t('common.save') }}</BaseButton>
+        <BaseButton size="sm" variant="primary" :loading="team.isBusy(`role-edit:${role.id}`)" @click="saveEdit">{{
+          t('common.save')
+        }}</BaseButton>
         <BaseButton size="sm" variant="ghost" @click="editOpen = false">{{ t('common.cancel') }}</BaseButton>
       </div>
     </div>
@@ -262,11 +298,36 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
   border-radius: var(--radius);
   background: var(--bg-elev);
 }
-.rc-line { display: flex; align-items: center; gap: var(--space-2); }
-.rc-name { font-weight: 600; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.rc-status { font-size: var(--text-xs); color: var(--text-faint); text-transform: uppercase; }
-.rc-btns { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
-.rc-form { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.rc-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rc-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.rc-status {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.rc-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.rc-form {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
 .rc-input {
   resize: vertical;
   font-family: inherit;
@@ -277,9 +338,19 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
 }
-.rc-form-btns { display: flex; gap: var(--space-2); }
-.fld { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-xs); color: var(--text-dim); }
-.fld input, .fld select {
+.rc-form-btns {
+  display: flex;
+  gap: var(--space-2);
+}
+.fld {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.fld input,
+.fld select {
   width: 100%;
   font-size: var(--text-sm);
   color: var(--text);
@@ -288,7 +359,13 @@ const toolLabel = (tool: TeamAgentType) => t(TOOL_KEY[tool]) || tool;
   border-radius: var(--radius-sm);
   padding: 2px var(--space-2);
 }
-.chk { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); color: var(--text-dim); }
+.chk {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
 .rc-error {
   margin: var(--space-2) 0 0;
   color: var(--red);

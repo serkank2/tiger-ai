@@ -64,7 +64,10 @@ export function evaluateCompletionGate(
       return { ok: false, reason: 'agent did not emit an EXECUTION_RESULT self-report; treating as blocked' };
     }
     if (reported.status === 'blocked') {
-      return { ok: false, reason: reported.reason ? `agent reported blocked: ${reported.reason}` : 'agent reported blocked' };
+      return {
+        ok: false,
+        reason: reported.reason ? `agent reported blocked: ${reported.reason}` : 'agent reported blocked',
+      };
     }
     return { ok: true };
   }
@@ -86,7 +89,10 @@ export function evaluateCompletionGate(
     return { ok: false, reason: 'agent did not emit a FIX_RESULT self-report; treating as unresolved' };
   }
   if (reported.status === 'wontfix') {
-    return { ok: false, reason: reported.reason ? `agent reported wontfix: ${reported.reason}` : 'agent reported wontfix' };
+    return {
+      ok: false,
+      reason: reported.reason ? `agent reported wontfix: ${reported.reason}` : 'agent reported wontfix',
+    };
   }
   return { ok: true };
 }

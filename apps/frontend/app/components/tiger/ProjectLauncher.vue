@@ -133,10 +133,17 @@ onMounted(() => {
             ✕
           </BaseButton>
         </div>
-        <p class="cprompt">{{ p.promptPreview || (p.exists ? t('tiger.projectLauncher.noPromptYet') : t('tiger.projectLauncher.folderMissing')) }}</p>
+        <p class="cprompt">
+          {{
+            p.promptPreview ||
+            (p.exists ? t('tiger.projectLauncher.noPromptYet') : t('tiger.projectLauncher.folderMissing'))
+          }}
+        </p>
         <div class="cprog">
           <div class="ptrack"><div class="pfill" :style="{ width: pct(p) + '%' }" /></div>
-          <span class="pn">{{ t('tiger.projectLauncher.stagesProgress', { completed: p.completedStages, total: p.totalStages }) }}</span>
+          <span class="pn">{{
+            t('tiger.projectLauncher.stagesProgress', { completed: p.completedStages, total: p.totalStages })
+          }}</span>
         </div>
         <div class="cfoot">
           <span class="cdate">{{ fmtDate(p.updatedAt) }}</span>

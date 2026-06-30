@@ -19,13 +19,12 @@ const pendingCount = computed(() => team.directives.length);
 const waiting = computed(() => team.state?.status === 'blocked');
 const hint = computed(() => {
   if (waiting.value) {
-    return (
-      team.state?.message ||
-      t('team.steer.waitingDefault')
-    );
+    return team.state?.message || t('team.steer.waitingDefault');
   }
   if (pendingCount.value > 0) {
-    return t(pendingCount.value === 1 ? 'team.steer.queuedForLeadOne' : 'team.steer.queuedForLeadMany', { n: pendingCount.value });
+    return t(pendingCount.value === 1 ? 'team.steer.queuedForLeadOne' : 'team.steer.queuedForLeadMany', {
+      n: pendingCount.value,
+    });
   }
   return '';
 });
@@ -62,7 +61,9 @@ function onKeydown(e: KeyboardEvent) {
         :aria-label="t('team.steer.ariaLabel')"
         @keydown="onKeydown"
       />
-      <BaseButton variant="primary" size="md" :loading="busy" :disabled="!canSend" @click="send">{{ sendLabel }}</BaseButton>
+      <BaseButton variant="primary" size="md" :loading="busy" :disabled="!canSend" @click="send">{{
+        sendLabel
+      }}</BaseButton>
     </div>
   </div>
 </template>

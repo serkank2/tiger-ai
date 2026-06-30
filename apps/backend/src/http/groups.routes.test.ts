@@ -18,7 +18,9 @@ interface Res {
  * `http.request` with `agent: false` (no keep-alive client sockets) so `--test-force-exit`
  * has no lingering socket handle to abort libuv on during teardown.
  */
-async function listen(router: express.Router): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
+async function listen(
+  router: express.Router,
+): Promise<{ req: (m: string, p: string, b?: unknown) => Promise<Res>; close: () => Promise<void> }> {
   const app = express();
   app.use('/api/groups', express.json({ limit: '160kb' }), router);
   app.use(errorHandler());
@@ -29,11 +31,17 @@ async function listen(router: express.Router): Promise<{ req: (m: string, p: str
     req: (method, p, body) =>
       new Promise<Res>((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
-        const r = http.request(new URL(p, base), { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} }, (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }));
-        });
+        const r = http.request(
+          new URL(p, base),
+          { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} },
+          (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }),
+            );
+          },
+        );
         r.on('error', reject);
         if (payload) r.write(payload);
         r.end();
@@ -124,8 +132,15 @@ test('DELETE /api/groups/:id unassigns member terminals and re-syncs the manager
   const s = state();
   s.groups.push({ id: 'g1', name: 'G' });
   const member: TerminalDefinition = {
-    id: 't1', name: 'm', cwd: os.tmpdir(), groupId: 'g1', shell: { kind: 'system-default' },
-    autostart: false, protected: false, createdAt: 'x', updatedAt: 'x',
+    id: 't1',
+    name: 'm',
+    cwd: os.tmpdir(),
+    groupId: 'g1',
+    shell: { kind: 'system-default' },
+    autostart: false,
+    protected: false,
+    createdAt: 'x',
+    updatedAt: 'x',
   };
   s.terminals.push(member);
   const { ctx, upserts } = ctxWith(s);

@@ -20,7 +20,11 @@ const EVENTS = computed<{ value: CueEventType; label: string; hint: string }[]>(
   { value: 'file.changed', label: t('cue.editor.events.fileChanged'), hint: t('cue.editor.eventHints.fileChanged') },
   { value: 'time.scheduled', label: t('cue.editor.events.scheduled'), hint: t('cue.editor.eventHints.scheduled') },
   { value: 'time.once', label: t('cue.editor.events.once'), hint: t('cue.editor.eventHints.once') },
-  { value: 'agent.completed', label: t('cue.editor.events.agentCompleted'), hint: t('cue.editor.eventHints.agentCompleted') },
+  {
+    value: 'agent.completed',
+    label: t('cue.editor.events.agentCompleted'),
+    hint: t('cue.editor.eventHints.agentCompleted'),
+  },
   { value: 'cli.trigger', label: t('cue.editor.events.manual'), hint: t('cue.editor.eventHints.manual') },
 ]);
 
@@ -88,10 +92,26 @@ function resetFrom(initial?: CueSubscriptionInput | null): void {
   localError.value = null;
   if (!initial) {
     Object.assign(form, {
-      id: '', name: '', enabled: true, event: 'file.changed', promptSource: 'inline', prompt: '',
-      promptFile: '', watch: '', intervalSpec: '', at: '', filterChangeType: 'any', filterPathIncludes: '',
-      filterTriggeredBy: 'any', filterAllOf: '', targetKind: 'queue', provider: '', priority: '',
-      maxAttempts: '', workspacePath: '', projectName: '',
+      id: '',
+      name: '',
+      enabled: true,
+      event: 'file.changed',
+      promptSource: 'inline',
+      prompt: '',
+      promptFile: '',
+      watch: '',
+      intervalSpec: '',
+      at: '',
+      filterChangeType: 'any',
+      filterPathIncludes: '',
+      filterTriggeredBy: 'any',
+      filterAllOf: '',
+      targetKind: 'queue',
+      provider: '',
+      priority: '',
+      maxAttempts: '',
+      workspacePath: '',
+      projectName: '',
     });
     return;
   }
@@ -130,15 +150,24 @@ watch(
 function build(): CueSubscriptionInput | null {
   localError.value = null;
   const id = form.id.trim();
-  if (!id) { localError.value = t('cue.editor.validation.idRequired'); return null; }
+  if (!id) {
+    localError.value = t('cue.editor.validation.idRequired');
+    return null;
+  }
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) {
     localError.value = t('cue.editor.validation.idFormat');
     return null;
   }
   const prompt = form.prompt.trim();
   const promptFile = form.promptFile.trim();
-  if (form.promptSource === 'inline' && !prompt) { localError.value = t('cue.editor.validation.promptRequired'); return null; }
-  if (form.promptSource === 'file' && !promptFile) { localError.value = t('cue.editor.validation.promptFileRequired'); return null; }
+  if (form.promptSource === 'inline' && !prompt) {
+    localError.value = t('cue.editor.validation.promptRequired');
+    return null;
+  }
+  if (form.promptSource === 'file' && !promptFile) {
+    localError.value = t('cue.editor.validation.promptFileRequired');
+    return null;
+  }
 
   const sub: CueSubscriptionInput = {
     id,
@@ -154,13 +183,22 @@ function build(): CueSubscriptionInput | null {
   if (form.event === 'file.changed' && form.watch.trim()) sub.watch = form.watch.trim();
   if (form.event === 'time.scheduled') {
     const ms = specToMs(form.intervalSpec);
-    if (ms == null) { localError.value = t('cue.editor.validation.intervalFormat'); return null; }
+    if (ms == null) {
+      localError.value = t('cue.editor.validation.intervalFormat');
+      return null;
+    }
     sub.intervalMs = ms;
   }
   if (form.event === 'time.once') {
-    if (!form.at) { localError.value = t('cue.editor.validation.dateRequired'); return null; }
+    if (!form.at) {
+      localError.value = t('cue.editor.validation.dateRequired');
+      return null;
+    }
     const d = new Date(form.at);
-    if (Number.isNaN(d.getTime())) { localError.value = t('cue.editor.validation.invalidDate'); return null; }
+    if (Number.isNaN(d.getTime())) {
+      localError.value = t('cue.editor.validation.invalidDate');
+      return null;
+    }
     sub.at = d.toISOString();
   }
 
@@ -172,7 +210,10 @@ function build(): CueSubscriptionInput | null {
   }
   if (form.event === 'agent.completed') {
     if (form.filterTriggeredBy !== 'any') filter.triggeredBy = form.filterTriggeredBy;
-    const allOf = form.filterAllOf.split(',').map((s) => s.trim()).filter(Boolean);
+    const allOf = form.filterAllOf
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (allOf.length) filter.allOf = allOf;
   }
   if (Object.keys(filter).length) sub.filter = filter;
@@ -206,11 +247,21 @@ function onSubmit(): void {
       <div class="row two">
         <label class="field">
           <span>{{ t('cue.editor.labels.id') }} <em>*</em></span>
-          <input v-model="form.id" :disabled="saving" :placeholder="t('cue.editor.placeholders.id')" autocomplete="off" />
+          <input
+            v-model="form.id"
+            :disabled="saving"
+            :placeholder="t('cue.editor.placeholders.id')"
+            autocomplete="off"
+          />
         </label>
         <label class="field">
           <span>{{ t('cue.editor.labels.name') }}</span>
-          <input v-model="form.name" :disabled="saving" :placeholder="t('cue.editor.placeholders.name')" autocomplete="off" />
+          <input
+            v-model="form.name"
+            :disabled="saving"
+            :placeholder="t('cue.editor.placeholders.name')"
+            autocomplete="off"
+          />
         </label>
       </div>
 
@@ -226,7 +277,12 @@ function onSubmit(): void {
         <div class="row two">
           <label class="field">
             <span>{{ t('cue.editor.labels.watchDirectory') }}</span>
-            <input v-model="form.watch" :disabled="saving" :placeholder="t('cue.editor.placeholders.watch')" autocomplete="off" />
+            <input
+              v-model="form.watch"
+              :disabled="saving"
+              :placeholder="t('cue.editor.placeholders.watch')"
+              autocomplete="off"
+            />
           </label>
           <label class="field">
             <span>{{ t('cue.editor.labels.changeType') }}</span>
@@ -240,13 +296,23 @@ function onSubmit(): void {
         </div>
         <label class="field">
           <span>{{ t('cue.editor.labels.pathIncludes') }}</span>
-          <input v-model="form.filterPathIncludes" :disabled="saving" :placeholder="t('cue.editor.placeholders.pathIncludes')" autocomplete="off" />
+          <input
+            v-model="form.filterPathIncludes"
+            :disabled="saving"
+            :placeholder="t('cue.editor.placeholders.pathIncludes')"
+            autocomplete="off"
+          />
         </label>
       </template>
 
       <label v-else-if="form.event === 'time.scheduled'" class="field">
         <span>{{ t('cue.editor.labels.interval') }}</span>
-        <input v-model="form.intervalSpec" :disabled="saving" :placeholder="t('cue.editor.placeholders.interval')" autocomplete="off" />
+        <input
+          v-model="form.intervalSpec"
+          :disabled="saving"
+          :placeholder="t('cue.editor.placeholders.interval')"
+          autocomplete="off"
+        />
         <small class="hint">{{ t('cue.editor.intervalHint') }}</small>
       </label>
 
@@ -267,7 +333,12 @@ function onSubmit(): void {
           </label>
           <label class="field">
             <span>{{ t('cue.editor.labels.waitForAll') }}</span>
-            <input v-model="form.filterAllOf" :disabled="saving" :placeholder="t('cue.editor.placeholders.waitForAll')" autocomplete="off" />
+            <input
+              v-model="form.filterAllOf"
+              :disabled="saving"
+              :placeholder="t('cue.editor.placeholders.waitForAll')"
+              autocomplete="off"
+            />
           </label>
         </div>
       </template>
@@ -275,8 +346,14 @@ function onSubmit(): void {
       <div class="field">
         <span>{{ t('cue.editor.labels.prompt') }}</span>
         <div class="seg">
-          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="inline" :disabled="saving" /> {{ t('cue.editor.promptSources.inline') }}</label>
-          <label class="seg-opt"><input v-model="form.promptSource" type="radio" value="file" :disabled="saving" /> {{ t('cue.editor.promptSources.file') }}</label>
+          <label class="seg-opt"
+            ><input v-model="form.promptSource" type="radio" value="inline" :disabled="saving" />
+            {{ t('cue.editor.promptSources.inline') }}</label
+          >
+          <label class="seg-opt"
+            ><input v-model="form.promptSource" type="radio" value="file" :disabled="saving" />
+            {{ t('cue.editor.promptSources.file') }}</label
+          >
         </div>
         <textarea
           v-if="form.promptSource === 'inline'"
@@ -327,12 +404,22 @@ function onSubmit(): void {
           </label>
           <label class="field">
             <span>{{ t('cue.editor.labels.projectName') }}</span>
-            <input v-model="form.projectName" :disabled="saving" :placeholder="t('cue.editor.placeholders.optional')" autocomplete="off" />
+            <input
+              v-model="form.projectName"
+              :disabled="saving"
+              :placeholder="t('cue.editor.placeholders.optional')"
+              autocomplete="off"
+            />
           </label>
         </div>
         <label class="field">
           <span>{{ t('cue.editor.labels.workspacePath') }}</span>
-          <input v-model="form.workspacePath" :disabled="saving" :placeholder="t('cue.editor.placeholders.workspacePath')" autocomplete="off" />
+          <input
+            v-model="form.workspacePath"
+            :disabled="saving"
+            :placeholder="t('cue.editor.placeholders.workspacePath')"
+            autocomplete="off"
+          />
         </label>
       </template>
 
@@ -345,8 +432,12 @@ function onSubmit(): void {
     </form>
 
     <template #footer>
-      <BaseButton type="button" variant="ghost" :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-      <BaseButton type="button" variant="primary" :loading="saving" @click="onSubmit">{{ isEdit ? t('cue.editor.saveChanges') : t('common.create') }}</BaseButton>
+      <BaseButton type="button" variant="ghost" :disabled="saving" @click="emit('close')">{{
+        t('common.cancel')
+      }}</BaseButton>
+      <BaseButton type="button" variant="primary" :loading="saving" @click="onSubmit">{{
+        isEdit ? t('cue.editor.saveChanges') : t('common.create')
+      }}</BaseButton>
     </template>
   </BaseModal>
 </template>

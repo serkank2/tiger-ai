@@ -15,9 +15,7 @@ describe('promptTemplate', () => {
     });
 
     it('excludes built-ins (terminal.name, terminal.cwd, date)', () => {
-      expect(detectVariables('{{terminal.name}} in {{terminal.cwd}} on {{date}} for {{user}}')).toEqual([
-        'user',
-      ]);
+      expect(detectVariables('{{terminal.name}} in {{terminal.cwd}} on {{date}} for {{user}}')).toEqual(['user']);
     });
 
     it('ignores escaped placeholders', () => {

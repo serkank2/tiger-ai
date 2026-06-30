@@ -6,10 +6,26 @@ import StateView from '~/components/state/StateView.vue';
 // empty / loading / error / blocked / etc. lifecycle states.
 describe('StateView', () => {
   it('renders a default heading per kind', () => {
-    expect(mount(StateView, { props: { kind: 'empty' } }).find('.title').text()).toBe('Nothing here yet');
-    expect(mount(StateView, { props: { kind: 'error' } }).find('.title').text()).toBe('Something went wrong');
-    expect(mount(StateView, { props: { kind: 'blocked' } }).find('.title').text()).toBe('Blocked');
-    expect(mount(StateView, { props: { kind: 'canceled' } }).find('.title').text()).toBe('Canceled');
+    expect(
+      mount(StateView, { props: { kind: 'empty' } })
+        .find('.title')
+        .text(),
+    ).toBe('Nothing here yet');
+    expect(
+      mount(StateView, { props: { kind: 'error' } })
+        .find('.title')
+        .text(),
+    ).toBe('Something went wrong');
+    expect(
+      mount(StateView, { props: { kind: 'blocked' } })
+        .find('.title')
+        .text(),
+    ).toBe('Blocked');
+    expect(
+      mount(StateView, { props: { kind: 'canceled' } })
+        .find('.title')
+        .text(),
+    ).toBe('Canceled');
   });
 
   it('allows overriding the title and description', () => {
@@ -33,9 +49,21 @@ describe('StateView', () => {
   });
 
   it('applies the tone class for the kind', () => {
-    expect(mount(StateView, { props: { kind: 'error' } }).find('.state-view').classes()).toContain('error');
-    expect(mount(StateView, { props: { kind: 'blocked' } }).find('.state-view').classes()).toContain('warn');
-    expect(mount(StateView, { props: { kind: 'empty' } }).find('.state-view').classes()).toContain('neutral');
+    expect(
+      mount(StateView, { props: { kind: 'error' } })
+        .find('.state-view')
+        .classes(),
+    ).toContain('error');
+    expect(
+      mount(StateView, { props: { kind: 'blocked' } })
+        .find('.state-view')
+        .classes(),
+    ).toContain('warn');
+    expect(
+      mount(StateView, { props: { kind: 'empty' } })
+        .find('.state-view')
+        .classes(),
+    ).toContain('neutral');
   });
 
   it('renders an actions area only when the default slot is filled', () => {

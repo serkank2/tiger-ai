@@ -49,7 +49,9 @@ function makeStubCtx(over: Partial<Record<string, unknown>> = {}): AppCtx {
 }
 
 test('buildTools exposes the expected board tool set', () => {
-  const names = buildTools().map((t) => t.name).sort();
+  const names = buildTools()
+    .map((t) => t.name)
+    .sort();
   assert.deepEqual(names, [
     'enqueue_prompt',
     'get_queue_job',

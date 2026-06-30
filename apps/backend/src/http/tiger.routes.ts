@@ -4,14 +4,8 @@ import { resolveExistingDir } from '../util/paths.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { badRequest, notFound } from './errors.js';
 import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
-import {
-  TIGER_PROJECT_PROMPT_MAX_CHARS,
-} from '../orchestrator/config.js';
-import {
-  buildStageConfig as buildStageRunConfig,
-  configInputError,
-  isStage,
-} from '../orchestrator/stage-config.js';
+import { TIGER_PROJECT_PROMPT_MAX_CHARS } from '../orchestrator/config.js';
+import { buildStageConfig as buildStageRunConfig, configInputError, isStage } from '../orchestrator/stage-config.js';
 
 /** Record a project workspace in app state (dedup) and mark it as the most recent. */
 function rememberProject(ctx: AppCtx, dir: string): void {

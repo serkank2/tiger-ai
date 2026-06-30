@@ -34,7 +34,10 @@ function getField(blockLines: string[], field: string): string {
 }
 
 function firstLine(s: string): string {
-  const line = s.split('\n').map((l) => l.trim()).find((l) => l.length > 0);
+  const line = s
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
   return line ?? '';
 }
 
@@ -244,11 +247,7 @@ export async function isLockStale(lockFile: string, ttlMs: number, nowMs = Date.
  * Try to claim a task lock via atomic exclusive create. Returns true if acquired, false if held
  * by a live owner. A stale lock (dead owner PID or older than ttlMs) is reclaimed and re-acquired.
  */
-export async function acquireLock(
-  lockFile: string,
-  info: LockInfo,
-  opts: AcquireLockOptions = {},
-): Promise<boolean> {
+export async function acquireLock(lockFile: string, info: LockInfo, opts: AcquireLockOptions = {}): Promise<boolean> {
   await fs.mkdir(path.dirname(lockFile), { recursive: true });
 
   const tryCreate = async (): Promise<import('node:fs/promises').FileHandle | null> => {
@@ -299,7 +298,12 @@ async function isFileOlderThan(file: string, ttlMs: number, nowMs = Date.now()):
   return !!st && nowMs - st.mtimeMs > ttlMs;
 }
 
-async function shouldReclaimClaimFile(file: string, lockFile: string | null, ttlMs: number, nowMs = Date.now()): Promise<boolean> {
+async function shouldReclaimClaimFile(
+  file: string,
+  lockFile: string | null,
+  ttlMs: number,
+  nowMs = Date.now(),
+): Promise<boolean> {
   if (lockFile && (await pathExists(lockFile))) return isLockStale(lockFile, ttlMs, nowMs);
   return isFileOlderThan(file, ttlMs, nowMs);
 }
@@ -414,10 +418,7 @@ export interface ReclaimStaleTaskClaimsOptions {
  * A claim is abandoned when its lock is stale (dead owner or TTL) or, for legacy claims that
  * predate lock files, when the in_progress file itself is older than the TTL.
  */
-export async function reclaimStaleTaskClaims(
-  dir: string,
-  opts: ReclaimStaleTaskClaimsOptions,
-): Promise<TaskRecord[]> {
+export async function reclaimStaleTaskClaims(dir: string, opts: ReclaimStaleTaskClaimsOptions): Promise<TaskRecord[]> {
   const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
   const reclaimed: TaskRecord[] = [];
   for (const name of names) {
@@ -486,7 +487,11 @@ export async function claimNextTaskFile(
       if (lockFile) await releaseLock(lockFile);
       continue; // already claimed by someone else
     }
-    await patchTaskFileContent(dir, p.id, { executionStatus: 'in_progress', assignedAgent: agentLabel, startedAt: nowIso });
+    await patchTaskFileContent(dir, p.id, {
+      executionStatus: 'in_progress',
+      assignedAgent: agentLabel,
+      startedAt: nowIso,
+    });
     const content = await fs.readFile(to, 'utf8').catch(() => '');
     return { record: recordFromFile(p.id, 'in_progress', content), block: content.trim() };
   }
@@ -494,12 +499,7 @@ export async function claimNextTaskFile(
 }
 
 /** Finalize a task: rename to done/blocked and stamp the completion time in the content. */
-export async function finishTaskFile(
-  dir: string,
-  id: string,
-  status: ExecutionStatus,
-  nowIso: string,
-): Promise<void> {
+export async function finishTaskFile(dir: string, id: string, status: ExecutionStatus, nowIso: string): Promise<void> {
   await setTaskFileStatus(dir, id, status);
   await patchTaskFileContent(dir, id, { executionStatus: status, completedAt: nowIso });
 }

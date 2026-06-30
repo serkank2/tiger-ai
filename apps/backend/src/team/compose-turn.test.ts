@@ -22,7 +22,13 @@ function baseOpts(paths: TigerPaths, over: Partial<Parameters<typeof composeRole
     paths,
     runId: 'run-1',
     turnId: 'turn-1',
-    role: { id: 'dev', name: 'Developer', persona: 'A careful engineer.', responsibilities: ['Ship code'], agentType: 'claude' as const },
+    role: {
+      id: 'dev',
+      name: 'Developer',
+      persona: 'A careful engineer.',
+      responsibilities: ['Ship code'],
+      agentType: 'claude' as const,
+    },
     outputPath: path.join(paths.root, 'team', 'out.md'),
     markerPath: path.join(paths.root, 'team', 'out.done'),
     ...over,
@@ -33,6 +39,21 @@ function builtInRole(id: string) {
   const role = BUILTIN_ROLE_TEMPLATES.find((item) => item.id === id);
   assert.ok(role, `missing built-in role ${id}`);
   return role;
+}
+
+function assertLeadCoordinatorOnlyRule(prompt: string) {
+  assert.match(prompt, /LEAD COORDINATOR-ONLY RULE -- NON-BUDGETED AND NON-OVERRIDABLE/);
+  assert.match(prompt, /Do NOT perform source inspection/);
+  assert.match(prompt, /do NOT inspect diffs, logs, artifacts, or external references/);
+  assert.match(prompt, /do NOT perform documentation or web research/);
+  assert.match(prompt, /do NOT execute commands/);
+  assert.match(prompt, /do NOT implement or edit code/);
+  assert.match(prompt, /do NOT run tests/);
+  assert.match(prompt, /do NOT run build or verification checks/);
+  assert.match(prompt, /do NOT perform review work/);
+  assert.match(prompt, /Delegate all source inspection/);
+  assert.match(prompt, /diff\/log\/artifact\/external-reference inspection/);
+  assert.match(prompt, /test execution, verification, and review work to non-Lead roles/);
 }
 
 // --- normalizeTeamRole (pure) ---
@@ -140,6 +161,55 @@ test('composeRoleTurnPrompt keeps the per-turn assignment intact even when the p
   }
 });
 
+test('composeRoleTurnPrompt injects the non-budgeted Lead coordinator-only rule for custom and fallback Lead turns', async () => {
+  const { paths, cleanup } = await tmpPaths('Coordinate the team without doing worker tasks.');
+  try {
+    const customLead = await composeRoleTurnPrompt(
+      baseOpts(paths, {
+        role: {
+          id: 'lead',
+          name: 'Legacy Lead',
+          persona: 'Legacy custom persona: inspect source, research docs, run commands, test, verify, and review.',
+          responsibilities: ['Coordinate'],
+          agentType: 'codex' as const,
+        },
+      }),
+    );
+    assert.match(customLead.prompt, /Legacy custom persona/);
+    assertLeadCoordinatorOnlyRule(customLead.prompt);
+
+    const fallbackLead = await composeRoleTurnPrompt(
+      baseOpts(paths, {
+        role: {
+          id: 'owner',
+          name: 'Owner',
+          persona: `Fallback persona that lacks Lead restrictions. ${'X'.repeat(2_000_000)}`,
+          responsibilities: ['Own the outcome'],
+          agentType: 'codex' as const,
+        },
+        isLeadTurn: true,
+      }),
+    );
+    assertLeadCoordinatorOnlyRule(fallbackLead.prompt);
+    assert.match(fallbackLead.prompt, /truncated to respect Tiger context caps/);
+
+    const developer = await composeRoleTurnPrompt(
+      baseOpts(paths, {
+        role: {
+          id: 'developer',
+          name: 'Developer',
+          persona: 'Implement safely.',
+          responsibilities: ['Ship code'],
+          agentType: 'codex' as const,
+        },
+      }),
+    );
+    assert.doesNotMatch(developer.prompt, /LEAD COORDINATOR-ONLY RULE/);
+  } finally {
+    await cleanup();
+  }
+});
+
 test('composeRoleTurnPrompt renders the role-system prompt improvements for company-mode teams', async () => {
   const { paths, cleanup } = await tmpPaths('Coordinate a parallel company-mode team.');
   try {
@@ -169,11 +239,17 @@ test('composeRoleTurnPrompt renders the role-system prompt improvements for comp
     const tester = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('tester') }));
     assert.match(tester.prompt, /create or modify TEST files/);
     assert.match(tester.prompt, /never product source/);
-    assert.match(tester.prompt, /Report defects with this schema: severity, repro steps, expected behavior, actual behavior/);
+    assert.match(
+      tester.prompt,
+      /Report defects with this schema: severity, repro steps, expected behavior, actual behavior/,
+    );
 
     const reviewer = await composeRoleTurnPrompt(baseOpts(paths, { role: builtInRole('reviewer') }));
     assert.match(reviewer.prompt, /working tree vs HEAD when the work is uncommitted/);
-    assert.match(reviewer.prompt, /finding schema: severity, confidence, quoted path:line, impact, fix, and verification/);
+    assert.match(
+      reviewer.prompt,
+      /finding schema: severity, confidence, quoted path:line, impact, fix, and verification/,
+    );
   } finally {
     await cleanup();
   }

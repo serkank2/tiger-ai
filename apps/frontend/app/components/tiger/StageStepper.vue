@@ -42,7 +42,9 @@ function onKeydown(e: KeyboardEvent, index: number) {
     >
       <span class="num">{{ s.number }}</span>
       <span class="title">{{ t('tiger.stages.' + s.id + '.title') }}</span>
-      <span v-if="s.optional" class="opt" :title="t('tiger.stageStepper.optionalTitle')">{{ t('tiger.stageStepper.opt') }}</span>
+      <span v-if="s.optional" class="opt" :title="t('tiger.stageStepper.optionalTitle')">{{
+        t('tiger.stageStepper.opt')
+      }}</span>
       <span class="dot" aria-hidden="true" />
     </button>
   </nav>

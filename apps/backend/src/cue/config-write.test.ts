@@ -3,12 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  CUE_CONFIG_RELPATH,
-  readRawCueConfig,
-  validateSubscriptionStrict,
-  writeCueConfig,
-} from './config-loader.js';
+import { CUE_CONFIG_RELPATH, readRawCueConfig, validateSubscriptionStrict, writeCueConfig } from './config-loader.js';
 
 async function tmpWs(): Promise<{ ws: string; cleanup: () => Promise<void> }> {
   const ws = await fs.mkdtemp(path.join(os.tmpdir(), 'cue-write-'));
@@ -37,13 +32,23 @@ test('validateSubscriptionStrict rejects a missing id', () => {
 });
 
 test('validateSubscriptionStrict rejects an id with illegal characters', () => {
-  const { sub, errors } = validateSubscriptionStrict({ id: 'bad id!', event: 'cli.trigger', prompt: 'x', target: { kind: 'team' } });
+  const { sub, errors } = validateSubscriptionStrict({
+    id: 'bad id!',
+    event: 'cli.trigger',
+    prompt: 'x',
+    target: { kind: 'team' },
+  });
   assert.equal(sub, null);
   assert.ok(errors.some((e) => /id may only contain|letters/i.test(e)));
 });
 
 test('validateSubscriptionStrict elevates "time.once needs at" to a hard error', () => {
-  const { sub, errors } = validateSubscriptionStrict({ id: 'one', event: 'time.once', prompt: 'x', target: { kind: 'team' } });
+  const { sub, errors } = validateSubscriptionStrict({
+    id: 'one',
+    event: 'time.once',
+    prompt: 'x',
+    target: { kind: 'team' },
+  });
   assert.equal(sub, null);
   assert.ok(errors.some((e) => /time\.once/.test(e)));
 });

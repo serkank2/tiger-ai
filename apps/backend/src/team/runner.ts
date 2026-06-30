@@ -44,6 +44,8 @@ export interface RunRoleTurnOptions {
   inbox?: string[];
   completionStatus?: string[];
   transcriptMaxMessages?: number;
+  /** True when this role is the resolved Lead for this turn, including fallback Lead roles. */
+  isLeadTurn?: boolean;
   model?: string;
   effort?: string;
   permission?: string;
@@ -114,9 +116,7 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     runOpts.config,
     role.agentType,
     launchParams,
-    runOpts.allowDangerousPermissions !== undefined
-      ? { allowDangerous: runOpts.allowDangerousPermissions }
-      : undefined,
+    runOpts.allowDangerousPermissions !== undefined ? { allowDangerous: runOpts.allowDangerousPermissions } : undefined,
   );
   const startedAt = new Date().toISOString();
 
@@ -137,6 +137,7 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     inbox: opts.inbox,
     completionStatus: opts.completionStatus,
     transcriptMaxMessages: opts.transcriptMaxMessages,
+    isLeadTurn: opts.isLeadTurn,
   } satisfies ComposeRoleTurnOptions);
   await fs.writeFile(promptPath, composed.prompt, 'utf8');
 
@@ -279,7 +280,13 @@ async function parseCompletedOrBlocker(
     taskId: opts.assignedTask?.id,
     content: `Role turn failed for ${opts.role.name}: ${detail}`,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [], coordinationDirectives: [] };
+  const parsed: ParsedTeamOutput = {
+    messages: [blocker],
+    taskDirectives: [],
+    signOffDirectives: [],
+    verificationDirectives: [],
+    coordinationDirectives: [],
+  };
   return { outcome: failed, parsed, messages: parsed.messages };
 }
 
@@ -294,7 +301,13 @@ function blockerOutcome(opts: RunRoleTurnOptions, turnId: string, reason: string
     taskId: opts.assignedTask?.id,
     content: reason,
   });
-  const parsed: ParsedTeamOutput = { messages: [blocker], taskDirectives: [], signOffDirectives: [], verificationDirectives: [], coordinationDirectives: [] };
+  const parsed: ParsedTeamOutput = {
+    messages: [blocker],
+    taskDirectives: [],
+    signOffDirectives: [],
+    verificationDirectives: [],
+    coordinationDirectives: [],
+  };
   return { outcome: { state: 'failed', error: reason }, parsed, messages: parsed.messages };
 }
 

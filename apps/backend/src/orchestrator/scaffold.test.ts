@@ -32,7 +32,11 @@ test('ensureScaffold creates the .tiger tree, all stage dirs, the 7 system promp
       assert.equal(await exists(path.join(paths.root, dir)), true, `missing scaffold dir: ${dir}`);
     }
     for (const { filename } of SYSTEM_PROMPT_FILES) {
-      assert.equal(await exists(path.join(paths.systemPromptsDir, filename)), true, `missing system prompt: ${filename}`);
+      assert.equal(
+        await exists(path.join(paths.systemPromptsDir, filename)),
+        true,
+        `missing system prompt: ${filename}`,
+      );
     }
 
     assert.equal(await fs.readFile(paths.projectPromptFile, 'utf8'), 'Improve the thing.');

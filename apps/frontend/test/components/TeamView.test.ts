@@ -41,19 +41,34 @@ vi.mock('~/stores/connection', () => ({ useConnectionStore: () => ({ status: 'co
 // auto-imports (e.g. defineStore) not present under plain vitest. This test only exercises
 // TeamView's own header, so replace the children with inert stubs to keep the module graph
 // light and focused. Factories are hoisted above the file, so the stub must be inlined.
-vi.mock('~/components/team/TeamLauncher.vue', () => ({ default: { name: 'TeamLauncher', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamRoleTile.vue', () => ({ default: { name: 'TeamRoleTile', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamRoleControls.vue', () => ({ default: { name: 'TeamRoleControls', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamChatPanel.vue', () => ({ default: { name: 'TeamChatPanel', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamDoneGate.vue', () => ({ default: { name: 'TeamDoneGate', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamSteerBar.vue', () => ({ default: { name: 'TeamSteerBar', inheritAttrs: false, template: '<div />' } }));
-vi.mock('~/components/team/TeamTerminalPane.vue', () => ({ default: { name: 'TeamTerminalPane', inheritAttrs: false, template: '<div />' } }));
+vi.mock('~/components/team/TeamLauncher.vue', () => ({
+  default: { name: 'TeamLauncher', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamRoleTile.vue', () => ({
+  default: { name: 'TeamRoleTile', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamRoleControls.vue', () => ({
+  default: { name: 'TeamRoleControls', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamChatPanel.vue', () => ({
+  default: { name: 'TeamChatPanel', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamDoneGate.vue', () => ({
+  default: { name: 'TeamDoneGate', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamSteerBar.vue', () => ({
+  default: { name: 'TeamSteerBar', inheritAttrs: false, template: '<div />' },
+}));
+vi.mock('~/components/team/TeamTerminalPane.vue', () => ({
+  default: { name: 'TeamTerminalPane', inheritAttrs: false, template: '<div />' },
+}));
 vi.mock('~/components/team/TeamAttemptsPanel.vue', () => ({
   default: {
     name: 'TeamAttemptsPanel',
     inheritAttrs: false,
     emits: ['view-diff'],
-    template: '<button type="button" data-testid="attempt-diff" @click="$emit(\'view-diff\', \'attempt-1\')">Attempt diff</button>',
+    template:
+      '<button type="button" data-testid="attempt-diff" @click="$emit(\'view-diff\', \'attempt-1\')">Attempt diff</button>',
   },
 }));
 

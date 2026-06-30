@@ -49,7 +49,10 @@ test('every built-in role and team template validates against the default TigerC
   for (const team of BUILTIN_TEAM_TEMPLATES) {
     assert.doesNotThrow(() => validateTeamTemplate(config, team), `team ${team.name} should validate`);
     // Each built-in team must have at least one role required for sign-off.
-    assert.ok(team.roles.some((r) => r.requiredForSignoff), `team ${team.name} needs a sign-off role`);
+    assert.ok(
+      team.roles.some((r) => r.requiredForSignoff),
+      `team ${team.name} needs a sign-off role`,
+    );
   }
   // The minimum required built-in teams exist.
   const names = BUILTIN_TEAM_TEMPLATES.map((t) => t.name);
@@ -88,7 +91,10 @@ test('team template service seeds built-ins idempotently and keeps them read-onl
   assert.equal(second.length, BUILTIN_TEAM_TEMPLATES.length);
 
   // Built-ins cannot be edited or archived.
-  await assert.rejects(() => templates.update(minimal.id!, { description: 'changed' }), /built-in team templates cannot/);
+  await assert.rejects(
+    () => templates.update(minimal.id!, { description: 'changed' }),
+    /built-in team templates cannot/,
+  );
   await assert.rejects(() => templates.archive(minimal.id!), /built-in team templates cannot/);
 });
 
@@ -155,7 +161,9 @@ test('invalid custom team templates are rejected with clear English errors', asy
     () =>
       templates.create({
         name: 'Bad CLI',
-        roles: [validRole({ agent: { tool: 'gemini' as never, model: 'sonnet', effort: 'high', permission: 'acceptEdits' } })],
+        roles: [
+          validRole({ agent: { tool: 'gemini' as never, model: 'sonnet', effort: 'high', permission: 'acceptEdits' } }),
+        ],
       }),
     /role tool must be one of/,
   );

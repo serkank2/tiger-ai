@@ -63,10 +63,10 @@ export interface RoleTaskCounts {
 }
 
 const STATUS_DIR: Record<AgentTaskStatus, string> = {
-  'todo': 'todo',
+  todo: 'todo',
   'in-progress': 'in-progress',
-  'done': 'done',
-  'blocked': 'blocked',
+  done: 'done',
+  blocked: 'blocked',
 };
 
 const AGENT_TASK_STATUSES = ['todo', 'in-progress', 'done', 'blocked'] as const satisfies readonly AgentTaskStatus[];
@@ -173,9 +173,7 @@ export class TaskBoard {
 
   private async list(roleId: string, status: AgentTaskStatus): Promise<AgentTask[]> {
     const dir = this.statusDir(roleId, status);
-    const names = (await fs.readdir(dir).catch(() => [] as string[]))
-      .filter((n) => n.endsWith('.json'))
-      .sort(); // TASK-0001 < TASK-0002 → FIFO
+    const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.json')).sort(); // TASK-0001 < TASK-0002 → FIFO
     const out: AgentTask[] = [];
     for (const name of names) {
       const raw = await fs.readFile(path.join(dir, name), 'utf8').catch(() => '');
@@ -233,7 +231,13 @@ export class TaskBoard {
   }
 
   private async requeueUnlocked(task: AgentTask, options: { resetFailureCount?: boolean } = {}): Promise<void> {
-    const moved: AgentTask = { ...task, status: 'todo', startedAt: undefined, blockedAt: undefined, blockedReason: undefined };
+    const moved: AgentTask = {
+      ...task,
+      status: 'todo',
+      startedAt: undefined,
+      blockedAt: undefined,
+      blockedReason: undefined,
+    };
     if (options.resetFailureCount) {
       moved.failureCount = undefined;
       moved.lastFailureAt = undefined;

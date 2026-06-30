@@ -43,7 +43,11 @@ describe('useApi Team methods', () => {
       method: 'POST',
       body: { body: 'Focus on testing', target: 'tester' },
     });
-    expect(fetchMock).toHaveBeenNthCalledWith(8, 'http://api.test/api/team/runs/run%2F1/messages?cursor=abc&limit=25', undefined);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      8,
+      'http://api.test/api/team/runs/run%2F1/messages?cursor=abc&limit=25',
+      undefined,
+    );
     expect(fetchMock).toHaveBeenNthCalledWith(9, 'http://api.test/api/team/runs/run%2F1/artifacts', undefined);
     expect(fetchMock).toHaveBeenNthCalledWith(
       10,

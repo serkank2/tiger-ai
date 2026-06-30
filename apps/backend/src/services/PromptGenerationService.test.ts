@@ -8,7 +8,12 @@ import { TerminalManager } from '../terminal/TerminalManager.js';
 import { defaultTigerConfig } from '../orchestrator/config.js';
 import type { TigerTiming } from '../orchestrator/types.js';
 import { StateLimitGate, StaticLimitGate, type LimitGate } from '../limits/gate.js';
-import { defaultLimitRules, type LimitRuleDecision, type LimitSnapshot, type LimitsPersistedState } from '../limits/types.js';
+import {
+  defaultLimitRules,
+  type LimitRuleDecision,
+  type LimitSnapshot,
+  type LimitsPersistedState,
+} from '../limits/types.js';
 import {
   InMemoryPromptGenerationRepository,
   type PromptGenerationRecord,
@@ -63,7 +68,12 @@ function snapshot(input: Partial<LimitSnapshot>): LimitSnapshot {
     windowKey: input.windowKey ?? '5h',
     label: input.label ?? '5h limit',
     percentUsed,
-    metricRaw: input.metricRaw === undefined ? (percentUsed === null ? null : { percent: percentUsed, metric: 'used' }) : input.metricRaw,
+    metricRaw:
+      input.metricRaw === undefined
+        ? percentUsed === null
+          ? null
+          : { percent: percentUsed, metric: 'used' }
+        : input.metricRaw,
     resetText: input.resetText ?? 'resets in 1h',
     resetAt: input.resetAt === undefined ? '2026-06-18T07:00:00.000Z' : input.resetAt,
     ok: input.ok ?? true,
@@ -116,12 +126,16 @@ async function waitFor(
   assert.fail(`prompt generation ${id} did not reach expected state`);
 }
 
-async function withService(mode: string, fn: (args: {
-  service: PromptGenerationService;
-  repo: InMemoryPromptGenerationRepository;
-  history: InMemoryPromptHistoryRepository;
-  launched: { count: number };
-}) => Promise<void>, options: { limitGate?: LimitGate } = {}): Promise<void> {
+async function withService(
+  mode: string,
+  fn: (args: {
+    service: PromptGenerationService;
+    repo: InMemoryPromptGenerationRepository;
+    history: InMemoryPromptHistoryRepository;
+    launched: { count: number };
+  }) => Promise<void>,
+  options: { limitGate?: LimitGate } = {},
+): Promise<void> {
   const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-prompt-generation-'));
   const manager = new TerminalManager();
   const repo = new InMemoryPromptGenerationRepository();

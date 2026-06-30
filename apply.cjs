@@ -5,19 +5,19 @@ const path = require('path');
 let tigerTs = fs.readFileSync('apps/frontend/app/stores/tiger.ts', 'utf-8');
 tigerTs = tigerTs.replace(
   'const projectsLoading = ref(false);',
-  'const projectsLoading = ref(false);\n  const projectsLoadError = ref<string | null>(null);'
+  'const projectsLoading = ref(false);\n  const projectsLoadError = ref<string | null>(null);',
 );
 tigerTs = tigerTs.replace(
   'projectsLoading.value = true;',
-  'projectsLoading.value = true;\n    projectsLoadError.value = null;'
+  'projectsLoading.value = true;\n    projectsLoadError.value = null;',
 );
 tigerTs = tigerTs.replace(
-  'notices.push(`Projects: ${errText(e)}`, \'error\');',
-  'projectsLoadError.value = errText(e);\n      notices.push(`Projects: ${projectsLoadError.value}`, \'error\');'
+  "notices.push(`Projects: ${errText(e)}`, 'error');",
+  "projectsLoadError.value = errText(e);\n      notices.push(`Projects: ${projectsLoadError.value}`, 'error');",
 );
 tigerTs = tigerTs.replace(
   'projectsLoading,\n    initialized,',
-  'projectsLoading,\n    projectsLoadError,\n    initialized,'
+  'projectsLoading,\n    projectsLoadError,\n    initialized,',
 );
 fs.writeFileSync('apps/frontend/app/stores/tiger.ts', tigerTs);
 
@@ -117,18 +117,18 @@ for (const p of [EN_PATH, TR_PATH]) {
 // 3. TaskBoard.vue
 let taskBoard = fs.readFileSync('apps/frontend/app/components/tiger/TaskBoard.vue', 'utf-8');
 taskBoard = taskBoard.replace(
-  'import EmptyState from \'~/components/ui/EmptyState.vue\';',
-  'import EmptyState from \'~/components/ui/EmptyState.vue\';\nimport BaseButton from \'~/components/ui/BaseButton.vue\';\nimport { useT } from \'~/composables/useT\';'
+  "import EmptyState from '~/components/ui/EmptyState.vue';",
+  "import EmptyState from '~/components/ui/EmptyState.vue';\nimport BaseButton from '~/components/ui/BaseButton.vue';\nimport { useT } from '~/composables/useT';",
 );
 taskBoard = taskBoard.replace(
   'defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean }>();',
-  'defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean; error?: string | null }>();\nconst emit = defineEmits<{ retry: [] }>();\n\nconst { t } = useT();'
+  'defineProps<{ tasks: TigerTaskSummary | null; loading?: boolean; error?: string | null }>();\nconst emit = defineEmits<{ retry: [] }>();\n\nconst { t } = useT();',
 );
 taskBoard = taskBoard.replace(/label: '[^']+'/g, '');
 taskBoard = taskBoard.replace(/, {2}},/g, ' },');
 taskBoard = taskBoard.replace(
   '<Spinner :size="14" label="Loading tasks" />',
-  '<Spinner :size="14" :label="t(\'tiger.taskBoard.loading\')" />'
+  '<Spinner :size="14" :label="t(\'tiger.taskBoard.loading\')" />',
 );
 taskBoard = taskBoard.replace(
   '<div v-else-if="tasks && tasks.total" class="board">',
@@ -145,11 +145,17 @@ taskBoard = taskBoard.replace(
     </EmptyState>
   </div>
 
-  <div v-else-if="tasks && tasks.total" class="board">`
+  <div v-else-if="tasks && tasks.total" class="board">`,
 );
-taskBoard = taskBoard.replace('<span class="gl">Execution</span>', `<span class="gl">{{ t('tiger.taskBoard.execution') }}</span>`);
+taskBoard = taskBoard.replace(
+  '<span class="gl">Execution</span>',
+  `<span class="gl">{{ t('tiger.taskBoard.execution') }}</span>`,
+);
 taskBoard = taskBoard.replace('{{ e.label }}<b>', `{{ t('tiger.taskBoard.executionStatus.' + e.k) }}<b>`);
-taskBoard = taskBoard.replace('<span class="gl">Review</span>', `<span class="gl">{{ t('tiger.taskBoard.review') }}</span>`);
+taskBoard = taskBoard.replace(
+  '<span class="gl">Review</span>',
+  `<span class="gl">{{ t('tiger.taskBoard.review') }}</span>`,
+);
 taskBoard = taskBoard.replace('{{ r.label }}<b>', `{{ t('tiger.taskBoard.reviewStatus.' + r.k) }}<b>`);
 taskBoard = taskBoard.replace('v-for="t in tasks.items" :key="t.id"', 'v-for="item in tasks.items" :key="item.id"');
 taskBoard = taskBoard.replace(/t\.id/g, 'item.id');
@@ -159,46 +165,44 @@ taskBoard = taskBoard.replace(/t\.executionStatus/g, 'item.executionStatus');
 taskBoard = taskBoard.replace(/t\.reviewStatus/g, 'item.reviewStatus');
 taskBoard = taskBoard.replace(
   `{{ item.executionStatus.replace('_', ' ') }}`,
-  `{{ t('tiger.taskBoard.executionStatus.' + item.executionStatus) }}`
+  `{{ t('tiger.taskBoard.executionStatus.' + item.executionStatus) }}`,
 );
 taskBoard = taskBoard.replace(
   `{{ item.reviewStatus.replace('_', ' ') }}`,
-  `{{ t('tiger.taskBoard.reviewStatus.' + item.reviewStatus) }}`
+  `{{ t('tiger.taskBoard.reviewStatus.' + item.reviewStatus) }}`,
 );
 taskBoard = taskBoard.replace(
   `<EmptyState v-else title="No tasks yet." description="Run the Merge Tasks stage to produce the authoritative task list." />`,
-  `<EmptyState v-else :title="t('tiger.taskBoard.emptyStateTitle')" :description="t('tiger.taskBoard.emptyStateDesc')" />`
+  `<EmptyState v-else :title="t('tiger.taskBoard.emptyStateTitle')" :description="t('tiger.taskBoard.emptyStateDesc')" />`,
 );
 fs.writeFileSync('apps/frontend/app/components/tiger/TaskBoard.vue', taskBoard);
-
 
 // 4. StageStepper.vue
 let stageStepper = fs.readFileSync('apps/frontend/app/components/tiger/StageStepper.vue', 'utf-8');
 stageStepper = stageStepper.replace(
   `import { TIGER_STAGES } from '~/lib/tigerStages';`,
-  `import { TIGER_STAGES } from '~/lib/tigerStages';\nimport { useT } from '~/composables/useT';\n\nconst { t } = useT();`
+  `import { TIGER_STAGES } from '~/lib/tigerStages';\nimport { useT } from '~/composables/useT';\n\nconst { t } = useT();`,
 );
 stageStepper = stageStepper.replace(
   `aria-label="Tiger workflow stages"`,
-  `:aria-label="t('tiger.stageStepper.ariaLabel')"`
+  `:aria-label="t('tiger.stageStepper.ariaLabel')"`,
 );
 stageStepper = stageStepper.replace(
   `<span class="title">{{ s.title }}</span>`,
-  `<span class="title">{{ t('tiger.stages.' + s.id + '.title') }}</span>`
+  `<span class="title">{{ t('tiger.stages.' + s.id + '.title') }}</span>`,
 );
 stageStepper = stageStepper.replace(
   `<span v-if="s.optional" class="opt" title="Optional stage">opt</span>`,
-  `<span v-if="s.optional" class="opt" :title="t('tiger.stageStepper.optionalTitle')">{{ t('tiger.stageStepper.opt') }}</span>`
+  `<span v-if="s.optional" class="opt" :title="t('tiger.stageStepper.optionalTitle')">{{ t('tiger.stageStepper.opt') }}</span>`,
 );
 fs.writeFileSync('apps/frontend/app/components/tiger/StageStepper.vue', stageStepper);
-
 
 // 5. TigerView.vue
 let tigerView = fs.readFileSync('apps/frontend/app/components/tiger/TigerView.vue', 'utf-8');
 tigerView = tigerView.replace(`<b>Tiger</b>`, `<b>{{ t('tiger.view.tiger') }}</b>`);
 tigerView = tigerView.replace(
   `<BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">Templates</BaseButton>`,
-  `<BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">{{ t('tiger.view.templates') }}</BaseButton>`
+  `<BaseButton variant="secondary" size="sm" @click="emit('openTemplates')">{{ t('tiger.view.templates') }}</BaseButton>`,
 );
 tigerView = tigerView.replace(
   `      <EmptyState
@@ -220,20 +224,23 @@ tigerView = tigerView.replace(
         <template #actions>
           <BaseButton variant="secondary" @click="tiger.load()">{{ t('tiger.view.retry') }}</BaseButton>
         </template>
-      </EmptyState>`
+      </EmptyState>`,
 );
 tigerView = tigerView.replace(`<h2>New project</h2>`, `<h2>{{ t('tiger.view.newProject') }}</h2>`);
 tigerView = tigerView.replace(`<span>Workspace folder</span>`, `<span>{{ t('tiger.view.workspaceFolder') }}</span>`);
 tigerView = tigerView.replace(`<span>Project prompt</span>`, `<span>{{ t('tiger.view.projectPrompt') }}</span>`);
 tigerView = tigerView.replace(
   `title="Configure every stage, then run them all automatically"`,
-  `:title="t('tiger.view.runAllTitle')"`
+  `:title="t('tiger.view.runAllTitle')"`,
 );
-tigerView = tigerView.replace(`<span class="rl">Correction routing</span>`, `<span class="rl">{{ t('tiger.view.correctionRouting') }}</span>`);
+tigerView = tigerView.replace(
+  `<span class="rl">Correction routing</span>`,
+  `<span class="rl">{{ t('tiger.view.correctionRouting') }}</span>`,
+);
 tigerView = tigerView.replace(`<summary>Tasks</summary>`, `<summary>{{ t('tiger.view.tasks') }}</summary>`);
 tigerView = tigerView.replace(
   `<TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" />`,
-  `<TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" :error="tiger.state?.error ?? tiger.loadError" @retry="tiger.load()" />`
+  `<TaskBoard :tasks="tiger.state?.tasks ?? null" :loading="tiger.loading && !tiger.loaded" :error="tiger.state?.error ?? tiger.loadError" @retry="tiger.load()" />`,
 );
 tigerView = tigerView.replace(`<summary>Run log</summary>`, `<summary>{{ t('tiger.view.runLog') }}</summary>`);
 tigerView = tigerView.replace(
@@ -254,16 +261,15 @@ tigerView = tigerView.replace(
         <BaseButton variant="ghost" @click="cancelOutOfOrder">{{ t('tiger.view.cancel') }}</BaseButton>
         <BaseButton variant="primary" @click="confirmOutOfOrder">{{ t('tiger.view.runAnyway') }}</BaseButton>
       </template>
-    </BaseModal>`
+    </BaseModal>`,
 );
 fs.writeFileSync('apps/frontend/app/components/tiger/TigerView.vue', tigerView);
-
 
 // 6. ProjectLauncher.vue
 let projectLauncher = fs.readFileSync('apps/frontend/app/components/tiger/ProjectLauncher.vue', 'utf-8');
 projectLauncher = projectLauncher.replace(
   `import Skeleton from '~/components/ui/Skeleton.vue';`,
-  `import Skeleton from '~/components/ui/Skeleton.vue';\nimport EmptyState from '~/components/ui/EmptyState.vue';\nimport { useT } from '~/composables/useT';\n\nconst { t } = useT();`
+  `import Skeleton from '~/components/ui/Skeleton.vue';\nimport EmptyState from '~/components/ui/EmptyState.vue';\nimport { useT } from '~/composables/useT';\n\nconst { t } = useT();`,
 );
 projectLauncher = projectLauncher.replace(
   `    title: 'Forget project',
@@ -271,28 +277,28 @@ projectLauncher = projectLauncher.replace(
     confirmText: 'Forget',`,
   `    title: t('tiger.projectLauncher.forgetDialogTitle'),
     message: t('tiger.projectLauncher.forgetDialogMessage', { name: p.name }),
-    confirmText: t('tiger.projectLauncher.forgetDialogConfirm'),`
+    confirmText: t('tiger.projectLauncher.forgetDialogConfirm'),`,
 );
 projectLauncher = projectLauncher.replace(`<h2>Projects</h2>`, `<h2>{{ t('tiger.projectLauncher.title') }}</h2>`);
 projectLauncher = projectLauncher.replace(
   `        aria-label="Refresh projects"
         title="Refresh"`,
   `        :aria-label="t('tiger.projectLauncher.refreshProjects')"
-        :title="t('tiger.projectLauncher.refresh')"`
+        :title="t('tiger.projectLauncher.refresh')"`,
 );
 projectLauncher = projectLauncher.replace(
   `<p class="lead">Continue a previous project, or create a new one.</p>`,
-  `<p class="lead">{{ t('tiger.projectLauncher.lead') }}</p>`
+  `<p class="lead">{{ t('tiger.projectLauncher.lead') }}</p>`,
 );
 projectLauncher = projectLauncher.replace(
   `        <span class="newlabel">New project</span>
         <span class="newhint">Pick a folder &amp; write a prompt</span>`,
   `        <span class="newlabel">{{ t('tiger.projectLauncher.newProject') }}</span>
-        <span class="newhint">{{ t('tiger.projectLauncher.newProjectHint') }}</span>`
+        <span class="newhint">{{ t('tiger.projectLauncher.newProjectHint') }}</span>`,
 );
 projectLauncher = projectLauncher.replace(
   `<Spinner :size="14" label="Loading projects" />`,
-  `<Spinner :size="14" :label="t('tiger.projectLauncher.loading')" />`
+  `<Spinner :size="14" :label="t('tiger.projectLauncher.loading')" />`,
 );
 projectLauncher = projectLauncher.replace(
   `      <div v-if="tiger.projectsLoading && !tiger.projects.length" class="card skeleton-card">
@@ -322,25 +328,25 @@ projectLauncher = projectLauncher.replace(
           :title="t('tiger.projectLauncher.emptyStateTitle')"
           :description="t('tiger.projectLauncher.emptyStateDesc')"
         />
-      </div>`
+      </div>`,
 );
 projectLauncher = projectLauncher.replace(
   `            title="Forget (does not delete files)"
             :aria-label="\`Forget project \${p.name} (does not delete files)\`"`,
   `            :title="t('tiger.projectLauncher.forgetTitle')"
-            :aria-label="t('tiger.projectLauncher.forgetAriaLabel', { name: p.name })"`
+            :aria-label="t('tiger.projectLauncher.forgetAriaLabel', { name: p.name })"`,
 );
 projectLauncher = projectLauncher.replace(
   `<p class="cprompt">{{ p.promptPreview || (p.exists ? '(no prompt yet)' : 'Folder is missing') }}</p>`,
-  `<p class="cprompt">{{ p.promptPreview || (p.exists ? t('tiger.projectLauncher.noPromptYet') : t('tiger.projectLauncher.folderMissing')) }}</p>`
+  `<p class="cprompt">{{ p.promptPreview || (p.exists ? t('tiger.projectLauncher.noPromptYet') : t('tiger.projectLauncher.folderMissing')) }}</p>`,
 );
 projectLauncher = projectLauncher.replace(
   `<span class="pn">{{ p.completedStages }}/{{ p.totalStages }} stages</span>`,
-  `<span class="pn">{{ t('tiger.projectLauncher.stagesProgress', { completed: p.completedStages, total: p.totalStages }) }}</span>`
+  `<span class="pn">{{ t('tiger.projectLauncher.stagesProgress', { completed: p.completedStages, total: p.totalStages }) }}</span>`,
 );
 projectLauncher = projectLauncher.replace(
   `{{ p.completedStages > 0 ? 'Continue →' : 'Open →' }}`,
-  `{{ p.completedStages > 0 ? t('tiger.projectLauncher.continueBtn') : t('tiger.projectLauncher.openBtn') }}`
+  `{{ p.completedStages > 0 ? t('tiger.projectLauncher.continueBtn') : t('tiger.projectLauncher.openBtn') }}`,
 );
 fs.writeFileSync('apps/frontend/app/components/tiger/ProjectLauncher.vue', projectLauncher);
 

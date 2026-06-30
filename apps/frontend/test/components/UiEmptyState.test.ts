@@ -19,10 +19,16 @@ describe('ui/EmptyState', () => {
   });
 
   it('applies the danger tone modifier', () => {
-    expect(mount(EmptyState, { props: { title: 't' } }).find('.empty').classes()).not.toContain('danger');
-    expect(mount(EmptyState, { props: { title: 't', tone: 'danger' } }).find('.empty').classes()).toContain(
-      'danger',
-    );
+    expect(
+      mount(EmptyState, { props: { title: 't' } })
+        .find('.empty')
+        .classes(),
+    ).not.toContain('danger');
+    expect(
+      mount(EmptyState, { props: { title: 't', tone: 'danger' } })
+        .find('.empty')
+        .classes(),
+    ).toContain('danger');
   });
 
   it('renders the actions area only when the #actions slot is filled', () => {

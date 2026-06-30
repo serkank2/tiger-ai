@@ -16,18 +16,9 @@ test('TeamPaths resolves absolute team-run files under .tiger/team/<runId>', () 
   assert.equal(paths.teamFile(runId), path.join(root, 'team', runId, 'team.json'));
   assert.equal(paths.conversationFile(runId), path.join(root, 'team', runId, 'conversation.jsonl'));
   assert.equal(paths.runtimeDir(runId), path.join(root, 'team', runId, '.runtime'));
-  assert.equal(
-    paths.turnPromptFile(runId, turnId),
-    path.join(root, 'team', runId, '.runtime', `${turnId}.prompt.md`),
-  );
-  assert.equal(
-    paths.turnOutputFile(runId, turnId),
-    path.join(root, 'team', runId, '.runtime', `${turnId}.output.md`),
-  );
-  assert.equal(
-    paths.turnMarkerFile(runId, turnId),
-    path.join(root, 'team', runId, '.runtime', `${turnId}.done`),
-  );
+  assert.equal(paths.turnPromptFile(runId, turnId), path.join(root, 'team', runId, '.runtime', `${turnId}.prompt.md`));
+  assert.equal(paths.turnOutputFile(runId, turnId), path.join(root, 'team', runId, '.runtime', `${turnId}.output.md`));
+  assert.equal(paths.turnMarkerFile(runId, turnId), path.join(root, 'team', runId, '.runtime', `${turnId}.done`));
 });
 
 test('TeamPaths.rel returns forward-slashed paths relative to the .tiger root', () => {

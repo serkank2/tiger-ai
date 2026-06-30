@@ -61,7 +61,10 @@ const effortLabel = (e: string) => effortLabels.value[e] ?? e;
 
 // Model dropdown options come from config (editable in tiger/config.json), with '' = CLI default.
 const claudeModels = computed(() => ['', ...(props.config.cli.claude.models ?? ['opus', 'sonnet', 'haiku', 'fable'])]);
-const codexModels = computed(() => ['', ...(props.config.cli.codex.models ?? ['gpt-5.5', 'gpt-5-codex', 'gpt-5', 'o3', 'o4-mini'])]);
+const codexModels = computed(() => [
+  '',
+  ...(props.config.cli.codex.models ?? ['gpt-5.5', 'gpt-5-codex', 'gpt-5', 'o3', 'o4-mini']),
+]);
 const antigravityModels = computed(() => ['', ...(props.config.cli.antigravity?.models ?? [])]);
 
 const claudePerms = computed(() => Object.keys(props.config.cli.claude.permissionModes));
@@ -69,7 +72,10 @@ const codexPerms = computed(() => Object.keys(props.config.cli.codex.permissionM
 const antigravityPerms = computed(() => Object.keys(props.config.cli.antigravity?.permissionModes ?? {}));
 
 function clampAgentCount(value: unknown): number {
-  return Math.min(AGENT_COUNT_MAX, Math.max(AGENT_COUNT_MIN, Number.isInteger(value) ? Number(value) : AGENT_COUNT_MIN));
+  return Math.min(
+    AGENT_COUNT_MAX,
+    Math.max(AGENT_COUNT_MIN, Number.isInteger(value) ? Number(value) : AGENT_COUNT_MIN),
+  );
 }
 
 function setAgentCount(key: 'claudeAgents' | 'codexAgents' | 'antigravityAgents', value: unknown) {
@@ -145,9 +151,7 @@ watch(
 
 function isDangerous(type: TigerAgentType, perm: string): boolean {
   const args = props.config.cli[type]?.permissionModes[perm] ?? [];
-  return args.some(
-    (a) => a === '--dangerously-skip-permissions' || a === '--dangerously-bypass-approvals-and-sandbox',
-  );
+  return args.some((a) => a === '--dangerously-skip-permissions' || a === '--dangerously-bypass-approvals-and-sandbox');
 }
 const claudeDanger = computed(() => isDangerous('claude', props.cfg.claudePermission));
 const codexDanger = computed(() => isDangerous('codex', props.cfg.codexPermission));
@@ -184,7 +188,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
           <label class="field">
             <span>{{ t('tiger.stageConfig.codexModel') }}</span>
             <select v-model="codexModel" :disabled="disabled">
-              <option v-for="m in codexModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in codexModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">
@@ -204,7 +210,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
           <label class="field">
             <span>{{ t('tiger.stageConfig.antigravityModel') }}</span>
             <select v-model="antigravityModel" :disabled="disabled">
-              <option v-for="m in antigravityModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in antigravityModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">
@@ -218,7 +226,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
           <label class="field">
             <span>{{ t('tiger.stageConfig.claudeModel') }}</span>
             <select v-model="claudeModel" :disabled="disabled">
-              <option v-for="m in claudeModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in claudeModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">
@@ -236,7 +246,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
         </template>
       </div>
       <p
-        v-if="cfg.mergeAgent === 'codex' ? codexDanger : cfg.mergeAgent === 'antigravity' ? antigravityDanger : claudeDanger"
+        v-if="
+          cfg.mergeAgent === 'codex' ? codexDanger : cfg.mergeAgent === 'antigravity' ? antigravityDanger : claudeDanger
+        "
         class="danger"
       >
         {{ t('tiger.stageConfig.dangerMerge') }}
@@ -249,7 +261,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
         <fieldset>
           <legend>{{ t('tiger.stageConfig.claudeAgents') }}</legend>
           <div class="field count-field">
-            <span>{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.claudeAgents }}</b></span>
+            <span
+              >{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.claudeAgents }}</b></span
+            >
             <input
               class="slider"
               type="range"
@@ -260,12 +274,17 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
               :disabled="disabled"
               @input="setAgentCount('claudeAgents', Number(($event.target as HTMLInputElement).value))"
             />
-            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
+            <div class="scale">
+              <span>{{ AGENT_COUNT_MIN }}</span
+              ><span>{{ AGENT_COUNT_MAX }}</span>
+            </div>
           </div>
           <label class="field">
             <span>{{ t('tiger.stageConfig.model') }}</span>
             <select v-model="claudeModel" :disabled="disabled">
-              <option v-for="m in claudeModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in claudeModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">
@@ -286,7 +305,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
         <fieldset>
           <legend>{{ t('tiger.stageConfig.codexAgents') }}</legend>
           <div class="field count-field">
-            <span>{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.codexAgents }}</b></span>
+            <span
+              >{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.codexAgents }}</b></span
+            >
             <input
               class="slider"
               type="range"
@@ -297,12 +318,17 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
               :disabled="disabled"
               @input="setAgentCount('codexAgents', Number(($event.target as HTMLInputElement).value))"
             />
-            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
+            <div class="scale">
+              <span>{{ AGENT_COUNT_MIN }}</span
+              ><span>{{ AGENT_COUNT_MAX }}</span>
+            </div>
           </div>
           <label class="field">
             <span>{{ t('tiger.stageConfig.model') }}</span>
             <select v-model="codexModel" :disabled="disabled">
-              <option v-for="m in codexModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in codexModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">
@@ -323,7 +349,9 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
         <fieldset>
           <legend>{{ t('tiger.stageConfig.antigravityAgents') }}</legend>
           <div class="field count-field">
-            <span>{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.antigravityAgents }}</b></span>
+            <span
+              >{{ t('tiger.stageConfig.count') }} <b class="count-badge">{{ cfg.antigravityAgents }}</b></span
+            >
             <input
               class="slider"
               type="range"
@@ -334,12 +362,17 @@ const permLabel = (k: string) => permLabels.value[k] ?? k;
               :disabled="disabled"
               @input="setAgentCount('antigravityAgents', Number(($event.target as HTMLInputElement).value))"
             />
-            <div class="scale"><span>{{ AGENT_COUNT_MIN }}</span><span>{{ AGENT_COUNT_MAX }}</span></div>
+            <div class="scale">
+              <span>{{ AGENT_COUNT_MIN }}</span
+              ><span>{{ AGENT_COUNT_MAX }}</span>
+            </div>
           </div>
           <label class="field">
             <span>{{ t('tiger.stageConfig.model') }}</span>
             <select v-model="antigravityModel" :disabled="disabled">
-              <option v-for="m in antigravityModels" :key="m" :value="m">{{ m || t('tiger.stageConfig.defaultOption') }}</option>
+              <option v-for="m in antigravityModels" :key="m" :value="m">
+                {{ m || t('tiger.stageConfig.defaultOption') }}
+              </option>
             </select>
           </label>
           <label class="field">

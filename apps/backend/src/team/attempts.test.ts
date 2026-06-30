@@ -49,10 +49,7 @@ test('nextAttemptNumber is one past the current max (1-based)', () => {
 test('currentAttempt is the latest non-terminal attempt', () => {
   assert.equal(currentAttempt([]), null);
   const running = attempt({ id: 'a2', attemptNumber: 2, status: 'running' });
-  assert.equal(
-    currentAttempt([attempt({ id: 'a1', status: 'superseded' }), running])?.id,
-    'a2',
-  );
+  assert.equal(currentAttempt([attempt({ id: 'a1', status: 'superseded' }), running])?.id, 'a2');
   // All terminal → no current attempt.
   assert.equal(
     currentAttempt([attempt({ id: 'a1', status: 'completed' }), attempt({ id: 'a2', status: 'failed' })]),
@@ -117,7 +114,10 @@ test('MemoryTeamPersistence attempt round-trip: create -> update -> list -> prom
 
   await p.createAttempt({ runId: run.id, attemptNumber: 2, branch: 'kaplan/a2' });
   const list = await p.listAttempts(run.id);
-  assert.deepEqual(list.map((a) => a.attemptNumber), [1, 2]);
+  assert.deepEqual(
+    list.map((a) => a.attemptNumber),
+    [1, 2],
+  );
 
   const promoted = await p.markAttemptPromoted(a1.id);
   assert.equal(promoted?.status, 'promoted');
@@ -130,7 +130,14 @@ test('MemoryTeamPersistence attempt round-trip: create -> update -> list -> prom
 // ---------------------------------------------------------------------------
 
 const roles = [
-  { id: 'lead', name: 'Lead', tool: 'codex' as const, responsibilities: [], canWriteCode: true, requiredForSignoff: true },
+  {
+    id: 'lead',
+    name: 'Lead',
+    tool: 'codex' as const,
+    responsibilities: [],
+    canWriteCode: true,
+    requiredForSignoff: true,
+  },
 ];
 
 function singleTurnScheduler(): TeamScheduler {
@@ -165,7 +172,8 @@ async function waitForTerminal(orch: TeamOrchestrator, timeoutMs = 5000): Promis
   const deadline = Date.now() + timeoutMs;
   while (true) {
     const status = orch.getState().status;
-    if (status === 'completed' || status === 'blocked' || status === 'failed' || status === 'stopped') return orch.getState();
+    if (status === 'completed' || status === 'blocked' || status === 'failed' || status === 'stopped')
+      return orch.getState();
     if (Date.now() > deadline) assert.fail(`timed out: ${JSON.stringify(orch.getState().status)}`);
     await delay(10);
   }
@@ -202,8 +210,12 @@ test('createAttempt isolates work on its own branch and promoteAttempt merges it
     // The runner writes a file each turn (the "attempt's work"), then signs off.
     const runner: TeamTurnRunner = {
       async runRoleTurn(input) {
-        await fs.writeFile(path.join(input.workspace, `out-${Date.now()}.txt`, ), 'work\n', 'utf8').catch(() => {});
-        return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: 'did work' }], signoffs: [{}] };
+        await fs.writeFile(path.join(input.workspace, `out-${Date.now()}.txt`), 'work\n', 'utf8').catch(() => {});
+        return {
+          status: 'completed',
+          messages: [{ from: input.role.id, kind: 'chat', body: 'did work' }],
+          signoffs: [{}],
+        };
       },
     };
     const orch = new TeamOrchestrator({
@@ -231,6 +243,12 @@ test('createAttempt isolates work on its own branch and promoteAttempt merges it
     assert.equal(a.attemptNumber, 1);
     assert.ok(a.branch, 'attempt has an isolated branch');
     assert.ok(a.branch!.includes('attempt-1'));
+    assert.ok(a.workspacePath, 'attempt records an isolated worktree path');
+    assert.equal(
+      path.resolve(path.dirname(a.workspacePath!)),
+      path.resolve(path.join(workspace, '.tiger', 'worktrees')),
+    );
+    assert.equal(a.workspacePath!.includes(`${path.sep}.kaplan${path.sep}`), false);
     assert.equal(a.status, 'completed');
 
     // Promote it: the attempt's branch is merged into the workspace base; status flips.

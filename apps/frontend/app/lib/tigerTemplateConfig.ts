@@ -72,10 +72,7 @@ export function fullStageConfigs(
   template?: Pick<TigerRunTemplate, 'configs'> | null,
 ): Record<TigerStageId, TigerStageRunConfig> {
   return Object.fromEntries(
-    TIGER_STAGES.map((stage) => [
-      stage.id,
-      sanitizeStageConfig(config, template?.configs?.[stage.id]),
-    ]),
+    TIGER_STAGES.map((stage) => [stage.id, sanitizeStageConfig(config, template?.configs?.[stage.id])]),
   ) as Record<TigerStageId, TigerStageRunConfig>;
 }
 

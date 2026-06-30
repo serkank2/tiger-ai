@@ -1,14 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  useId,
-  useSlots,
-} from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useSlots } from 'vue';
 import BaseModal from '~/components/ui/BaseModal.vue';
 
 // ui/BaseModal.vue relies on Nuxt auto-imports (Vue Composition API helpers exposed
@@ -109,10 +101,7 @@ describe('ui/BaseModal', () => {
     const outside = document.createElement('button');
     document.body.appendChild(outside);
 
-    const wrapper = mountModal(
-      { title: 'X' },
-      { default: '<button class="a">A</button><button class="b">B</button>' },
-    );
+    const wrapper = mountModal({ title: 'X' }, { default: '<button class="a">A</button><button class="b">B</button>' });
     await wrapper.vm.$nextTick();
 
     // From the last focusable, Tab must wrap back inside the dialog, never to `outside`.
