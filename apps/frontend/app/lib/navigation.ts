@@ -31,6 +31,14 @@ export const NAV_ITEMS: NavItem[] = [
     hint: 'Live terminal grid and command broadcast',
   },
   {
+    key: 'runs',
+    to: '/runs',
+    label: 'Runs',
+    labelKey: 'nav.runs',
+    icon: '🚀',
+    hint: 'v2 runs — headless agents over a work graph with engine-run checks',
+  },
+  {
     key: 'projects',
     to: '/tiger',
     label: 'Projects',

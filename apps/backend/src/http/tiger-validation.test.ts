@@ -103,6 +103,7 @@ async function tigerTemplateFixture(): Promise<
     teamOrchestrator: {} as AppCtx['teamOrchestrator'],
     teamTemplates: {} as AppCtx['teamTemplates'],
     teamTranslations: {} as AppCtx['teamTranslations'],
+    runEngine: {} as AppCtx['runEngine'],
     save: async () => {},
   };
 
@@ -138,6 +139,7 @@ async function tigerFixture(): Promise<
     teamOrchestrator: {} as AppCtx['teamOrchestrator'],
     teamTemplates: {} as AppCtx['teamTemplates'],
     teamTranslations: {} as AppCtx['teamTranslations'],
+    runEngine: {} as AppCtx['runEngine'],
     save: async () => {},
   };
   await orchestrator.initialize(workspace, 'Build a small test project.');
@@ -349,6 +351,7 @@ test('group routes reject overlength names before mutating state', async () => {
     teamOrchestrator: {} as AppCtx['teamOrchestrator'],
     teamTemplates: {} as AppCtx['teamTemplates'],
     teamTranslations: {} as AppCtx['teamTranslations'],
+    runEngine: {} as AppCtx['runEngine'],
     save: async () => {
       saves += 1;
     },

@@ -91,6 +91,7 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
     teamOrchestrator: {} as AppCtx['teamOrchestrator'],
     teamTemplates: {} as AppCtx['teamTemplates'],
     teamTranslations: {} as AppCtx['teamTranslations'],
+    runEngine: {} as AppCtx['runEngine'],
     save: async () => {},
   };
 

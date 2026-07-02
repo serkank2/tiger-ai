@@ -77,6 +77,9 @@ npm run migrate:down -w @kaplan/backend   # roll back the last migration
 
 ## Backend subsystem map (`apps/backend/src`)
 
+- `agents/` + `run/` + `context/` + `verify/` — the **v2 execution core** (headless agent turns
+  over a WorkGraph with engine-run verification; see `docs/REDESIGN.md` — this supersedes the
+  PTY-driven Tiger/Team execution model, which stays mounted as legacy during migration).
 - `terminal/` — `TerminalManager` / `TerminalSession`: the `node-pty` PTY model (serialized ops,
   generation tagging, input routing).
 - `orchestrator/` — the Tiger staged pipeline that drives interactive agent CLIs in real PTYs and

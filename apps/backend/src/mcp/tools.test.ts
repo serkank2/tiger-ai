@@ -55,11 +55,14 @@ test('buildTools exposes the expected board tool set', () => {
   assert.deepEqual(names, [
     'enqueue_prompt',
     'get_queue_job',
+    'get_run',
     'get_team_run',
     'get_tiger_state',
     'list_queue_jobs',
+    'list_run_events',
     'list_team_messages',
     'post_team_steering',
+    'steer_run',
   ]);
 });
 

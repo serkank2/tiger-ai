@@ -954,6 +954,108 @@ export interface TeamChangesFrame {
   changes: TeamChangesEvent;
 }
 
+// --- v2 runs (mirror of apps/backend/src/run/types.ts) ---
+
+export type RunItemKind = 'plan' | 'build' | 'review';
+export type RunItemStatus = 'pending' | 'running' | 'verifying' | 'done' | 'blocked' | 'cancelled';
+export type RunStatus = 'created' | 'running' | 'blocked' | 'completed' | 'failed' | 'stopped';
+export type RunProfile = 'mission' | 'pipeline';
+
+export interface RunItemUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+export interface RunWorkItem {
+  id: string;
+  kind: RunItemKind;
+  title: string;
+  description: string;
+  acceptanceCriteria?: string[];
+  dependsOn: string[];
+  status: RunItemStatus;
+  agentKey: string;
+  attempts: number;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  resultSummary?: string;
+  error?: string;
+  fixOf?: string;
+  usage?: RunItemUsage;
+}
+
+export interface RunVerificationRecord {
+  id: string;
+  command: string;
+  outcome: 'passed' | 'failed' | 'timeout' | 'error';
+  exitCode: number | null;
+  durationMs: number;
+  outputTail: string;
+  at: string;
+}
+
+export interface RunSteeringEntry {
+  id: string;
+  body: string;
+  createdAt: string;
+  status: 'pending' | 'applied';
+}
+
+export interface RunUsageTotals extends RunItemUsage {
+  turns: number;
+}
+
+export interface RunSnapshot {
+  runId: string;
+  workspace: string;
+  goal: string;
+  status: RunStatus;
+  message?: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  profile: RunProfile;
+  seq: number;
+  usage: RunUsageTotals;
+  graph: { items: RunWorkItem[] };
+  verifications: RunVerificationRecord[];
+  steering: RunSteeringEntry[];
+}
+
+export interface RunAgentEventDto {
+  type: 'turn-started' | 'text' | 'thinking' | 'tool-use' | 'tool-result' | 'usage' | 'result' | 'raw' | 'stderr';
+  at: string;
+  text?: string;
+  tool?: { name: string; detail?: string };
+  usage?: RunItemUsage;
+  sessionId?: string;
+  isError?: boolean;
+}
+
+export interface RunEventDto {
+  seq: number;
+  at: string;
+  type: 'run-status' | 'item-status' | 'agent' | 'verification' | 'steering' | 'note';
+  runId: string;
+  itemId?: string;
+  status?: RunStatus;
+  itemStatus?: string;
+  agent?: RunAgentEventDto;
+  verification?: RunVerificationRecord;
+  text?: string;
+}
+
+export interface RunCreateConfigInput {
+  profile?: RunProfile;
+  builder?: { provider: 'claude' | 'codex' | 'antigravity'; model?: string; effort?: string; permission?: string };
+  reviewPolicy?: 'final' | 'per-task' | 'none';
+  verifyPolicy?: 'per-build' | 'final' | 'both' | 'none';
+  allowDangerous?: boolean;
+}
+
 // --- Backend health (mirror of GET /api/health) ---
 
 export interface HealthStatus {
@@ -1265,6 +1367,8 @@ export interface ServerMessage {
   gate?: DoneGateState;
   directive?: SteeringDirective;
   changes?: TeamChangesEvent;
+  // v2 run frames: `run.state` reuses `state` (as RunSnapshot); `run.event` carries `event`.
+  event?: RunEventDto;
 }
 
 // --- Cue (event-driven orchestration engine) ---

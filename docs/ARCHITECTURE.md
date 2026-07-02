@@ -53,6 +53,28 @@ run, kill all PTYs, close the DB pool, and exit — with a 2s safety-net timer.
 
 ## Backend (`apps/backend/src`)
 
+### `agents/` + `run/` + `context/` + `verify/` — the v2 execution core
+
+> **v2 (docs/REDESIGN.md) supersedes the PTY-driven Tiger/Team execution model below.** The
+> legacy engines remain mounted while their surfaces migrate.
+
+- **`agents/`** — headless provider drivers (`claude -p --output-format stream-json
+--session-id/--resume`, `codex exec --json` / `exec resume`, `agy --print` + result-file
+  fallback) that translate each CLI's machine output into normalized `AgentEvent`s. Completion is
+  the provider's own result event + process exit — **no marker files, no output-idle heuristics,
+  no trust-dialog keystrokes**. `SessionRegistry` stores provider session ids so follow-up turns
+  resume the same session and send **only the new brief** (delta context).
+- **`run/`** — the WorkGraph engine: a run is a dependency graph of `plan` / `build` / `review`
+  items scheduled by a pure function. The planner's structured output (schema-enforced by the CLI)
+  seeds the graph; builders execute tasks in resumed sessions; steering inserts a re-plan item at
+  the next boundary (code, not a Lead chat turn). Control plane: `/api/runs`; data plane:
+  `run.state` / `run.event` WS frames; per-turn usage/cost from the provider's own usage report.
+- **`context/`** — briefs: a once-per-session preamble (goal + budgeted project map + contract)
+  and per-turn task briefs of O(new information) — never O(history).
+- **`verify/`** — Kaplan runs build/test/lint itself (`spawn`, no shell) and records exit codes;
+  a red check retries the same session with the failing tail as evidence. The only source of
+  "passed" anywhere is an exit code observed here.
+
 ### `terminal/` — the PTY model
 
 `TerminalManager` is a registry over `TerminalSession`, where each session wraps exactly one

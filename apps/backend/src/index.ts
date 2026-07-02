@@ -23,6 +23,8 @@ import { createLimitsRouter } from './http/limits.routes.js';
 import { createQueueRouter } from './http/queue.routes.js';
 import { createTeamRouter } from './http/team.routes.js';
 import { createCueRouter } from './http/cue.routes.js';
+import { createRunsRouter } from './http/runs.routes.js';
+import { RunEngine } from './run/engine.js';
 import { CueEngine } from './cue/CueEngine.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
@@ -115,6 +117,12 @@ const queueScheduler = new Scheduler(queueService, orchestrator, {
 });
 const teamTranslations = new TeamTranslationService({ manager, getConfig: () => orchestrator.getConfig() });
 
+// v2 run engine: headless agent turns (stream-json / exec --json) over a
+// WorkGraph — no PTYs, no marker files. CLI executables/flags come from the
+// same Tiger config store the legacy engines read, so provider settings stay
+// in one place during the migration.
+const runEngine = new RunEngine({ loadCliConfig: async () => orchestrator.getConfig() });
+
 const ctx: AppCtx = {
   state,
   manager,
@@ -126,6 +134,7 @@ const ctx: AppCtx = {
   teamOrchestrator,
   teamTemplates,
   teamTranslations,
+  runEngine,
   save,
 };
 
@@ -188,6 +197,8 @@ app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
 app.use('/api/queue', express.json({ limit: '2mb' }), createQueueRouter(ctx));
 // Team goals/personas can be sizable; give this router a roomier parser too.
 app.use('/api/team', express.json({ limit: '2mb' }), createTeamRouter(ctx));
+// v2 runs: goals can be long documents; match the team parser budget.
+app.use('/api/runs', express.json({ limit: '2mb' }), createRunsRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
 
@@ -296,6 +307,8 @@ async function shutdown(signal: string): Promise<void> {
   if (mcp) await mcp.close().catch(() => {});
   orchestrator.stopStage(); // abort any running stage so no new agents spawn
   if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});
+  // v2 runs: abort in-flight headless turns (kills the process trees, persists state).
+  if (runEngine.getSnapshot()?.status === 'running') await runEngine.stop('Backend shutting down.').catch(() => {});
   limits.stop();
   manager.beginShutdown();
   await autostartDone.catch(() => {});

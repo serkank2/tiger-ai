@@ -225,6 +225,53 @@ export function buildTools(): McpToolDef[] {
         return { ok: true, messageId: message.id, createdAt: message.createdAt };
       },
     }),
+    // ------------------------------------------------------------- v2 runs (read)
+    defineTool({
+      name: 'get_run',
+      title: 'Get the active v2 run',
+      description:
+        'Snapshot of the active v2 run: status, work-graph items with statuses, usage totals, latest verification records, steering.',
+      inputShape: {},
+      readOnly: true,
+      async run(ctx) {
+        const snapshot = ctx.runEngine.getSnapshot();
+        return snapshot ? { active: true, run: snapshot } : { active: false };
+      },
+    }),
+    defineTool({
+      name: 'list_run_events',
+      title: 'List v2 run events',
+      description:
+        'List the active v2 run’s event log (item/agent/verification/steering/note), optionally only events after a sequence number — the delta, so callers never re-read history.',
+      inputShape: {
+        afterSeq: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe('Return only events with seq greater than this value.'),
+      },
+      readOnly: true,
+      async run(ctx, args) {
+        if (!ctx.runEngine.getSnapshot()) return { active: false, events: [] };
+        const events = await ctx.runEngine.listEvents(args.afterSeq ?? 0);
+        return { active: true, count: events.length, events };
+      },
+    }),
+    // ------------------------------------------------------------ v2 runs (write)
+    defineTool({
+      name: 'steer_run',
+      title: 'Steer the active v2 run',
+      description:
+        'Send steering to the active v2 run. Applied at the next graph boundary as a re-plan (code inserts the plan item — no Lead chat turn). Fails when no run is active.',
+      inputShape: { body: z.string().min(1).describe('The steering text.') },
+      readOnly: false,
+      async run(ctx, args) {
+        if (!ctx.runEngine.getSnapshot()) return { ok: false, error: 'no_active_run' };
+        const run = await ctx.runEngine.steer(args.body);
+        return { ok: true, runId: run.runId, seq: run.seq };
+      },
+    }),
   ];
   return tools as McpToolDef[];
 }

@@ -58,7 +58,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     },
   });
   const peers = new Set<Peer>();
-  const { manager, state, orchestrator, queueService, promptGenerations, limits, teamOrchestrator } = ctx;
+  const { manager, state, orchestrator, queueService, promptGenerations, limits, teamOrchestrator, runEngine } = ctx;
 
   const send = (ws: WebSocket, msg: ServerMsg): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -142,6 +142,14 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     broadcast({ type: 'team.changes', runId: p.runId, changes: p.changes });
   teamOrchestrator.on('changes', onTeamChanges);
 
+  // v2 run engine: one multiplexed handler — full snapshots as `run.state`,
+  // per-turn normalized agent/verification/item events as `run.event`.
+  const onRunEngineEvent = (payload: import('../run/engine.js').RunEngineEvent) => {
+    if (payload.kind === 'state') broadcast({ type: 'run.state', runId: payload.state.runId, state: payload.state });
+    else broadcast({ type: 'run.event', runId: payload.event.runId, event: payload.event });
+  };
+  runEngine?.on('engine-event', onRunEngineEvent);
+
   wss.on('connection', (ws: WebSocket) => {
     const peer: Peer = { ws, attached: new Set(), alive: true };
     peers.add(peer);
@@ -151,6 +159,8 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     const teamSnapshot = teamOrchestrator.tryGetState();
     if (teamSnapshot)
       send(ws, { type: 'team.state', runId: teamSnapshot.runId, state: toTeamRunStateDto(teamSnapshot) });
+    const runSnapshot = runEngine?.getSnapshot();
+    if (runSnapshot) send(ws, { type: 'run.state', runId: runSnapshot.runId, state: runSnapshot });
     if (queueService)
       void queueService.getState().then((queueState) => send(ws, { type: 'queue.state', state: queueState }));
     ws.on('pong', () => {
@@ -291,6 +301,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     promptGenerations.off('history.changed', onHistoryChanged);
     queueService?.off('history.changed', onHistoryChanged);
     limits.off('state', onLimitState);
+    runEngine?.off('engine-event', onRunEngineEvent);
   });
 
   return wss;

@@ -256,6 +256,8 @@ export function useSocket() {
       case 'team.done':
       case 'team.steering':
       case 'team.changes':
+      case 'run.state':
+      case 'run.event':
       case 'generation.state':
       case 'history.changed':
         emitServerEvent(msg);

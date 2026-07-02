@@ -3,6 +3,7 @@ import type { OrchestratorState } from '../orchestrator/types.js';
 import type { QueueState } from '../queue/types.js';
 import type { PromptGenerationState } from '../services/PromptGenerationService.js';
 import type { LimitStatus } from '../limits/types.js';
+import type { RunEvent, RunSnapshot } from '../run/types.js';
 import type {
   TeamRunState,
   TeamMessage,
@@ -176,6 +177,18 @@ export interface TeamChangesMsg {
   runId: string;
   changes: TeamChangesEvent;
 }
+/** v2 run engine: full run snapshot pushed on every state change. */
+export interface RunStateMsg {
+  type: 'run.state';
+  runId: string;
+  state: RunSnapshot;
+}
+/** v2 run engine: one normalized event (agent/item/verification/steering/note). */
+export interface RunEventMsg {
+  type: 'run.event';
+  runId: string;
+  event: RunEvent;
+}
 
 export type ServerMsg =
   | AttachedMsg
@@ -196,7 +209,9 @@ export type ServerMsg =
   | TeamRoleMsg
   | TeamDoneMsg
   | TeamSteeringMsg
-  | TeamChangesMsg;
+  | TeamChangesMsg
+  | RunStateMsg
+  | RunEventMsg;
 
 const CLIENT_MSG_TYPES = new Set<string>([
   'term.attach',

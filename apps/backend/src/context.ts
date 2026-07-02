@@ -8,6 +8,7 @@ import type { LimitService } from './services/LimitService.js';
 import type { TeamOrchestrator } from './team/TeamOrchestrator.js';
 import type { TeamTemplateService } from './services/team-templates.js';
 import type { TeamTranslationService } from './services/TeamTranslationService.js';
+import type { RunEngine } from './run/engine.js';
 
 /** Shared application context injected into REST routers and the WS server. */
 export interface AppCtx {
@@ -29,6 +30,12 @@ export interface AppCtx {
   teamTemplates: TeamTemplateService;
   /** On-demand TR/EN translation of team-chat messages (agents still run in English). */
   teamTranslations: TeamTranslationService;
+  /**
+   * v2 run engine (docs/REDESIGN.md): headless agent turns over a WorkGraph.
+   * Supersedes the v1 Team/Tiger execution model; those engines remain mounted
+   * as legacy surfaces until the frontend cutover completes.
+   */
+  runEngine: RunEngine;
   /** Persist the current in-memory state atomically. */
   save: () => Promise<void>;
 }

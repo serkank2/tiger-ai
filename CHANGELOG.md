@@ -20,6 +20,20 @@ section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump
 ## [Unreleased]
 
 ### Added
+- **v2 execution core (docs/REDESIGN.md):** a full redesign of how Kaplan drives coding agents,
+  built from an 18-source competitive study (vibe-kanban, ruflo, OpenHands, SWE-agent, Aider,
+  goose, claude-squad, Plandex, Cognition/Anthropic/MAST evidence). New backend domains:
+  `agents/` (headless drivers — `claude -p --output-format stream-json --resume`,
+  `codex exec --json`/`exec resume`, `agy --print` + result file — normalized `AgentEvent`
+  streams, provider-reported completion, session resume via `SessionRegistry`), `run/` (the
+  WorkGraph engine: plan → build → review items over a pure dependency scheduler; steering =
+  engine-inserted re-plan; per-turn token/cost accounting), `context/` (once-per-session
+  preamble + delta-only task briefs + budgeted project map) and `verify/` (Kaplan runs
+  build/test/lint itself; exit codes are the only "passed"). Control plane `/api/runs`; WS
+  `run.state`/`run.event` frames; MCP tools `get_run`/`list_run_events`/`steer_run`; a new
+  **Runs** screen (work graph, live activity, per-run cost meter, steering) with EN/TR locales.
+  This supersedes the v1 PTY-typing/`.done`-marker/transcript-refeed execution model; legacy
+  Team/Tiger engines stay mounted pending surface migration (see `docs/REWRITE-TASKS.md`).
 - **Engineering tooling (Epic 0):** ESLint 9 flat config (`eslint.config.js`) covering backend
   TS (ESM) and frontend Vue + TS, wired to `npm run lint` and a CI `lint` job; Prettier config
   (`.prettierrc`/`.prettierignore`) matching the codebase style (2-space, single quotes,

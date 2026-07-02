@@ -52,6 +52,9 @@ import type {
   CueEngineStatus,
   CueSubscriptionStatus,
   CueSubscriptionInput,
+  RunSnapshot,
+  RunEventDto,
+  RunCreateConfigInput,
 } from '~/types';
 
 /**
@@ -366,6 +369,16 @@ export function useApi() {
     getPromptGeneration: (id: string) => req<PromptGenerationState>(`/api/prompts/generate/${id}`),
     reusePromptGeneration: (id: string, action: PromptGenerationReuseAction, body: Record<string, unknown> = {}) =>
       req<Record<string, unknown>>(`/api/prompts/generate/${id}/reuse`, { method: 'POST', body: { ...body, action } }),
+
+    // --- v2 runs (WorkGraph engine) ---
+    createRun: (body: { workspace: string; goal: string; config?: RunCreateConfigInput }) =>
+      req<{ run: RunSnapshot }>('/api/runs', { method: 'POST', body }),
+    getCurrentRun: () => req<{ run: RunSnapshot | null }>('/api/runs/current'),
+    startRun: () => req<{ run: RunSnapshot }>('/api/runs/current/start', { method: 'POST' }),
+    stopRun: (reason?: string) =>
+      req<{ run: RunSnapshot }>('/api/runs/current/stop', { method: 'POST', body: reason ? { reason } : {} }),
+    steerRun: (body: string) => req<{ run: RunSnapshot }>('/api/runs/current/steer', { method: 'POST', body: { body } }),
+    listRunEvents: (afterSeq = 0) => req<{ events: RunEventDto[] }>(`/api/runs/current/events?afterSeq=${afterSeq}`),
 
     // --- Cue (event-driven orchestration engine) ---
     getCueStatus: () => req<CueEngineStatus>('/api/cue/status'),
