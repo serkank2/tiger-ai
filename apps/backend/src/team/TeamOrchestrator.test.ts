@@ -395,6 +395,61 @@ test('a turn failure below the cap is tolerated; the run recovers and completes'
   }
 });
 
+test('a role that keeps failing between successful turns is parked blocked instead of looping forever', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-role-breaker-'));
+  try {
+    // The coordinator (resolved Lead) always succeeds; the developer always fails. The GLOBAL
+    // consecutive-failure guard resets on every coordinator success, so without the per-role
+    // breaker this run would alternate success/failure to the round cap (the exact "hour-long
+    // timeout loop" pathology). The per-role breaker must park the developer as blocked after
+    // maxConsecutiveFailures of ITS OWN turns, while the run itself stays healthy.
+    const orch = new TeamOrchestrator({
+      executionPersistence: new MemoryExecutionPersistence(),
+      maxConsecutiveFailures: 3,
+      scheduler: roundRobinScheduler(),
+      completionGate: {
+        evaluate(state) {
+          return state.roles.some((role) => role.status === 'blocked')
+            ? { complete: true, reasons: [] }
+            : { complete: false, reasons: ['Waiting for the breaker to trip.'] };
+        },
+      },
+      runner: {
+        async runRoleTurn(input) {
+          if (input.role.id === 'developer') return { status: 'failed', reason: 'agent timed out (simulated)' };
+          return { status: 'completed', messages: [{ from: input.role.id, kind: 'chat', body: 'coordinated' }] };
+        },
+      },
+    });
+    await orch.createTeamRun({
+      workspace,
+      goal: 'Park a persistently failing role.',
+      roles: [roles[0]!, roles[2]!], // coordinator (Lead) + developer
+    });
+    await orch.start();
+    const final = await waitForTerminal(orch);
+
+    const developer = final.roles.find((role) => role.id === 'developer');
+    assert.equal(developer?.status, 'blocked');
+    assert.match(developer?.statusNote ?? '', /Parked after 3 consecutive failed turns/);
+    // The run itself was NOT driven to failed by the alternating pattern.
+    assert.equal(final.status, 'completed');
+    const parkedNotice = (await orch.listMessages()).some(
+      (message) =>
+        message.from === 'system' && /parked \(blocked\) after 3 consecutive failed turns/i.test(message.body),
+    );
+    assert.ok(parkedNotice, 'announced the parking in the conversation');
+
+    // resumeRole un-parks a failure-parked (blocked) role so it can be scheduled again.
+    const resumed = await orch.resumeRole('developer');
+    const resumedDeveloper = resumed.roles.find((role) => role.id === 'developer');
+    assert.equal(resumedDeveloper?.status, 'idle');
+    assert.equal(resumedDeveloper?.statusNote, undefined);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 75 });
+  }
+});
+
 test('steering is appended immediately, stales signoffs, and is applied at the next turn boundary', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-team-steer-'));
   let releaseDeveloper!: () => void;

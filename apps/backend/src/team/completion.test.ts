@@ -135,7 +135,9 @@ test('evaluateCompletion: a fully satisfied state is complete with no blockers',
   const result = evaluateCompletion(greenInput());
   assert.equal(result.complete, true);
   assert.deepEqual(result.blockers, []);
-  assert.equal(result.latestMaterialChangeAt, T1);
+  // Passed verifications and acknowledged steering are forward progress, NOT material
+  // changes — the latest material change is the task/finding clock (T0).
+  assert.equal(result.latestMaterialChangeAt, T0);
   assert.deepEqual(result.requiredRoleIds, ['lead']);
   assert.deepEqual(result.freshSignoffRoleIds, ['lead']);
   assert.deepEqual(result.pendingRoleIds, []);
@@ -147,12 +149,9 @@ test('evaluateCompletion: a fully satisfied state is complete with no blockers',
 
 test('evaluateCompletion: a material change after a sign-off reopens the gate (stale sign-off)', () => {
   const input = greenInput();
-  // A fresh, still-passing verification at T3 is a material change later than the
-  // lead sign-off (T2). No other gate trips, isolating staleness.
-  input.verifications = [
-    verification({ id: 'VER-1', outcome: 'passed', createdAt: T1 }),
-    verification({ id: 'VER-2', outcome: 'passed', createdAt: T3 }),
-  ];
+  // A material task-board change at T3 postdates the lead sign-off (T2). No other gate
+  // trips, isolating staleness.
+  input.tasksUpdatedAt = T3;
 
   const result = evaluateCompletion(input);
   assert.equal(result.complete, false);
@@ -168,12 +167,52 @@ test('evaluateCompletion: a material change after a sign-off reopens the gate (s
 
 test('evaluateCompletion: a renewed sign-off after the change closes the gate again', () => {
   const input = greenInput();
+  input.tasksUpdatedAt = T2;
+  // Renew the lead sign-off after the latest material change (T2).
+  input.signoffs = [signoff({ roleId: 'lead', done: true, createdAt: T3 })];
+
+  const result = evaluateCompletion(input);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.blockers, []);
+});
+
+test('evaluateCompletion: a PASSED verification after a sign-off does NOT stale it (forward progress)', () => {
+  const input = greenInput();
+  // The tester re-runs the checks after the lead signed off (T2) and they PASS at T3.
+  // Confirming the work must not reset the sign-off clock — that was the renewal loop
+  // that made completion unreachable ("fresh verification" every turn staled everyone).
   input.verifications = [
     verification({ id: 'VER-1', outcome: 'passed', createdAt: T1 }),
-    verification({ id: 'VER-2', outcome: 'passed', createdAt: T2 }),
+    verification({ id: 'VER-2', outcome: 'passed', createdAt: T3 }),
   ];
-  // Renew the lead sign-off strictly after the latest change (T2).
-  input.signoffs = [signoff({ roleId: 'lead', done: true, createdAt: T3 })];
+
+  const result = evaluateCompletion(input);
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.blockers, []);
+  assert.deepEqual(result.freshSignoffRoleIds, ['lead']);
+});
+
+test('evaluateCompletion: a FAILED verification after a sign-off stales it (work reopened)', () => {
+  const input = greenInput();
+  input.verifications = [
+    verification({ id: 'VER-1', outcome: 'passed', createdAt: T1 }),
+    verification({ id: 'VER-2', outcome: 'failed', createdAt: T3 }),
+  ];
+
+  const result = evaluateCompletion(input);
+  assert.equal(result.complete, false);
+  const present = new Set(result.blockers.map((b) => b.code));
+  assert.ok(present.has('verification_failed'), 'the failed latest verification must block');
+  assert.ok(present.has('signoff_stale'), 'the failure must also stale the earlier sign-off');
+  assert.equal(result.latestMaterialChangeAt, T3);
+});
+
+test('evaluateCompletion: a sign-off at the exact material-change instant counts as fresh (ms tie)', () => {
+  const input = greenInput();
+  // Both stamped inside the same turn application can land on the same millisecond;
+  // the sign-off responding to the change must not be non-deterministically stale.
+  input.tasksUpdatedAt = T2;
+  input.signoffs = [signoff({ roleId: 'lead', done: true, createdAt: T2 })];
 
   const result = evaluateCompletion(input);
   assert.equal(result.complete, true);
@@ -421,10 +460,10 @@ test('toDoneGateState reflects the FULL gate and lists open blockers', () => {
     evaluatedAt: T3,
   });
 
-  // A later verification stales the sign-off → the gate is NOT satisfied and the stale
-  // sign-off is surfaced as an explicit open blocker (the UI shows exactly why).
+  // A later material task-board change stales the sign-off → the gate is NOT satisfied
+  // and the stale sign-off is surfaced as an explicit open blocker (the UI shows exactly why).
   const stale = greenInput();
-  stale.verifications = [verification({ id: 'VER-2', outcome: 'passed', createdAt: T3 })];
+  stale.tasksUpdatedAt = T3;
   const gate = toDoneGateState(evaluateCompletion(stale), T3);
   assert.equal(gate.satisfied, false);
   assert.deepEqual(gate.pendingRoleIds, ['lead']);

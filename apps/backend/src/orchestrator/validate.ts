@@ -41,3 +41,15 @@ export async function markerExists(markerFile: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * How long a turn may sit with ZERO PTY output and NO deliverable file before it is treated
+ * as a dead CLI (never launched / crashed shell) and failed early. A real agent TUI repaints
+ * continuously while it works, so a long fully-silent stretch with nothing written means the
+ * agent never started — waiting out the full agentTimeoutMs (default 1h) would just burn the
+ * run. Derived from the existing timing knobs so it needs no new config field: at least
+ * 5× the idle-done window, at least 10 minutes, and never beyond the hard timeout.
+ */
+export function deadStallMs(timing: { doneIdleMs: number; agentTimeoutMs: number }): number {
+  return Math.min(timing.agentTimeoutMs, Math.max(5 * timing.doneIdleMs, 10 * 60_000));
+}

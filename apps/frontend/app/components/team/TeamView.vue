@@ -327,8 +327,11 @@ async function reset() {
   --text-xs: 12px;
   --text-sm: 13px;
   --text-md: 15px;
-  --text-dim: #cfc3b3;
-  --text-faint: #b9ad9d;
+  /* Team surfaces boost dim/faint readability by deriving them from the ACTIVE theme's
+     own text/bg colors (not hardcoded hex — that broke every light theme). The mix
+     ratios keep >= 4.5:1 contrast on the dark elevated surface, verified by test. */
+  --text-dim: color-mix(in srgb, var(--text) 82%, var(--bg));
+  --text-faint: color-mix(in srgb, var(--text) 62%, var(--bg));
   position: relative;
   isolation: isolate;
   display: flex;

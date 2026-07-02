@@ -152,7 +152,7 @@ function expand() {
       <div v-if="!live" class="tile-placeholder" data-testid="tile-placeholder">
         <span class="ph-state">{{ terminal.status.state }}</span>
         <span v-if="lastLine" class="ph-last">{{ lastLine }}</span>
-        <span v-else class="ph-idle">scrolled out of view</span>
+        <span v-else class="ph-idle">{{ t('terminals.tile.scrolledOut') }}</span>
       </div>
       <div v-else-if="!running" class="tile-hint">{{ terminal.status.state }} — ▶ to start</div>
     </div>

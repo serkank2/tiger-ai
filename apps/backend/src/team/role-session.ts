@@ -1,7 +1,7 @@
 import type { TerminalManager, ManagerOutputEvent } from '../terminal/TerminalManager.js';
 import type { TerminalRuntimeStatus } from '../store/types.js';
 import type { AgentType, TigerTiming } from '../orchestrator/types.js';
-import { checkOutputFile, markerExists } from '../orchestrator/validate.js';
+import { checkOutputFile, deadStallMs, markerExists } from '../orchestrator/validate.js';
 
 // ---------------------------------------------------------------------------
 // Persistent per-role CLI session. Unlike the one-shot AgentSession (which the
@@ -175,6 +175,7 @@ export class RoleCliSession {
 
     const runStart = Date.now();
     let idleCandidate: { size: number; stableSince: number; lastOutputTs: number } | null = null;
+    const stallMs = deadStallMs(timing);
 
     while (true) {
       if (signal.aborted) return { state: 'stopped', alive: this.isAlive };
@@ -215,6 +216,18 @@ export class RoleCliSession {
           }
         } else {
           idleCandidate = null;
+        }
+        // Dead-CLI fail-fast: a real agent TUI repaints constantly while it works, so a LONG
+        // stretch with zero PTY output AND no deliverable file at all means the CLI never
+        // actually started working (not installed, not logged in, prompt swallowed by the
+        // shell, …). Fail now instead of burning the full agentTimeoutMs on a dead terminal.
+        if (idle >= stallMs && !chk.exists) {
+          await this.dispose().catch(() => {});
+          return {
+            state: 'failed',
+            error: `agent produced no output and no deliverable for ${Math.round(stallMs / 60_000)} minute(s) — the CLI likely never started; the turn timed out early`,
+            alive: false,
+          };
         }
       } else {
         idleCandidate = null;

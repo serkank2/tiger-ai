@@ -53,14 +53,18 @@ function onTileKeydown(ev: KeyboardEvent): void {
       <div class="line">
         <TeamAgentBadge :tool="role.tool" />
         <span class="name" :title="label">{{ label }}</span>
-        <span v-if="hasTerminal" class="term-ic" :title="t('team.roleTile.openTerminal')">Terminal</span>
-        <span v-if="role.signedOff" class="check" :title="t('team.roleTile.signedOff')">Signed</span>
+        <span v-if="hasTerminal" class="term-ic" :title="t('team.roleTile.openTerminal')">{{
+          t('team.roleTile.terminalTag')
+        }}</span>
+        <span v-if="role.signedOff" class="check" :title="t('team.roleTile.signedOff')">{{
+          t('team.roleTile.signedTag')
+        }}</span>
       </div>
       <div class="meta">
         <span class="status">{{ statusLabel }}</span>
-        <span v-if="role.turnCount" class="turns" :title="t('team.roleTile.turnsTaken', { n: role.turnCount })"
-          >Turns {{ role.turnCount }}</span
-        >
+        <span v-if="role.turnCount" class="turns" :title="t('team.roleTile.turnsTaken', { n: role.turnCount })">{{
+          t('team.roleTile.turnsTag', { n: role.turnCount })
+        }}</span>
         <span v-if="role.canWriteCode" class="flag write" :title="t('team.roleTile.mayEditSource')">{{
           t('team.roleTile.code')
         }}</span>
@@ -69,15 +73,15 @@ function onTileKeydown(ev: KeyboardEvent): void {
         }}</span>
       </div>
       <div v-if="role.tasks && (role.tasks.todo || role.tasks.inProgress || role.tasks.done)" class="tasks">
-        <span v-if="role.tasks.todo" class="tq todo" :title="t('team.roleTile.queuedTasks')"
-          >Todo {{ role.tasks.todo }}</span
-        >
-        <span v-if="role.tasks.inProgress" class="tq prog" :title="t('team.roleTile.inProgress')"
-          >Active {{ role.tasks.inProgress }}</span
-        >
-        <span v-if="role.tasks.done" class="tq done" :title="t('team.roleTile.completedTasks')"
-          >Done {{ role.tasks.done }}</span
-        >
+        <span v-if="role.tasks.todo" class="tq todo" :title="t('team.roleTile.queuedTasks')">{{
+          t('team.roleTile.todoTag', { n: role.tasks.todo })
+        }}</span>
+        <span v-if="role.tasks.inProgress" class="tq prog" :title="t('team.roleTile.inProgress')">{{
+          t('team.roleTile.activeTag', { n: role.tasks.inProgress })
+        }}</span>
+        <span v-if="role.tasks.done" class="tq done" :title="t('team.roleTile.completedTasks')">{{
+          t('team.roleTile.doneTag', { n: role.tasks.done })
+        }}</span>
       </div>
       <p v-if="role.statusNote" class="note">{{ role.statusNote }}</p>
     </div>

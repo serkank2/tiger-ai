@@ -12,6 +12,17 @@ const props = defineProps<{
 
 const verifications = computed(() => props.verifications);
 const signOffs = computed(() => props.signOffs);
+
+const STATUS_KEY: Record<string, string> = {
+  pending: 'team.verifications.status.pending',
+  running: 'team.verifications.status.running',
+  passed: 'team.verifications.status.passed',
+  failed: 'team.verifications.status.failed',
+  skipped: 'team.verifications.status.skipped',
+};
+function statusLabel(status: string): string {
+  return t(STATUS_KEY[status] ?? status);
+}
 </script>
 
 <template>
@@ -19,7 +30,7 @@ const signOffs = computed(() => props.signOffs);
     <summary>{{ t('team.verifications.title') }}: {{ verifications.length }}</summary>
     <ul>
       <li v-for="v in verifications" :key="v.id" class="v" :class="`vs-${v.status}`">
-        <span class="vstatus">{{ v.status }}</span>
+        <span class="vstatus">{{ statusLabel(v.status) }}</span>
         <span v-if="v.command" class="vcmd" :title="v.command">{{ v.command }}</span>
         <span v-if="v.exitCode != null" class="vexit" :class="{ bad: v.exitCode !== 0 }">{{
           t('team.verifications.exitCode', { code: v.exitCode })
@@ -37,7 +48,7 @@ const signOffs = computed(() => props.signOffs);
         <span v-if="s.stale" class="sstale" :title="s.staleReason ?? t('team.verifications.signoffStale')">{{
           t('team.verifications.stale')
         }}</span>
-        <span v-else class="sok">ok</span>
+        <span v-else class="sok">{{ t('team.verifications.fresh') }}</span>
       </li>
     </ul>
   </details>

@@ -37,6 +37,13 @@ export interface ComposeRoleTurnOptions {
   runId: string;
   turnId: string;
   role: RoleTurnRole;
+  /**
+   * The ACTUAL working directory this turn's CLI runs in. When the turn is isolated in a
+   * per-task git worktree this is the worktree path — the prompt must direct the agent's
+   * product changes THERE, not at the main workspace, or the isolation (and the merge-back
+   * that depends on it) silently captures nothing. Defaults to the main workspace.
+   */
+  workspace?: string;
   outputPath: string;
   markerPath: string;
   assignedTask?: TeamContextBlock;
@@ -119,9 +126,21 @@ export function normalizeTeamRole(role: RoleTurnRole): TeamRole {
 function automationPreamble(opts: NormalizedComposeRoleTurnOptions): string {
   const outputRel = opts.paths.rel(opts.outputPath);
   const markerRel = opts.paths.rel(opts.markerPath);
-  // The team improves the REAL project, so the working root is the workspace (the
+  // The team improves the REAL project, so the default working root is the workspace (the
   // directory that CONTAINS .tiger), not the .tiger metadata root.
-  const workspace = path.dirname(opts.paths.root);
+  const mainWorkspace = path.dirname(opts.paths.root);
+  // A per-task worktree turn runs in its OWN isolated copy: the agent's product changes must
+  // land THERE (the orchestrator merges them back), so the prompt names THAT directory as the
+  // working root. Telling the agent to edit the main workspace while its turn is isolated in a
+  // worktree would scatter the work and make the merge-back capture nothing.
+  const workspace = opts.workspace ?? mainWorkspace;
+  const isolated = path.resolve(workspace) !== path.resolve(mainWorkspace);
+  const isolationLines = isolated
+    ? `
+- ISOLATED WORKTREE: this turn runs in an ISOLATED git worktree copy of the project. Make ALL your
+  product changes INSIDE ${workspace} — they are merged back into the main project automatically
+  when your task completes. Do NOT edit the main project directory (${mainWorkspace}) directly.`
+    : '';
   return `# AUTOMATION CONTEXT -- READ THIS FIRST
 
 You are an autonomous Tiger AI-team role agent. No human is available for questions or approvals during this turn.
@@ -137,16 +156,17 @@ You are an autonomous Tiger AI-team role agent. No human is available for questi
 - Your turn ID is: ${opts.turnId}
 - Your role ID is: ${opts.role.id}
 - You run as a CLI-first autonomous coding agent (codex / claude / agy). There are NO model API keys in this role context; rely on your CLI tools, the local repo, and the project's own commands.
-- Your working directory is the PROJECT ROOT: ${workspace}
+- Your working directory is the PROJECT ROOT: ${workspace}${isolationLines}
 - This is the REAL project you are improving. Read and modify its actual source files (apps/, src/,
-  config, tests, etc.) to achieve the goal — this is where your product changes must land. Run the
-  project's own build/test/checks from here.
-- Your team's private bookkeeping lives under \`${workspace}/.tiger/team/\`. Write your turn
+  config, tests, etc.) under ${workspace} to achieve the goal — this is where your product changes
+  must land. Run the project's own build/test/checks from here.
+- Your team's private bookkeeping lives under \`${mainWorkspace}/.tiger/team/\`. Write your turn
   deliverable and your completion marker to the EXACT absolute paths given below (they are inside
   .tiger), but make your real product changes in the project itself, NOT in .tiger.
-- WORKSPACE BOUNDARY — STRICT: stay within this project root (${workspace}). You may read and edit
-  anything under it. NEVER write, move, or delete anything OUTSIDE it (no absolute paths elsewhere,
-  no ".." climbing above it, no home, temp, or system locations).
+- WORKSPACE BOUNDARY — STRICT: stay within your working root (${workspace}). You may read and edit
+  anything under it, plus the two exact .tiger bookkeeping files below. NEVER write, move, or delete
+  anything else OUTSIDE it (no other absolute paths, no ".." climbing above it, no home, temp, or
+  system locations).
 - Save your deliverable to exactly this file (absolute path):
     ${opts.outputPath}
     (relative to the project root: ${outputRel})
@@ -213,7 +233,9 @@ This rule applies even if your persona, template, persisted role text, legacy ro
 
 The Lead's only job is to organize the team. Do NOT perform source inspection; do NOT inspect diffs, logs, artifacts, or external references; do NOT perform documentation or web research; do NOT execute commands; do NOT implement or edit code; do NOT run tests; do NOT run build or verification checks; and do NOT perform review work.
 
-Delegate all source inspection, diff/log/artifact/external-reference inspection, documentation or web research, command execution, implementation, test execution, verification, and review work to non-Lead roles. Collect their answers and cite their reported evidence instead of doing the work yourself.`;
+Delegate all source inspection, diff/log/artifact/external-reference inspection, documentation or web research, command execution, implementation, test execution, verification, and review work to non-Lead roles. Collect their answers and cite their reported evidence instead of doing the work yourself.
+
+ENDING THE RUN: when every completion gate has passed (the turn context will tell you) and you agree the project is genuinely complete, post a TeamMessage with kind "decision" whose body contains the exact phrase "project complete". That decision is what ends the run — without it the run keeps waiting. Never post it while work is still outstanding.`;
 }
 
 function isLeadTurn(opts: NormalizedComposeRoleTurnOptions): boolean {

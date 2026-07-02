@@ -128,6 +128,9 @@ export async function runRoleTurn(opts: RunRoleTurnOptions): Promise<RunRoleTurn
     runId: opts.runId,
     turnId,
     role,
+    // The prompt must name the turn's ACTUAL working root (an isolated worktree when
+    // worktree-per-task is on), or the agent is directed at the wrong directory.
+    workspace,
     outputPath,
     markerPath,
     assignedTask: opts.assignedTask,

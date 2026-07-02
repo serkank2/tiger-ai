@@ -939,23 +939,44 @@ const COMPACT_THRESHOLD_CHARS = 160_000;
 export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): TeamTurnRunner {
   // One long-lived CLI session per (run, role). Reusing the running REPL across turns
   // preserves the agent's context and avoids relaunching the CLI every turn.
-  const sessions = new Map<string, RoleCliSession>();
+  //
+  // Each pooled session remembers the cwd it was LAUNCHED in. A live PTY's cwd cannot be
+  // changed (TerminalManager defers definition edits until the next start), so when a turn
+  // must run somewhere else — e.g. a per-task worktree, or back in the shared workspace
+  // after a worktree turn — reusing the running REPL would silently execute the turn in the
+  // WRONG directory: the agent's edits would land in a stale (possibly deleted) worktree and
+  // the merge-back would capture nothing. Dispose and relaunch in the right cwd instead;
+  // correctness beats REPL context retention.
+  const sessions = new Map<string, { session: RoleCliSession; cwd: string }>();
   const keyOf = (runId: string, roleId: string): string => `${runId}::${roleId}`;
 
   return {
     async runRoleTurn(input: TeamRoleTurnInput): Promise<TeamRoleTurnResult> {
       const termId = teamRoleTerminalId(input.runId, input.role.id);
       const key = keyOf(input.runId, input.role.id);
-      let session = sessions.get(key);
-      if (!session) {
-        session = new RoleCliSession({
-          manager: options.manager,
-          termId,
-          tool: input.role.tool,
-          timing: options.config.timing,
-        });
-        sessions.set(key, session);
+      const turnCwd = path.resolve(input.workspace);
+      const mainCwd = path.resolve(input.paths.workspace);
+      const isolatedTurn = turnCwd !== mainCwd;
+      let pooled = sessions.get(key);
+      if (pooled && pooled.cwd !== turnCwd) {
+        // The live CLI sits in a different directory than this turn needs — retire it.
+        await pooled.session.dispose().catch(() => undefined);
+        sessions.delete(key);
+        pooled = undefined;
       }
+      if (!pooled) {
+        pooled = {
+          session: new RoleCliSession({
+            manager: options.manager,
+            termId,
+            tool: input.role.tool,
+            timing: options.config.timing,
+          }),
+          cwd: turnCwd,
+        };
+        sessions.set(key, pooled);
+      }
+      const session = pooled.session;
 
       const result = await runRoleTurn({
         manager: options.manager,
@@ -1015,6 +1036,15 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
         sessions.delete(key);
         return { ...mapRunnerResult(result), sessionRestarted: true };
       }
+      // A worktree-isolated turn is done with its throwaway directory: retire the CLI NOW so
+      // the orchestrator's merge-back can prune the worktree (on Windows a live process's cwd
+      // makes the directory undeletable) and the role's next turn launches in the right place.
+      // This is expected lifecycle, not a crash — it does not count as a restart.
+      if (isolatedTurn) {
+        await session.dispose().catch(() => undefined);
+        sessions.delete(key);
+        return mapRunnerResult(result);
+      }
       // When this role has fed its CLI a lot of context, ask it to compact before the
       // next turn so the live session stays efficient instead of growing unbounded.
       if (session.shouldCompact(COMPACT_THRESHOLD_CHARS)) {
@@ -1024,10 +1054,10 @@ export function createTeamTurnRunner(options: TeamTurnRunnerAdapterOptions): Tea
     },
 
     async disposeRun(runId: string, opts: { kill: boolean }): Promise<void> {
-      for (const [key, session] of [...sessions.entries()]) {
+      for (const [key, pooled] of [...sessions.entries()]) {
         if (!key.startsWith(`${runId}::`)) continue;
         if (opts.kill) {
-          await session.dispose().catch(() => undefined);
+          await pooled.session.dispose().catch(() => undefined);
           sessions.delete(key);
         }
         // Stop (kill === false): leave the session alive and pooled so a resume can
@@ -1080,15 +1110,20 @@ function toSchedulerRole(role: TeamRoleInstance, index: number): PureSchedulerRo
   };
 }
 
-/** Map a role's id/name (and capabilities) onto the scheduler's role-kind taxonomy. */
+/**
+ * Map a role's id/name (and capabilities) onto the scheduler's role-kind taxonomy.
+ * English + Turkish vocabulary — users name roles in their own language, and a missed match
+ * here breaks Lead resolution (kept in sync with completion.ts's deriveCompletionRoleKind).
+ */
 function deriveRoleKind(role: TeamRoleInstance): PureRoleKind {
   const text = `${role.id} ${role.name}`.toLowerCase();
-  if (/\blead\b|tech ?lead|team ?lead/.test(text)) return 'lead';
-  if (/coordinat|manager|product owner|\bpm\b/.test(text)) return 'coordinator';
-  if (/analy|requirement|business/.test(text)) return 'analyst';
-  if (/develop|engineer|programmer|coder|implement/.test(text)) return 'developer';
-  if (/test|\bqa\b|quality/.test(text)) return 'tester';
-  if (/review/.test(text)) return 'reviewer';
+  if (/\blead\b|tech ?lead|team ?lead|lider/.test(text)) return 'lead';
+  if (/coordinat|manager|product owner|\bpm\b|koordinat|y[oö]netici/.test(text)) return 'coordinator';
+  if (/analy|requirement|business|analist/.test(text)) return 'analyst';
+  if (/develop|engineer|programmer|coder|implement|geli[sş]tirici|yaz[iı]l[iı]mc[iı]|m[uü]hendis/.test(text))
+    return 'developer';
+  if (/test|\bqa\b|quality|kalite/.test(text)) return 'tester';
+  if (/review|inceley|g[oö]zden ge[cç]ir/.test(text)) return 'reviewer';
   if (role.canWriteCode) return 'developer';
   if (role.requiredForSignoff) return 'signoff';
   return 'coordinator';
@@ -1487,6 +1522,14 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly maxConcurrentWrite: number;
   /** Consecutive failed turns since the last successful turn (recovery guard). */
   private consecutiveTurnFailures = 0;
+  /**
+   * Per-role consecutive failed turns. The global counter resets on ANY completed turn, so a
+   * broken role interleaved with successful Lead turns (fail → Lead review ok → fail → …)
+   * would loop hour-long timeouts to the round cap without ever tripping the global guard.
+   * A role that fails {@link maxConsecutiveFailures} turns in a row is parked as `blocked`
+   * (it stops being scheduled) and routed to the Lead, while the rest of the team continues.
+   */
+  private roleFailureStreaks = new Map<string, number>();
   /** Last emitted done-gate snapshot (JSON), so the `done` event fires only on change. */
   private lastDoneGateJson: string | null = null;
   /** Last emitted changes summary (JSON), so the `changes` event fires only on change. */
@@ -2259,14 +2302,15 @@ export class TeamOrchestrator extends EventEmitter {
     return this.getState();
   }
 
-  /** Resume a single paused role so it can be scheduled/claimed again. */
+  /** Resume a single paused (or failure-parked/blocked) role so it can be scheduled again. */
   async resumeRole(roleId: string): Promise<TeamRunState> {
     const state = this.requireState();
     const role = state.roles.find((entry) => entry.id === roleId);
     if (!role) throw httpError(404, `role ${roleId} is not part of this run`);
-    if (role.status === 'paused') {
+    if (role.status === 'paused' || role.status === 'blocked') {
       role.status = 'idle';
       role.statusNote = undefined;
+      this.roleFailureStreaks.delete(role.id);
       await this.persistState();
       this.emitState();
       this.emitRole(role);
@@ -2626,6 +2670,18 @@ export class TeamOrchestrator extends EventEmitter {
         messages: messagesForTurn,
         latestVerification: latestVerification(state),
       });
+      const isLeadTurn = role.id === this.leadRoleId();
+      // When every completion gate has passed, a company-mode run still waits for the Lead's
+      // explicit project-complete decision. The Lead must be TOLD this — with the exact phrase
+      // the engine recognizes — or it has no way to know why the run is still open and idles
+      // the run into a blocked wait.
+      const completionHints = gate.complete
+        ? isLeadTurn && isCompanyMode(state) && state.projectComplete !== true
+          ? [
+              'All completion gates have passed. If you agree the project is genuinely complete, post a TeamMessage with kind "decision" whose body contains the exact phrase "project complete" — that decision ends the run. If you believe work remains, assign it now instead.',
+            ]
+          : []
+        : gate.reasons;
       const result = await this.runner.runRoleTurn({
         workspace: turnCwd,
         paths: this.requirePaths(),
@@ -2641,9 +2697,9 @@ export class TeamOrchestrator extends EventEmitter {
           ? { id: scheduled.task.id, title: scheduled.task.title, content: scheduled.task.body }
           : undefined,
         findingId: scheduled.findingId,
-        completionHints: gate.complete ? [] : gate.reasons,
+        completionHints,
         inbox: inbox.length ? inbox : undefined,
-        isLeadTurn: role.id === this.leadRoleId(),
+        isLeadTurn,
       });
       if (signal.aborted || this.state?.status !== 'running') {
         this.interruptTurn(turn, 'Interrupted before the turn result could be applied.');
@@ -3150,12 +3206,16 @@ export class TeamOrchestrator extends EventEmitter {
     const reason = result.reason ?? `${role.name} turn ended with status ${result.status}.`;
     if (result.status === 'completed') {
       this.consecutiveTurnFailures = 0;
+      this.roleFailureStreaks.delete(role.id);
     } else if (result.status === 'stopped' || result.status === 'interrupted') {
       await this.finishRun(turnStatusToRunStatus(result.status), reason);
     } else {
       // failed | blocked — keep the run alive and let the scheduler re-route next round.
       role.status = result.status === 'blocked' ? 'blocked' : 'idle';
       this.consecutiveTurnFailures = result.status === 'failed' ? this.consecutiveTurnFailures + 1 : 0;
+      const roleStreak = result.status === 'failed' ? (this.roleFailureStreaks.get(role.id) ?? 0) + 1 : 0;
+      if (result.status === 'failed') this.roleFailureStreaks.set(role.id, roleStreak);
+      else this.roleFailureStreaks.delete(role.id);
       await this.appendMessage({
         turnId: turn.id,
         from: SYSTEM_SENDER,
@@ -3170,6 +3230,20 @@ export class TeamOrchestrator extends EventEmitter {
           'failed',
           `Stopped after ${this.consecutiveTurnFailures} consecutive failed turns without progress. Last failure: ${reason}`,
         );
+      } else if (roleStreak >= this.maxConsecutiveFailures && role.id !== this.leadRoleId()) {
+        // Per-role circuit breaker: this role keeps failing even though other turns succeed
+        // between its failures (so the global guard never trips). Park it as blocked — it
+        // stops being scheduled/claimed and stops burning hour-long timeouts — and route the
+        // decision to the Lead. The user can un-park it via "resume role".
+        role.status = 'blocked';
+        role.statusNote = `Parked after ${roleStreak} consecutive failed turns. Last failure: ${reason}`;
+        this.roleFailureStreaks.delete(role.id);
+        state.leadReviewPending = true;
+        await this.appendSystemBlocker(
+          `${role.name} was parked (blocked) after ${roleStreak} consecutive failed turns and will take no further turns until resumed. Last failure: ${reason}. Lead: re-plan its work, reconfigure the role, or ask the user to resume it.`,
+          turn.id,
+        );
+        this.emitRole(role);
       }
     }
   }
@@ -4033,6 +4107,15 @@ export class TeamOrchestrator extends EventEmitter {
     state.pauseRequested = false;
     state.currentTurn = null;
     state.roles = state.roles.map((role) => (role.status === 'running' ? { ...role, status: 'idle' } : role));
+    // Parallel turns: `currentTurn` only tracks one of them, so any OTHER turn record still
+    // open when the run ends would stay 'running' forever in the history. Close them honestly.
+    for (const turn of state.turns) {
+      if (turn.status === 'pending' || turn.status === 'running') {
+        turn.status = 'interrupted';
+        turn.endedAt = nowIso();
+        turn.reason ??= reason ?? `Run ended as ${status} before this turn completed.`;
+      }
+    }
     // Attempt model: when a run with an active attempt reaches a TERMINAL outcome
     // (completed/failed), capture that attempt's diff summary and record its outcome so the
     // comparison view shows the result. A merely paused/blocked/interrupted run keeps its

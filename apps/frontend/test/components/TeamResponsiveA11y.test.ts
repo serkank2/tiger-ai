@@ -60,12 +60,28 @@ describe('Team responsive layout and role tile accessibility', () => {
     expect(teamView).toContain('--text-md: 15px;');
     expect(teamView).not.toContain('radial-gradient');
 
-    const dim = /--text-dim:\s*(#[0-9a-fA-F]{6});/.exec(teamView)?.[1];
-    const faint = /--text-faint:\s*(#[0-9a-fA-F]{6});/.exec(teamView)?.[1];
-    expect(dim).toBeTruthy();
-    expect(faint).toBeTruthy();
-    expect(contrast(dim!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(faint!, '#241f1a')).toBeGreaterThanOrEqual(4.5);
+    // The Team surface derives its dim/faint text from the ACTIVE theme via color-mix —
+    // never from hardcoded hex (that made light themes unreadable). Verify the derived
+    // colors still clear WCAG 4.5:1 on the default dark theme's elevated surface by
+    // resolving the mix ratios against the kaplan-dark palette (text/bg from themes.ts).
+    const dimMix = /--text-dim:\s*color-mix\(in srgb, var\(--text\) (\d+)%, var\(--bg\)\);/.exec(teamView)?.[1];
+    const faintMix = /--text-faint:\s*color-mix\(in srgb, var\(--text\) (\d+)%, var\(--bg\)\);/.exec(teamView)?.[1];
+    expect(dimMix).toBeTruthy();
+    expect(faintMix).toBeTruthy();
+    expect(teamView).not.toMatch(/--text-(?:dim|faint):\s*#[0-9a-fA-F]{3,6};/);
+
+    const mix = (pct: number, fgHex: string, bgHex: string): string => {
+      const channel = (hex: string, index: number): number => parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16);
+      const blended = [0, 1, 2].map((index) =>
+        Math.round((channel(fgHex, index) * pct + channel(bgHex, index) * (100 - pct)) / 100),
+      );
+      return `#${blended.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+    };
+    // kaplan-dark: --text #ece6db, --bg #131110, --bg-elev-2 #241f1a (see app/theme/themes.ts).
+    const dim = mix(Number(dimMix), '#ece6db', '#131110');
+    const faint = mix(Number(faintMix), '#ece6db', '#131110');
+    expect(contrast(dim, '#241f1a')).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(faint, '#241f1a')).toBeGreaterThanOrEqual(4.5);
   });
 
   it('keeps the Team launcher within the compact Team scale', () => {

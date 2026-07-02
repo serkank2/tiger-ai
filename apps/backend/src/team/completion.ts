@@ -519,12 +519,15 @@ function groupRequiredRolesByKind(roles: RoleInstance[]): Map<TeamRoleKind, Role
 
 function deriveCompletionRoleKind(role: RoleInstance): TeamRoleKind {
   const text = `${role.id} ${role.name}`.toLowerCase();
-  if (/\blead\b|tech ?lead|team ?lead/.test(text)) return 'lead';
-  if (/coordinat|manager|product owner|\bpm\b/.test(text)) return 'coordinator';
-  if (/analy|requirement|business/.test(text)) return 'analyst';
-  if (/develop|engineer|programmer|coder|implement/.test(text)) return 'developer';
-  if (/test|\bqa\b|quality/.test(text)) return 'tester';
-  if (/review/.test(text)) return 'reviewer';
+  // English + Turkish role vocabulary (users name roles in their own language; a missed
+  // match would silently demote e.g. a "Lider" to coordinator and break Lead resolution).
+  if (/\blead\b|tech ?lead|team ?lead|lider/.test(text)) return 'lead';
+  if (/coordinat|manager|product owner|\bpm\b|koordinat|y[oö]netici/.test(text)) return 'coordinator';
+  if (/analy|requirement|business|analist/.test(text)) return 'analyst';
+  if (/develop|engineer|programmer|coder|implement|geli[sş]tirici|yaz[iı]l[iı]mc[iı]|m[uü]hendis/.test(text))
+    return 'developer';
+  if (/test|\bqa\b|quality|kalite/.test(text)) return 'tester';
+  if (/review|inceley|g[oö]zden ge[cç]ir/.test(text)) return 'reviewer';
   if (role.canWriteCode) return 'developer';
   if (role.requiredForSignoff) return 'signoff';
   return 'coordinator';
@@ -534,7 +537,19 @@ function isBlockedRole(role: RoleInstance): boolean {
   return role.status === 'blocked' || role.status === 'failed';
 }
 
-/** The latest material change across tasks, findings, verifications, and steering. */
+/**
+ * The latest material change across tasks, findings, verifications, and steering.
+ *
+ * Only changes that REOPEN the work count here:
+ *  - task / finding updates (the caller bumps these only on genuinely material events);
+ *  - verifications that did NOT pass (a failed/inconclusive check means a previously-"done"
+ *    role may no longer be done). A PASSED verification is forward progress — it confirms
+ *    the work — so it must NOT invalidate the sign-offs collected so far. Counting passed
+ *    checks used to make completion unreachable: every role's "fresh verification" turn
+ *    reset every OTHER role's sign-off clock, ping-ponging the team to the round cap.
+ *  - steering that is still unacknowledged (an acknowledged directive was already folded
+ *    into the plan; scope changes stale sign-offs via the caller's explicit stale flag).
+ */
 function computeLatestMaterialChange(input: CompletionInput): number | null {
   let max: number | null = null;
   const consider = (iso: string | undefined): void => {
@@ -543,17 +558,26 @@ function computeLatestMaterialChange(input: CompletionInput): number | null {
   };
   consider(input.tasksUpdatedAt);
   consider(input.findingsUpdatedAt);
-  for (const v of input.verifications) consider(v.createdAt);
-  for (const s of input.steering) consider(s.createdAt);
+  for (const v of input.verifications) {
+    if (v.outcome !== 'passed') consider(v.createdAt);
+  }
+  for (const s of input.steering) {
+    if (!s.acknowledged) consider(s.createdAt);
+  }
   return max;
 }
 
-/** True iff the sign-off instant is strictly after the latest material change. */
+/**
+ * True iff the sign-off is at least as recent as the latest material change. `>=` (not `>`)
+ * on purpose: a sign-off recorded in the SAME millisecond as the change it responds to
+ * (both stamped inside one turn application) must count as fresh, otherwise completion
+ * becomes non-deterministic on fast machines where the two timestamps tie.
+ */
 function isAfter(signoffIso: string, latestMaterialChange: number | null): boolean {
   const signoffMs = parseTime(signoffIso);
   if (signoffMs === null) return false; // an undateable sign-off cannot be proven fresh
   if (latestMaterialChange === null) return true; // nothing changed → any dated sign-off is fresh
-  return signoffMs > latestMaterialChange;
+  return signoffMs >= latestMaterialChange;
 }
 
 /** True when a numeric ceiling is set and active (a finite value > 0). */

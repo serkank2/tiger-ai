@@ -211,7 +211,7 @@ onMounted(() => {
       <div class="brand">
         <span class="logo">🐅</span>
         <b>{{ t('tiger.view.tiger') }}</b>
-        <span class="sub">AI Software Team Orchestrator</span>
+        <span class="sub">{{ t('tiger.view.subtitle') }}</span>
         <span class="conn" :class="conn.status" :title="`backend ${conn.status}`" />
       </div>
       <span class="spacer" />

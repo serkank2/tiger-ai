@@ -169,12 +169,16 @@ function loadOlder() {
         >
           <div class="avatar">
             <TeamAgentBadge v-if="senderInfo(m.from).tool" :tool="senderInfo(m.from).tool!" />
-            <span v-else class="glyph">{{ senderInfo(m.from).kind === 'user' ? 'User' : 'System' }}</span>
+            <span v-else class="glyph">{{
+              senderInfo(m.from).kind === 'user' ? t('team.chat.you') : t('team.chat.system')
+            }}</span>
           </div>
           <div class="bubble">
             <div class="head">
               <span class="author">{{ senderInfo(m.from).label }}</span>
-              <span v-if="m.to && m.to !== 'all'" class="to">to {{ roleById.get(m.to)?.name ?? m.to }}</span>
+              <span v-if="m.to && m.to !== 'all'" class="to">{{
+                t('team.chat.toRecipient', { name: roleById.get(m.to)?.name ?? m.to })
+              }}</span>
               <span v-if="KIND_KEY[m.kind]" class="kind-tag" :class="`k-${m.kind}`">{{ t(KIND_KEY[m.kind]!) }}</span>
               <span
                 v-if="chatLang !== 'original' && !hasTranslation(m.id)"

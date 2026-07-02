@@ -1,7 +1,7 @@
 import type { TerminalManager, ManagerOutputEvent } from '../terminal/TerminalManager.js';
 import type { TerminalRuntimeStatus } from '../store/types.js';
 import type { AgentRunState, CompletionMethod, TigerTiming } from './types.js';
-import { checkOutputFile, markerExists } from './validate.js';
+import { checkOutputFile, deadStallMs, markerExists } from './validate.js';
 
 export interface AgentRunResult {
   state: 'completed' | 'failed' | 'stopped';
@@ -157,6 +157,7 @@ export class AgentSession {
       st.lastOutputTs = Date.now();
       const runStart = Date.now();
       let idleOutputCandidate: { size: number; stableSince: number; lastOutputTs: number } | null = null;
+      const stallMs = deadStallMs(timing);
 
       // --- detect completion ---
       while (true) {
@@ -206,6 +207,16 @@ export class AgentSession {
             }
           } else {
             idleOutputCandidate = null;
+          }
+          // Dead-CLI fail-fast: a working agent TUI repaints constantly, so a LONG fully-silent
+          // stretch with no deliverable file at all means the CLI never actually started
+          // (not installed, not logged in, prompt swallowed by the shell). Fail now instead of
+          // burning the remaining agentTimeoutMs on a dead terminal.
+          if (idle >= stallMs && !chk.exists) {
+            return await finish({
+              state: 'failed',
+              error: `agent produced no output and no deliverable for ${Math.round(stallMs / 60_000)} minute(s) — the CLI likely never started; the run timed out early`,
+            });
           }
           // idle but no valid output yet — keep waiting until the timeout.
         } else {

@@ -29,6 +29,7 @@ const BLOCKER_KEY: Record<string, string> = {
   signoff_missing: 'team.doneGate.blockers.signoffMissing',
   signoff_stale: 'team.doneGate.blockers.signoffStale',
   board_pending: 'team.doneGate.blockers.boardPending',
+  handoff_pending: 'team.doneGate.blockers.handoffPending',
 };
 function blockerLabel(code: string): string {
   return t(BLOCKER_KEY[code] ?? code);

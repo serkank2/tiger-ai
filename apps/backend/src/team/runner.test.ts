@@ -361,6 +361,113 @@ test('createTeamTurnRunner preserves canonical run paths while using the schedul
   }
 });
 
+test('createTeamTurnRunner relaunches the role CLI when the turn cwd changes (worktree isolation)', async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-adapter-cwd-'));
+  const isolated = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-adapter-cwd-wt-'));
+  const manager = new TerminalManager();
+  const runId = 'team-run-adapter-cwd';
+  const now = new Date().toISOString();
+  const engineRole: TeamRoleInstance = {
+    id: 'developer',
+    name: 'Developer',
+    tool: 'codex',
+    responsibilities: ['Implement the assigned task.'],
+    canWriteCode: true,
+    requiredForSignoff: false,
+    status: 'idle',
+  };
+  const state: TeamRunState = {
+    runId,
+    workspace,
+    tigerRoot: path.join(workspace, '.tiger'),
+    status: 'running',
+    projectComplete: false,
+    goal: 'Build the AI team feature.',
+    roles: [engineRole],
+    kindQueuedTasks: [],
+    round: 1,
+    turnCount: 0,
+    currentTurn: null,
+    turns: [],
+    directives: [],
+    signoffs: [],
+    verifications: [],
+    tasks: null,
+    findings: null,
+    messageCount: 0,
+    pendingSteeringCount: 0,
+    leadReviewPending: false,
+    consecutiveIdleLeadTurns: 0,
+    handoffs: [],
+    inboxes: {},
+    taskWorktrees: [],
+    materialChangeAt: now,
+    createdAt: now,
+  };
+  const turnRecord = (id: string): TeamTurnRecord => ({
+    id,
+    runId,
+    roleId: engineRole.id,
+    roleName: engineRole.name,
+    status: 'running',
+    round: 1,
+    startedAt: now,
+    messageSeqs: [],
+    appliedDirectiveIds: [],
+    terminalId: `team-${runId}-${engineRole.id}`,
+  });
+  const runner = createTeamTurnRunner({ manager, config: fakeConfig('team') });
+  const termId = `team-${runId}-${engineRole.id}`;
+
+  try {
+    await ensureScaffold(workspace, 'Build the AI team feature.');
+    const paths = new TeamPaths(workspace, runId);
+
+    // Turn 1 runs in an isolated worktree cwd. The adapter must retire the CLI right after the
+    // turn (a live process's cwd makes the worktree undeletable on Windows, and the next turn
+    // may need a different directory).
+    const first = await runner.runRoleTurn({
+      workspace: isolated,
+      paths,
+      runId,
+      role: engineRole,
+      turn: turnRecord('turn-cwd-1'),
+      state,
+      messages: [],
+      appliedSteering: [],
+      signal: new AbortController().signal,
+      completionHints: [],
+    });
+    assert.equal(first.status, 'completed');
+    assert.equal(manager.getDefinition(termId)?.cwd, isolated);
+    assert.equal(manager.hasSession(termId), false, 'the isolated turn retired its CLI session');
+
+    // Turn 2 runs back in the shared workspace. A live session's cwd cannot change, so a fresh
+    // CLI must start with the NEW cwd — reusing the old one would execute the turn inside the
+    // (possibly deleted) worktree and the work would silently land in the wrong place.
+    const second = await runner.runRoleTurn({
+      workspace,
+      paths,
+      runId,
+      role: engineRole,
+      turn: turnRecord('turn-cwd-2'),
+      state,
+      messages: [],
+      appliedSteering: [],
+      signal: new AbortController().signal,
+      completionHints: [],
+    });
+    assert.equal(second.status, 'completed');
+    assert.equal(manager.getDefinition(termId)?.cwd, workspace);
+    assert.equal(manager.hasSession(termId), true, 'the shared-workspace session stays pooled for the next turn');
+  } finally {
+    await runner.disposeRun?.(runId, { kill: true });
+    await manager.killAll();
+    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(isolated, { recursive: true, force: true });
+  }
+});
+
 test('runRoleTurn still fails when completed output has zero valid TeamMessage blocks', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'tiger-team-turn-invalid-'));
   const manager = new TerminalManager();
