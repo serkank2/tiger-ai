@@ -21,6 +21,7 @@ import {
   type VerificationRecord,
 } from '../verify/service.js';
 import { PLAN_RESULT_JSON_SCHEMA, parsePlanResult } from './plan.js';
+import { upsertRunIndex } from './history.js';
 import { isDrained, nextItemId, propagateDoom, selectRunnable, summarizeGraph, type WorkItem } from './graph.js';
 import {
   toRunSnapshot,
@@ -809,6 +810,8 @@ export class RunEngine extends EventEmitter {
 
   private async persist(): Promise<void> {
     const state = this.requireState();
+    // Keep the global history index in step with the durable state (best-effort).
+    await upsertRunIndex(state);
     const file = path.join(this.runDir(), 'state.json');
     await fs.mkdir(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;

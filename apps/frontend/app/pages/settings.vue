@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProvidersCard from '~/components/ProvidersCard.vue';
 // Settings home. Surfaces system status — MySQL readiness (the durable system of
 // record) and legacy-import status — and hosts app preferences via the retained
 // SettingsModal, reachable from the shell instead of a hidden command-bar icon.
@@ -87,6 +88,8 @@ onMounted(loadStatus);
         </dl>
         <p v-if="!dbReady" class="warn">{{ t('settings.page.dbWarn') }}</p>
       </section>
+
+      <ProvidersCard />
 
       <!-- Preferences -->
       <section class="card">

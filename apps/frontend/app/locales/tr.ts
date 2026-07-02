@@ -41,6 +41,44 @@ const tr: MessageSchema = {
     cost: 'maliyet',
     checks: 'Kontroller',
     noRun: 'Henüz koşu yok — v2 motorunu çalıştırmak için bir tane oluşturun.',
+    browse: 'Gözat…',
+    options: {
+      reviewFinal: 'Final inceleme',
+      reviewPerTask: 'Görev başına',
+      reviewNone: 'Yok',
+      verifyBoth: 'Build başına + final',
+      verifyPerBuild: 'Build başına',
+      verifyFinal: 'Yalnızca final',
+      verifyNone: 'Yok',
+    },
+    changes: {
+      title: 'Değişiklikler',
+      files: 'dosya',
+      none: 'Çalışma ağacında değişiklik yok.',
+      notGit: 'Bu çalışma alanı bir git deposu değil — diff yok.',
+      truncated: 'Diff boyut sınırına kırpıldı.',
+    },
+    detail: {
+      status: 'Durum',
+      attempts: 'Deneme',
+      agent: 'Agent',
+      dependsOn: 'Bağımlı olduğu',
+      fixOf: 'Düzeltme kaynağı',
+      brief: 'Görev brifi',
+      acceptance: 'Kabul kriterleri',
+      result: 'Sonuç',
+      error: 'Hata',
+      events: 'Olaylar',
+    },
+    history: {
+      title: 'Geçmiş',
+      empty: 'Henüz geçmiş koşu yok.',
+    },
+    confirmStop: {
+      title: 'Bu koşu durdurulsun mu?',
+      message:
+        'Devam eden agent turları iptal edilir. Koşu yeniden başlatılabilir; oturumlar bağlamlarıyla devam eder.',
+    },
     itemStatus: {
       pending: 'Bekliyor',
       running: 'Çalışıyor',
@@ -111,9 +149,9 @@ const tr: MessageSchema = {
       any: 'Herhangi biri',
     },
     targets: {
-      project: 'Proje',
+      project: 'Koşu',
       terminal: 'Terminal',
-      team: 'Ekip',
+      team: 'Koşu yönlendirme',
     },
     labels: {
       title: 'Başlık',
@@ -754,7 +792,7 @@ const tr: MessageSchema = {
       },
       targets: {
         queue: 'Kuyruğa iş ekle',
-        team: 'Çalışan ekibi yönlendir',
+        team: 'Aktif koşuyu yönlendir',
       },
       validation: {
         idRequired: 'Bir id gereklidir.',
@@ -861,9 +899,9 @@ const tr: MessageSchema = {
     target: {
       label: 'Kuyruk hedefi',
       labelShort: 'Target',
-      project: 'Proje',
+      project: 'Koşu (çalışma alanı)',
       terminal: 'Terminal',
-      team: 'Ekip',
+      team: 'Koşu (yönlendir/oluştur)',
       reference: 'Referans',
       none: 'Yok',
     },
@@ -1237,6 +1275,16 @@ const tr: MessageSchema = {
     },
   },
   settings: {
+    providers: {
+      title: 'Sağlayıcılar',
+      lead: 'Koşuların, kuyruğun ve istem üretiminin kullandığı CLI çalıştırılabilirleri ve sağlayıcı varsayılanları (model, çaba, izin).',
+      executable: 'Çalıştırılabilir',
+      model: 'Model',
+      effort: 'Çaba',
+      permission: 'İzin',
+      saved: 'Sağlayıcı ayarları kaydedildi.',
+      cliDefault: 'CLI varsayılanı',
+    },
     title: 'Ayarlar',
     appearance: 'Görünüm',
     appearanceDesc: 'Kaplan arayüzünün nasıl göründüğünü ve hangi dilde konuştuğunu özelleştirin.',

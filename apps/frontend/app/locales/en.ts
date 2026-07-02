@@ -50,6 +50,44 @@ export default {
     cost: 'cost',
     checks: 'Checks',
     noRun: 'No run yet — create one to put the v2 engine to work.',
+    browse: 'Browse…',
+    options: {
+      reviewFinal: 'Final review',
+      reviewPerTask: 'Per task',
+      reviewNone: 'None',
+      verifyBoth: 'Per build + final',
+      verifyPerBuild: 'Per build',
+      verifyFinal: 'Final only',
+      verifyNone: 'None',
+    },
+    changes: {
+      title: 'Changes',
+      files: 'file(s)',
+      none: 'No working-tree changes detected.',
+      notGit: 'This workspace is not a git repository — no diff available.',
+      truncated: 'Diff truncated to the size cap.',
+    },
+    detail: {
+      status: 'Status',
+      attempts: 'Attempts',
+      agent: 'Agent',
+      dependsOn: 'Depends on',
+      fixOf: 'Fix of',
+      brief: 'Brief',
+      acceptance: 'Acceptance criteria',
+      result: 'Result',
+      error: 'Error',
+      events: 'Events',
+    },
+    history: {
+      title: 'History',
+      empty: 'No past runs yet.',
+    },
+    confirmStop: {
+      title: 'Stop this run?',
+      message:
+        'In-flight agent turns are aborted. The run can be started again and sessions resume with their context.',
+    },
     itemStatus: {
       pending: 'Pending',
       running: 'Running',
@@ -120,9 +158,9 @@ export default {
       any: 'Any',
     },
     targets: {
-      project: 'Project',
+      project: 'Run',
       terminal: 'Terminal',
-      team: 'Team',
+      team: 'Run steering',
     },
     labels: {
       title: 'Title',
@@ -762,7 +800,7 @@ export default {
       },
       targets: {
         queue: 'Queue a job',
-        team: 'Steer the running team',
+        team: 'Steer the active run',
       },
       validation: {
         idRequired: 'An id is required.',
@@ -868,9 +906,9 @@ export default {
     target: {
       label: 'Queue target',
       labelShort: 'Target',
-      project: 'Project',
+      project: 'Run (workspace)',
       terminal: 'Terminal',
-      team: 'Team',
+      team: 'Run (steer/create)',
       reference: 'Reference',
       none: 'None',
     },
@@ -1244,6 +1282,16 @@ export default {
     },
   },
   settings: {
+    providers: {
+      title: 'Providers',
+      lead: 'CLI executables and per-provider defaults (model, effort, permission) used by runs, the queue, and prompt generation.',
+      executable: 'Executable',
+      model: 'Model',
+      effort: 'Effort',
+      permission: 'Permission',
+      saved: 'Provider settings saved.',
+      cliDefault: 'CLI default',
+    },
     title: 'Settings',
     appearance: 'Appearance',
     appearanceDesc: 'Customize how the Kaplan interface looks and which language it speaks.',

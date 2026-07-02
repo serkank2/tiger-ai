@@ -32,6 +32,15 @@ section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump
   (`providers/config-store.ts`).
 
 ### Added
+- **Runs UX package:** diff-first review — `GET /api/runs/current/changes` + a Changes panel
+  (file list, colorized unified diff, ± summary) that opens automatically when a run settles;
+  work-item drill-down modal (brief, attempts, per-item events, cost); run history (global
+  `runs-index.json` maintained by the engine, `GET /api/runs` / `GET /api/runs/:id`, read-only
+  reopen); a Providers settings card backed by `GET/PUT /api/providers/config` (validated
+  executable/model/effort/permission per provider); Runs is now the landing page; workspace
+  folder picker + last-workspace memory; localized policy labels; stop confirmation dialog;
+  error toasts; live-feed auto-scroll; queue/cue target labels renamed to run terminology;
+  RunView + runs-store test suites.
 - **v2 execution core (docs/REDESIGN.md):** a full redesign of how Kaplan drives coding agents,
   built from an 18-source competitive study (vibe-kanban, ruflo, OpenHands, SWE-agent, Aider,
   goose, claude-squad, Plandex, Cognition/Anthropic/MAST evidence). New backend domains:

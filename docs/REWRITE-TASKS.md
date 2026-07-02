@@ -7,7 +7,7 @@ each keeps the tree buildable. Status: ☐ todo · ◐ in progress · ☑ done.
 > routes, stores, views, and tests are DELETED (schema history preserved in
 > `db/legacy-migrations.ts`; queue `project`/`team` targets now dispatch onto the v2 run engine;
 > prompt generation runs headless). Remaining: RT-12's diff-review panel on the Runs screen and
-> RT-14's README/config-table rewrite. Gates: backend 312 tests, frontend 171 tests, lint 0
+> RT-14's README/config-table rewrite. Gates: backend 312 tests, frontend 181 tests, lint 0
 > errors, both typechecks + prod build green.
 
 ## RT-01 ☑ AgentRuntime foundation (`apps/backend/src/agents/`)
@@ -82,7 +82,7 @@ log; run history endpoints preserved.
 Limits gate consumes real usage/cost from result events; queue/terminals/security/db reviewed,
 dead code deleted (`.done` watchers, stall detection, `/compact` typing, poison/reclaim paths).
 
-## RT-12 ◐ Frontend rewrite of run surfaces (Runs board/live feed/costs/steering landed; diff-review panel + legacy view retirement pending)
+## RT-12 ☑ Frontend rewrite of run surfaces (board, live feed, costs, steering, diff-review panel, item drill-down, run history, providers settings)
 
 Run board (task graph + statuses), live turn stream (normalized events, not scraped PTY), diff
 review, cost meter per turn/task/run, steering box; Pinia stores + types aligned to new DTOs;

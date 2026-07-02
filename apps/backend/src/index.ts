@@ -22,6 +22,7 @@ import { createLimitsRouter } from './http/limits.routes.js';
 import { createQueueRouter } from './http/queue.routes.js';
 import { createCueRouter } from './http/cue.routes.js';
 import { createRunsRouter } from './http/runs.routes.js';
+import { createProvidersRouter } from './http/providers.routes.js';
 import { RunEngine } from './run/engine.js';
 import { CueEngine } from './cue/CueEngine.js';
 import { ensurePromptsDir } from './prompts/store.js';
@@ -181,6 +182,7 @@ app.use('/api/groups', createGroupsRouter(ctx));
 app.use('/api/settings', createSettingsRouter(ctx));
 app.use('/api/fs', createFsRouter(ctx));
 app.use('/api/limits', createLimitsRouter(ctx));
+app.use('/api/providers', createProvidersRouter(ctx));
 
 // Cue: event-driven orchestration engine. Engine construction is config-gated (OFF by default),
 // but the route is always mounted so disabled clients get a stable 409 instead of a 404.

@@ -29,6 +29,10 @@ import type {
   RunSnapshot,
   RunEventDto,
   RunCreateConfigInput,
+  RunChanges,
+  RunIndexEntry,
+  ProvidersConfig,
+  ProvidersConfigPatch,
 } from '~/types';
 
 /**
@@ -198,6 +202,12 @@ export function useApi() {
     steerRun: (body: string) =>
       req<{ run: RunSnapshot }>('/api/runs/current/steer', { method: 'POST', body: { body } }),
     listRunEvents: (afterSeq = 0) => req<{ events: RunEventDto[] }>(`/api/runs/current/events?afterSeq=${afterSeq}`),
+    getRunChanges: () => req<{ changes: RunChanges }>('/api/runs/current/changes'),
+    listRuns: () => req<{ runs: RunIndexEntry[] }>('/api/runs'),
+    getRunById: (runId: string) => req<{ run: RunSnapshot }>(`/api/runs/${encodeURIComponent(runId)}`),
+    getProvidersConfig: () => req<{ config: ProvidersConfig }>('/api/providers/config'),
+    updateProvidersConfig: (body: ProvidersConfigPatch) =>
+      req<{ config: ProvidersConfig }>('/api/providers/config', { method: 'PUT', body }),
 
     // --- Cue (event-driven orchestration engine) ---
     getCueStatus: () => req<CueEngineStatus>('/api/cue/status'),

@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { AppCtx } from '../context.js';
 import { badRequest, conflict, notFound } from './errors.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
+import { computeTeamChanges } from '../git/changes.js';
+import { readRunEvents, readRunIndex, readRunSnapshot } from '../run/history.js';
 import type { RunConfig } from '../run/types.js';
 
 /**
@@ -62,6 +64,39 @@ export function createRunsRouter(ctx: AppCtx): Router {
     if (!Number.isFinite(afterSeq) || afterSeq < 0) throw badRequest('afterSeq must be a non-negative number');
     res.json({ events: await engine.listEvents(afterSeq) });
   });
+
+  // Working-tree changes of the current run's workspace — the human review unit.
+  router.get('/current/changes', async (_req, res) => {
+    const snapshot = requireRun(engine.getSnapshot());
+    res.json({ changes: await computeTeamChanges(snapshot.workspace, new Date().toISOString()) });
+  });
+
+  // Run history (global index, newest first). `/current*` routes above win the match.
+  router.get('/', async (_req, res) => {
+    res.json({ runs: await readRunIndex() });
+  });
+
+  // Read-only snapshot of a past run, rehydrated from its on-disk state.
+  router.get('/:runId', async (req, res) => {
+    const entry = await requireIndexed(req.params.runId);
+    const snapshot = await readRunSnapshot(entry.workspace, entry.runId);
+    if (!snapshot) throw notFound(`run "${entry.runId}" has no readable state on disk`);
+    res.json({ run: snapshot });
+  });
+
+  router.get('/:runId/events', async (req, res) => {
+    const entry = await requireIndexed(req.params.runId);
+    const afterSeq = Number(req.query.afterSeq ?? 0);
+    if (!Number.isFinite(afterSeq) || afterSeq < 0) throw badRequest('afterSeq must be a non-negative number');
+    res.json({ events: await readRunEvents(entry.workspace, entry.runId, afterSeq) });
+  });
+
+  async function requireIndexed(runId: string | undefined) {
+    if (!runId?.trim()) throw badRequest('runId is required');
+    const entry = (await readRunIndex()).find((candidate) => candidate.runId === runId);
+    if (!entry) throw notFound(`run "${runId}" not found in the history index`);
+    return entry;
+  }
 
   return router;
 }

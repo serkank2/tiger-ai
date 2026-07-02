@@ -1048,6 +1048,64 @@ export interface RunEventDto {
   text?: string;
 }
 
+/** Full working-tree changeset for the current run (mirror of git/changes.ts). */
+export interface RunChangeFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unknown';
+  oldPath?: string;
+}
+
+export interface RunChanges {
+  isGitRepo: boolean;
+  head: string | null;
+  branch: string | null;
+  files: RunChangeFile[];
+  diff: string;
+  diffTruncated: boolean;
+  summary: { files: number; insertions: number; deletions: number };
+  generatedAt: string;
+  note?: string;
+}
+
+/** One row of the global run-history index (mirror of run/history.ts). */
+export interface RunIndexEntry {
+  runId: string;
+  workspace: string;
+  goalPreview: string;
+  status: RunStatus;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  costUsd?: number;
+  turns: number;
+  itemsDone: number;
+  itemsTotal: number;
+}
+
+/** Provider CLI configuration as served by /api/providers/config. */
+export interface ProviderConfigEntry {
+  executable: string;
+  model: string;
+  effort: string;
+  permission: string;
+  models: string[];
+  efforts: string[];
+  permissionModes: string[];
+}
+
+export interface ProvidersConfig {
+  claude: ProviderConfigEntry;
+  codex: ProviderConfigEntry;
+  antigravity: ProviderConfigEntry;
+}
+
+export type ProvidersConfigPatch = Partial<
+  Record<
+    'claude' | 'codex' | 'antigravity',
+    Partial<Pick<ProviderConfigEntry, 'executable' | 'model' | 'effort' | 'permission'>>
+  >
+>;
+
 export interface RunCreateConfigInput {
   profile?: RunProfile;
   builder?: { provider: 'claude' | 'codex' | 'antigravity'; model?: string; effort?: string; permission?: string };

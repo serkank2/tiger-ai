@@ -3,7 +3,7 @@ import { defineStore } from 'pinia';
 import { useApi } from '~/composables/useApi';
 import { useSocket } from '~/composables/useSocket';
 import { errText } from '~/lib/apiError';
-import type { RunCreateConfigInput, RunEventDto, RunSnapshot, ServerMessage } from '~/types';
+import type { RunChanges, RunCreateConfigInput, RunEventDto, RunIndexEntry, RunSnapshot, ServerMessage } from '~/types';
 
 /**
  * v2 runs store — the single source of truth the Runs screen reads.
@@ -23,6 +23,12 @@ export const useRunsStore = defineStore('runs', () => {
   const loadError = ref<string | null>(null);
   const busyKeys = ref<Record<string, boolean>>({});
   const lastSeq = ref(0);
+  /** Working-tree changes of the current run (fetched on demand). */
+  const changes = ref<RunChanges | null>(null);
+  /** Global run-history index (newest first). */
+  const history = ref<RunIndexEntry[]>([]);
+  /** A past run opened read-only from the history list. */
+  const historyRun = ref<RunSnapshot | null>(null);
 
   const status = computed(() => run.value?.status ?? null);
   const items = computed(() => run.value?.graph.items ?? []);
@@ -140,9 +146,61 @@ export const useRunsStore = defineStore('runs', () => {
       applySnapshot(snapshot);
     } catch (e) {
       loadError.value = errText(e);
+      notify(e);
       throw e;
     } finally {
       setBusy('steer', false);
+    }
+  }
+
+  /** Surface an action failure as a toast (loadError already renders inline). */
+  function notify(e: unknown): void {
+    try {
+      useNoticesStore().push(errText(e), 'error');
+    } catch {
+      /* no Pinia in some unit tests */
+    }
+  }
+
+  async function loadChanges(): Promise<void> {
+    setBusy('changes', true);
+    try {
+      const { changes: next } = await api.getRunChanges();
+      changes.value = next;
+    } catch (e) {
+      loadError.value = errText(e);
+    } finally {
+      setBusy('changes', false);
+    }
+  }
+
+  async function loadHistory(): Promise<void> {
+    setBusy('history', true);
+    try {
+      const { runs: entries } = await api.listRuns();
+      history.value = entries;
+    } catch (e) {
+      loadError.value = errText(e);
+    } finally {
+      setBusy('history', false);
+    }
+  }
+
+  /** Open a past run read-only (null closes the panel). */
+  async function openHistoryRun(runId: string | null): Promise<void> {
+    if (!runId) {
+      historyRun.value = null;
+      return;
+    }
+    setBusy(`history:${runId}`, true);
+    try {
+      const { run: snapshot } = await api.getRunById(runId);
+      historyRun.value = snapshot;
+    } catch (e) {
+      loadError.value = errText(e);
+      notify(e);
+    } finally {
+      setBusy(`history:${runId}`, false);
     }
   }
 
@@ -154,6 +212,9 @@ export const useRunsStore = defineStore('runs', () => {
     loadError,
     busyKeys,
     lastSeq,
+    changes,
+    history,
+    historyRun,
     status,
     items,
     isActive,
@@ -167,5 +228,8 @@ export const useRunsStore = defineStore('runs', () => {
     start,
     stop,
     steer,
+    loadChanges,
+    loadHistory,
+    openHistoryRun,
   };
 });
