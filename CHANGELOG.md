@@ -32,6 +32,18 @@ section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump
   (`providers/config-store.ts`).
 
 ### Added
+- **Council (importance-scaled multi-perspective ensemble):** a run's `importance`
+  (low/normal/high/critical → 1/1/3/5) sizes independent, PARALLEL, read-only agents at the two
+  phases where the evidence says ensembles win: plan candidates (each arguing a distinct lens —
+  correctness, risk, simplicity, architecture, testing, sequencing, security, edge cases — across
+  a provider rotation) merged by a synthesis turn on the planner's session, and review lenses
+  whose findings are merged + deduped in code. The write path stays single-agent. Explicit
+  `council {plan, review, providers[]}` overrides the preset (capped at 12).
+- **Live intervention:** `steer(body, {interrupt: true})` aborts the in-flight turn via per-turn
+  abort controllers — the item re-queues (attempt refunded), the re-plan applies the steering
+  immediately, and sessions resume with their context. UI: an "Apply now" button beside Steer,
+  plus a Verbose toggle on the live feed that shows EVERYTHING the agents emit (stderr and usage
+  included) — the headless replacement for watching PTY scrollback.
 - **Runs UX package:** diff-first review — `GET /api/runs/current/changes` + a Changes panel
   (file list, colorized unified diff, ± summary) that opens automatically when a run settles;
   work-item drill-down modal (brief, attempts, per-item events, cost); run history (global
@@ -79,6 +91,9 @@ section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump
   hides Resume/Close accordingly.
 
 ### Fixed
+- Headless drivers no longer inherit interactive-era `tool.extraArgs` — codex runs crashed with
+  exit 2 (`unexpected argument '--no-alt-screen'`) because the v1 TUI flag leaked into
+  `codex exec`; only engine-supplied per-turn args are appended now.
 - AI Team: a user prompt (steering) is no longer dropped when the Lead turn that received it
   fails — it stays pending and is re-delivered.
 - AI Team: verification text like "0 errors"/"no failures" is no longer misread as a failure.

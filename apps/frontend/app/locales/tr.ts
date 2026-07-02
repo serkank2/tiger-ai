@@ -74,6 +74,18 @@ const tr: MessageSchema = {
       title: 'Geçmiş',
       empty: 'Henüz geçmiş koşu yok.',
     },
+    importanceLabel: 'Önem',
+    importanceHint:
+      'Önem, konseyi boyutlandırır: bağımsız plan adayları ve inceleme mercekleri (farklı modeller, farklı açılar). Yazan her zaman tektir. Düşük/Normal = 1, Yüksek = 3, Kritik = 5.',
+    importance: {
+      low: 'Düşük',
+      normal: 'Normal',
+      high: 'Yüksek',
+      critical: 'Kritik',
+    },
+    steerNow: 'Hemen uygula',
+    steerNowHint: 'Devam eden turu iptal edip yönlendirmeyi anında uygular — oturumlar bağlamlarıyla devam eder.',
+    verbose: 'Ayrıntılı',
     confirmStop: {
       title: 'Bu koşu durdurulsun mu?',
       message:

@@ -199,8 +199,8 @@ export function useApi() {
     startRun: () => req<{ run: RunSnapshot }>('/api/runs/current/start', { method: 'POST' }),
     stopRun: (reason?: string) =>
       req<{ run: RunSnapshot }>('/api/runs/current/stop', { method: 'POST', body: reason ? { reason } : {} }),
-    steerRun: (body: string) =>
-      req<{ run: RunSnapshot }>('/api/runs/current/steer', { method: 'POST', body: { body } }),
+    steerRun: (body: string, interrupt = false) =>
+      req<{ run: RunSnapshot }>('/api/runs/current/steer', { method: 'POST', body: { body, interrupt } }),
     listRunEvents: (afterSeq = 0) => req<{ events: RunEventDto[] }>(`/api/runs/current/events?afterSeq=${afterSeq}`),
     getRunChanges: () => req<{ changes: RunChanges }>('/api/runs/current/changes'),
     listRuns: () => req<{ runs: RunIndexEntry[] }>('/api/runs'),

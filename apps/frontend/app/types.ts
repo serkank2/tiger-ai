@@ -960,6 +960,13 @@ export type RunItemKind = 'plan' | 'build' | 'review';
 export type RunItemStatus = 'pending' | 'running' | 'verifying' | 'done' | 'blocked' | 'cancelled';
 export type RunStatus = 'created' | 'running' | 'blocked' | 'completed' | 'failed' | 'stopped';
 export type RunProfile = 'mission' | 'pipeline';
+export type RunImportance = 'low' | 'normal' | 'high' | 'critical';
+
+export interface RunCouncilConfig {
+  plan: number;
+  review: number;
+  providers: ('claude' | 'codex' | 'antigravity')[];
+}
 
 export interface RunItemUsage {
   inputTokens?: number;
@@ -1018,6 +1025,8 @@ export interface RunSnapshot {
   startedAt?: string;
   endedAt?: string;
   profile: RunProfile;
+  importance: RunImportance;
+  council: RunCouncilConfig;
   seq: number;
   usage: RunUsageTotals;
   graph: { items: RunWorkItem[] };
@@ -1112,6 +1121,8 @@ export interface RunCreateConfigInput {
   reviewPolicy?: 'final' | 'per-task' | 'none';
   verifyPolicy?: 'per-build' | 'final' | 'both' | 'none';
   allowDangerous?: boolean;
+  importance?: RunImportance;
+  council?: Partial<RunCouncilConfig>;
 }
 
 // --- Backend health (mirror of GET /api/health) ---

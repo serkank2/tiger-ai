@@ -139,10 +139,10 @@ export const useRunsStore = defineStore('runs', () => {
     }
   }
 
-  async function steer(body: string): Promise<void> {
+  async function steer(body: string, interrupt = false): Promise<void> {
     setBusy('steer', true);
     try {
-      const { run: snapshot } = await api.steerRun(body);
+      const { run: snapshot } = await api.steerRun(body, interrupt);
       applySnapshot(snapshot);
     } catch (e) {
       loadError.value = errText(e);

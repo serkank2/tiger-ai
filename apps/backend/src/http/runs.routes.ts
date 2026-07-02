@@ -49,12 +49,14 @@ export function createRunsRouter(ctx: AppCtx): Router {
     res.json({ run: await engine.stop(reason) });
   });
 
-  // Steering: persisted immediately, applied at the next graph boundary as a re-plan.
+  // Steering: persisted immediately, applied at the next graph boundary as a
+  // re-plan. `interrupt: true` aborts the in-flight turn so it applies NOW
+  // (the aborted item re-queues; sessions resume with context intact).
   router.post('/current/steer', async (req, res) => {
     requireRun(engine.getSnapshot());
-    const body = (req.body ?? {}) as { body?: unknown };
+    const body = (req.body ?? {}) as { body?: unknown; interrupt?: unknown };
     if (typeof body.body !== 'string' || !body.body.trim()) throw badRequest('steering body is required');
-    res.json({ run: await engine.steer(body.body) });
+    res.json({ run: await engine.steer(body.body, { interrupt: body.interrupt === true }) });
   });
 
   // Event log replay for reconnect/reopen: ?afterSeq=N.
@@ -145,5 +147,26 @@ function sanitizeConfig(raw: unknown): Partial<RunConfig> | undefined {
     out.hardTurnTimeoutMs = Math.min(input.hardTurnTimeoutMs, 6 * 60 * 60_000);
   }
   if (typeof input.allowDangerous === 'boolean') out.allowDangerous = input.allowDangerous;
+  if (
+    input.importance === 'low' ||
+    input.importance === 'normal' ||
+    input.importance === 'high' ||
+    input.importance === 'critical'
+  ) {
+    out.importance = input.importance;
+  }
+  if (typeof input.council === 'object' && input.council !== null) {
+    const council = input.council as Record<string, unknown>;
+    const providers = Array.isArray(council.providers)
+      ? council.providers.filter(
+          (p): p is 'claude' | 'codex' | 'antigravity' => p === 'claude' || p === 'codex' || p === 'antigravity',
+        )
+      : [];
+    out.council = {
+      plan: typeof council.plan === 'number' ? Math.max(1, Math.min(12, Math.floor(council.plan))) : 1,
+      review: typeof council.review === 'number' ? Math.max(1, Math.min(12, Math.floor(council.review))) : 1,
+      providers,
+    };
+  }
   return Object.keys(out).length ? out : undefined;
 }

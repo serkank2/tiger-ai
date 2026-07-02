@@ -83,6 +83,19 @@ export default {
       title: 'History',
       empty: 'No past runs yet.',
     },
+    importanceLabel: 'Importance',
+    importanceHint:
+      'Importance sizes the council: independent plan candidates and review lenses (different models, different angles). The writer always stays single. Low/Normal = 1, High = 3, Critical = 5.',
+    importance: {
+      low: 'Low',
+      normal: 'Normal',
+      high: 'High',
+      critical: 'Critical',
+    },
+    steerNow: 'Apply now',
+    steerNowHint:
+      'Aborts the in-flight turn and applies this steering immediately — sessions resume with their context.',
+    verbose: 'Verbose',
     confirmStop: {
       title: 'Stop this run?',
       message:

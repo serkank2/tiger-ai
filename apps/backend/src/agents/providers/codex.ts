@@ -54,11 +54,10 @@ function buildInvocation(request: TurnRequest, tool: CliToolConfig): TurnInvocat
     }
   }
 
+  // Deliberately NOT inherited: `tool.extraArgs` — those flags were authored for
+  // the retired interactive TUI launches (e.g. `--no-alt-screen`), and `codex exec`
+  // rejects them with exit 2. Only engine-supplied per-turn args are appended.
   if (request.extraArgs?.length) args.push(...request.extraArgs);
-  if (tool.extraArgs?.length) {
-    // v1 config carries `--skip-git-repo-check` in extraArgs; avoid doubling it.
-    args.push(...tool.extraArgs.filter((arg) => arg !== '--skip-git-repo-check'));
-  }
 
   // `-` = read the prompt from stdin (avoids Windows argv length limits).
   args.push('-');

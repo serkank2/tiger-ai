@@ -3,13 +3,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { randomUUID } from 'node:crypto';
-import type { TigerConfig } from '../orchestrator/types.js';
+import type { AgentType, TigerConfig } from '../orchestrator/types.js';
 import { defaultTigerConfig } from '../orchestrator/config.js';
 import { logger } from '../obs/logger.js';
 import { getDriver } from '../agents/providers/registry.js';
 import { runAgentTurn, type AgentTurnReport, type RunAgentTurnOptions } from '../agents/runner.js';
 import { SessionRegistry } from '../agents/session.js';
-import { TURN_RESULT_JSON_SCHEMA } from '../agents/result.js';
+import { TURN_RESULT_JSON_SCHEMA, parseTurnResult } from '../agents/result.js';
 import type { AgentEvent } from '../agents/events.js';
 import { composeSessionPreamble, composeTaskBrief } from '../context/brief.js';
 import { buildProjectMap } from '../context/project-map.js';
@@ -77,7 +77,45 @@ const DEFAULT_CONFIG: RunConfig = {
   maxFixRounds: 3,
   allowDangerous: false,
   mcp: false,
+  importance: 'normal',
+  council: { plan: 1, review: 1, providers: [] },
 };
+
+/**
+ * Importance → council size. Parallelism lives ONLY in the read-only phases
+ * (independent plan candidates, independent review lenses); the writer stays
+ * single. Counts are per run, spread across the configured provider rotation.
+ */
+const COUNCIL_PRESETS: Record<RunConfig['importance'], { plan: number; review: number }> = {
+  low: { plan: 1, review: 1 },
+  normal: { plan: 1, review: 1 },
+  high: { plan: 3, review: 3 },
+  critical: { plan: 5, review: 5 },
+};
+
+const COUNCIL_MAX = 12;
+
+/** Perspective rotation for plan candidates — each candidate argues ONE angle. */
+const PLAN_LENSES = [
+  'correctness and completeness — what must be true for this to actually work',
+  'risk and failure modes — where this goes wrong, what breaks, what to guard',
+  'simplicity and minimal change — the smallest plan that fully achieves the goal',
+  'architecture and maintainability — how this stays clean six months from now',
+  'testing and verifiability — how each step can be proven done',
+  'sequencing and dependencies — what must land first and what can be deferred',
+  'security and safety — inputs, permissions, and blast radius',
+  'edge cases and unknowns — what the happy path hides',
+];
+
+/** Perspective rotation for review lenses. */
+const REVIEW_LENSES = [
+  'correctness — does the diff actually do what the tasks claim, with evidence',
+  'regressions and tests — what existing behavior could this break; is coverage honest',
+  'requirements coverage — is every acceptance criterion genuinely met',
+  'security — injection, permissions, secrets, unsafe input handling',
+  'code quality — clarity, duplication, dead code, conventions',
+  'performance — obvious inefficiencies or hot-path costs introduced',
+];
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -88,6 +126,8 @@ export class RunEngine extends EventEmitter {
   private abort: AbortController | null = null;
   /** Rendered one-line summaries of recent events (delta briefs read from here). */
   private deltaLog: Array<{ seq: number; line: string }> = [];
+  /** In-flight turn abort handles by item id — lets steering interrupt a turn without stopping the run. */
+  private readonly activeTurnAborts = new Map<string, AbortController>();
   private readonly turnRunner: (opts: RunAgentTurnOptions) => Promise<AgentTurnReport>;
   private readonly verification: VerificationService;
   private readonly loadCliConfig: (workspace: string) => Promise<TigerConfig>;
@@ -115,6 +155,14 @@ export class RunEngine extends EventEmitter {
     };
     // Sequential-build clamp until worktree merge-back lands (see header note).
     if (config.maxParallelBuilds !== 1) config.maxParallelBuilds = 1;
+    // Council sizing: explicit counts win; otherwise the importance preset.
+    const preset = COUNCIL_PRESETS[config.importance] ?? COUNCIL_PRESETS.normal;
+    const requested = input.config?.council;
+    config.council = {
+      plan: clampCount(requested?.plan ?? preset.plan),
+      review: clampCount(requested?.review ?? preset.review),
+      providers: (requested?.providers?.length ? requested.providers : [config.builder.provider]).slice(0, 3),
+    };
     this.state = {
       runId,
       workspace: path.resolve(input.workspace),
@@ -168,11 +216,18 @@ export class RunEngine extends EventEmitter {
     return toRunSnapshot(this.requireState());
   }
 
-  async steer(body: string): Promise<RunSnapshot> {
+  async steer(body: string, opts: { interrupt?: boolean } = {}): Promise<RunSnapshot> {
     const state = this.requireState();
     const directive = { id: nanoid(8), body: body.trim(), createdAt: nowIso(), status: 'pending' as const };
     state.steering.push(directive);
     await this.record({ type: 'steering', text: directive.body });
+    // Immediate intervention: abort the in-flight turn(s). The aborted items
+    // re-queue (attempts refunded), the loop sees the pending steering at the
+    // very next pass, and the re-plan runs first — the flow itself continues.
+    if (opts.interrupt && this.activeTurnAborts.size > 0) {
+      await this.record({ type: 'note', text: 'Steering interrupt: aborting the in-flight turn(s) to apply it now.' });
+      for (const controller of this.activeTurnAborts.values()) controller.abort();
+    }
     // A stopped/blocked run resumes to process the steering.
     if (state.status === 'blocked' || state.status === 'stopped') this.start();
     this.emitStatus();
@@ -324,10 +379,28 @@ export class RunEngine extends EventEmitter {
     await this.record({ type: 'item-status', itemId: item.id, itemStatus: 'running' });
     this.emitStatus();
 
-    // Review briefs carry the REAL diff — composed just-in-time so the
-    // reviewer sees the tree as it stands when its turn starts.
+    // Council: independent read-only perspectives BEFORE the authoritative
+    // turn. Plan candidates are merged by a synthesis turn on the planner's
+    // session; review lenses are merged in code. The write path stays single.
+    const council = state.config.council;
+    if (item.kind === 'plan' && council.plan > 1) {
+      const candidates = await this.runPlanCouncil(item, council, signal);
+      if (candidates.length > 0) {
+        this.descriptionOverrides.set(item.id, this.synthesisDescription(item, candidates));
+      }
+      // No usable candidate → fall through to the normal single-planner turn.
+    }
     if (item.kind === 'review') {
-      this.descriptionOverrides.set(item.id, await this.itemDescriptionForReview(item));
+      const reviewBrief = await this.itemDescriptionForReview(item);
+      if (council.review > 1) {
+        const merged = await this.runReviewCouncil(item, reviewBrief, council, signal);
+        if (merged) {
+          await this.applyReviewResult(item, merged);
+          return;
+        }
+        // Every lens failed → fall back to the single-reviewer turn.
+      }
+      this.descriptionOverrides.set(item.id, reviewBrief);
     }
 
     const report = await this.runTurn(item, signal);
@@ -420,9 +493,10 @@ export class RunEngine extends EventEmitter {
       },
       cwd: state.workspace,
       hardTimeoutMs: state.config.hardTurnTimeoutMs,
-      signal,
+      signal: this.linkTurnSignal(item.id, signal),
       onEvent: (event) => void this.onAgentEvent(item, event),
     });
+    this.activeTurnAborts.delete(item.id);
 
     await sessions.upsert(sessionKey, agent.provider, {
       sessionId: report.sessionId ?? newSessionId ?? stored?.sessionId,
@@ -599,6 +673,230 @@ export class RunEngine extends EventEmitter {
     });
     this.noteDelta(`review ${item.id}: ${result.summary}`);
     this.emitStatus();
+  }
+
+  // --- council (multi-perspective ensemble) ----------------------------------
+
+  /** Link a per-item abort controller under the loop signal (steering interrupt). */
+  private linkTurnSignal(itemId: string, parent: AbortSignal): AbortSignal {
+    const controller = new AbortController();
+    if (parent.aborted) controller.abort();
+    else parent.addEventListener('abort', () => controller.abort(), { once: true });
+    this.activeTurnAborts.set(itemId, controller);
+    return controller.signal;
+  }
+
+  /** One read-only, one-shot council candidate turn. Null when it failed. */
+  private async runCouncilCandidate(
+    item: WorkItem,
+    input: { role: 'plan' | 'review'; lens: string; index: number; provider: AgentType; brief: string },
+    signal: AbortSignal,
+  ): Promise<{ text: string | undefined; report: AgentTurnReport } | null> {
+    const state = this.requireState();
+    const cli = this.cliConfig ?? defaultTigerConfig();
+    const driver = getDriver(input.provider);
+    const name = `${input.role}-candidate-${input.index + 1}`;
+    const prompt =
+      composeSessionPreamble({
+        runId: state.runId,
+        agentName: name,
+        goal: state.goal,
+        workspace: state.workspace,
+        projectMap: this.projectMap,
+      }) +
+      '\n' +
+      input.brief;
+    const report = await this.turnRunner({
+      driver,
+      tool: cli.cli[input.provider],
+      request: {
+        prompt,
+        permission: this.readOnlyPermission(input.provider),
+        allowDangerous: false,
+        resultSchema: input.role === 'plan' ? PLAN_RESULT_JSON_SCHEMA : TURN_RESULT_JSON_SCHEMA,
+        scratchDir: path.join(this.runDir(), 'scratch', item.id, name),
+      },
+      cwd: state.workspace,
+      hardTimeoutMs: state.config.hardTurnTimeoutMs,
+      signal,
+      onEvent: (event) => void this.onAgentEvent(item, event),
+    });
+    this.accountUsage(item, report);
+    if (report.state !== 'completed') {
+      await this.record({
+        type: 'note',
+        itemId: item.id,
+        text: `Council ${name} (${input.provider}) failed: ${report.error ?? report.state}`,
+      });
+      return null;
+    }
+    await this.record({
+      type: 'note',
+      itemId: item.id,
+      text: `Council ${name} (${input.provider}) delivered its ${input.role === 'plan' ? 'plan' : 'review'}.`,
+    });
+    return { text: report.resultText, report };
+  }
+
+  /** Read-only permission key per provider (council candidates never write). */
+  private readOnlyPermission(provider: AgentType): string {
+    if (provider === 'codex') return 'read-only';
+    return 'default';
+  }
+
+  /** Fan out N independent plan candidates (parallel, read-only, distinct lenses). */
+  private async runPlanCouncil(
+    item: WorkItem,
+    council: RunConfig['council'],
+    signal: AbortSignal,
+  ): Promise<CouncilPlanCandidate[]> {
+    const state = this.requireState();
+    await this.record({
+      type: 'note',
+      itemId: item.id,
+      text: `Council: ${council.plan} independent plan candidate(s) across [${council.providers.join(', ')}] before synthesis.`,
+    });
+    const briefs = Array.from({ length: council.plan }, (_, index) => {
+      const lens = PLAN_LENSES[index % PLAN_LENSES.length] ?? 'general';
+      const provider = council.providers[index % council.providers.length] ?? state.config.builder.provider;
+      const brief = composeTaskBrief({
+        title: `${item.id} — independent plan candidate ${index + 1}`,
+        description:
+          this.planDescription() +
+          `\n\nYOUR ASSIGNED PERSPECTIVE (argue THIS angle hard; the other candidates cover the rest): ${lens}. ` +
+          'You are ONE independent voice on a planning council — do NOT write any files or code; produce only your plan JSON.',
+      });
+      return { lens, provider, brief };
+    });
+    const results = await Promise.all(
+      briefs.map((candidate, index) =>
+        this.runCouncilCandidate(
+          item,
+          { role: 'plan', lens: candidate.lens, index, provider: candidate.provider, brief: candidate.brief },
+          signal,
+        ),
+      ),
+    );
+    const out: CouncilPlanCandidate[] = [];
+    results.forEach((result, index) => {
+      const plan = result ? parsePlanResult(result.text) : null;
+      const meta = briefs[index];
+      if (plan && plan.status === 'done' && meta) out.push({ lens: meta.lens, provider: meta.provider, plan });
+    });
+    return out;
+  }
+
+  /** The synthesis brief: every candidate plan, rendered compactly for the planner session. */
+  private synthesisDescription(item: WorkItem, candidates: CouncilPlanCandidate[]): string {
+    void item;
+    const rendered = candidates
+      .map((candidate, index) => {
+        const tasks = candidate.plan.tasks
+          .map(
+            (task) =>
+              `  - ${task.id ?? '?'}: ${task.title} — ${task.description.slice(0, 300)}${task.dependsOn?.length ? ` (deps: ${task.dependsOn.join(',')})` : ''}`,
+          )
+          .join('\n');
+        return `## Candidate ${index + 1} (${candidate.provider}, lens: ${candidate.lens})\nSummary: ${candidate.plan.summary}\n${tasks}`;
+      })
+      .join('\n\n');
+    return (
+      `You are the plan SYNTHESIZER. ${candidates.length} independent candidates each planned this goal from a different angle. ` +
+      'Merge them into ONE final task graph: keep every genuinely necessary task, drop duplicates and over-engineering, ' +
+      'resolve conflicts by preferring the simplest plan that still covers the risks the other lenses exposed. ' +
+      'Task descriptions must stay SELF-CONTAINED; use dependsOn for hard orderings. End with the plan JSON contract.\n\n' +
+      rendered +
+      '\n\n' +
+      this.planDescription()
+    );
+  }
+
+  /** Fan out N review lenses (parallel, read-only) and merge their findings in code. */
+  private async runReviewCouncil(
+    item: WorkItem,
+    reviewBrief: string,
+    council: RunConfig['council'],
+    signal: AbortSignal,
+  ): Promise<AgentTurnReport | null> {
+    const state = this.requireState();
+    await this.record({
+      type: 'note',
+      itemId: item.id,
+      text: `Council: ${council.review} independent review lens(es) across [${council.providers.join(', ')}].`,
+    });
+    const lenses = Array.from({ length: council.review }, (_, index) => ({
+      lens: REVIEW_LENSES[index % REVIEW_LENSES.length] ?? 'correctness',
+      provider: council.providers[index % council.providers.length] ?? state.config.builder.provider,
+    }));
+    const results = await Promise.all(
+      lenses.map((entry, index) =>
+        this.runCouncilCandidate(
+          item,
+          {
+            role: 'review',
+            lens: entry.lens,
+            index,
+            provider: entry.provider,
+            brief: composeTaskBrief({
+              title: `${item.id} — review lens ${index + 1}`,
+              description:
+                reviewBrief +
+                `\n\nYOUR ASSIGNED REVIEW LENS (judge ONLY through it; other lenses cover the rest): ${entry.lens}. ` +
+                'Do NOT modify any files. Report follow-up tasks ONLY for defects you can back with evidence from the diff.',
+            }),
+          },
+          signal,
+        ),
+      ),
+    );
+
+    const verdicts: string[] = [];
+    const followUps = new Map<string, { title: string; description?: string }>();
+    let usable = 0;
+    results.forEach((result, index) => {
+      if (!result) return;
+      const parsed = parseTurnResult(result.text);
+      if (!parsed) return;
+      usable += 1;
+      const lensName = lenses[index]?.lens.split(' — ')[0] ?? 'lens';
+      verdicts.push(`[${lensName}] ${parsed.summary}`);
+      for (const task of parsed.followUpTasks ?? []) {
+        const key = task.title.trim().toLowerCase().replace(/\s+/g, ' ');
+        if (!followUps.has(key)) followUps.set(key, task);
+      }
+    });
+    if (usable === 0) return null;
+
+    return {
+      state: 'completed',
+      exitCode: 0,
+      resultText: undefined,
+      result: {
+        status: 'done',
+        summary: verdicts.join(' | ').slice(0, 4000),
+        followUpTasks: [...followUps.values()],
+      },
+      eventCount: 0,
+      durationMs: 0,
+      command: `council(review x${usable})`,
+    };
+  }
+
+  /** Accumulate a report's provider-reported usage onto the item + run totals. */
+  private accountUsage(item: WorkItem, report: AgentTurnReport): void {
+    const state = this.requireState();
+    state.usage.turns += 1;
+    if (!report.usage) return;
+    item.usage = {
+      inputTokens: (item.usage?.inputTokens ?? 0) + (report.usage.inputTokens ?? 0),
+      cachedInputTokens: (item.usage?.cachedInputTokens ?? 0) + (report.usage.cachedInputTokens ?? 0),
+      outputTokens: (item.usage?.outputTokens ?? 0) + (report.usage.outputTokens ?? 0),
+      costUsd: round4((item.usage?.costUsd ?? 0) + (report.usage.costUsd ?? 0)),
+    };
+    state.usage.inputTokens = (state.usage.inputTokens ?? 0) + (report.usage.inputTokens ?? 0);
+    state.usage.cachedInputTokens = (state.usage.cachedInputTokens ?? 0) + (report.usage.cachedInputTokens ?? 0);
+    state.usage.outputTokens = (state.usage.outputTokens ?? 0) + (report.usage.outputTokens ?? 0);
+    state.usage.costUsd = round4((state.usage.costUsd ?? 0) + (report.usage.costUsd ?? 0));
   }
 
   private async handleItemFailure(item: WorkItem, error: string): Promise<void> {
@@ -853,6 +1151,17 @@ export class RunEngine extends EventEmitter {
     if (!this.sessions) throw new Error('no active run (sessions)');
     return this.sessions;
   }
+}
+
+interface CouncilPlanCandidate {
+  lens: string;
+  provider: AgentType;
+  plan: NonNullable<ReturnType<typeof parsePlanResult>>;
+}
+
+function clampCount(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(COUNCIL_MAX, Math.floor(value)));
 }
 
 function round4(value: number): number {

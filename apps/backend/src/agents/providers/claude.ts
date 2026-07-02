@@ -59,8 +59,9 @@ function buildInvocation(request: TurnRequest, tool: CliToolConfig): TurnInvocat
     args.push('--mcp-config', JSON.stringify({ mcpServers }));
   }
 
+  // `tool.extraArgs` is interactive-era config and is deliberately ignored here
+  // (see the codex driver note); only engine-supplied per-turn args apply.
   if (request.extraArgs?.length) args.push(...request.extraArgs);
-  if (tool.extraArgs?.length) args.push(...tool.extraArgs);
 
   // No resultFile: the stream's `result` event carries the final message.
   return { command: tool.executable, args, stdinText: request.prompt };

@@ -26,6 +26,23 @@ export type RunProfile =
 export type ReviewPolicy = 'final' | 'per-task' | 'none';
 export type VerifyPolicy = 'per-build' | 'final' | 'both' | 'none';
 
+/**
+ * How much this run matters — scales the COUNCIL (multi-perspective ensemble)
+ * at the read-only phases. The evidence (docs/REDESIGN.md §3) is precise about
+ * where parallel agents help: independent THINKING (plan) and JUDGING (review)
+ * benefit from diverse perspectives; the WRITE path stays single-agent.
+ */
+export type RunImportance = 'low' | 'normal' | 'high' | 'critical';
+
+export interface RunCouncilConfig {
+  /** Independent plan candidates synthesized into the final graph (1 = no council). */
+  plan: number;
+  /** Independent review lenses whose findings are merged (1 = single reviewer). */
+  review: number;
+  /** Provider rotation for council candidates (defaults to the builder's provider). */
+  providers: AgentType[];
+}
+
 export interface RunAgentConfig {
   provider: AgentType;
   model?: string;
@@ -55,6 +72,10 @@ export interface RunConfig {
   allowDangerous: boolean;
   /** Mount the Kaplan MCP coordination bus into agent sessions. */
   mcp: boolean;
+  /** Importance preset that sized the council (kept for display/history). */
+  importance: RunImportance;
+  /** Ensemble sizes for plan/review phases. */
+  council: RunCouncilConfig;
 }
 
 export interface RunSteering {
@@ -133,6 +154,8 @@ export interface RunSnapshot {
   startedAt?: string;
   endedAt?: string;
   profile: RunProfile;
+  importance: RunImportance;
+  council: RunCouncilConfig;
   seq: number;
   usage: RunUsageTotals;
   graph: RunGraph;
@@ -151,6 +174,8 @@ export function toRunSnapshot(state: RunState): RunSnapshot {
     startedAt: state.startedAt,
     endedAt: state.endedAt,
     profile: state.config.profile,
+    importance: state.config.importance,
+    council: state.config.council,
     seq: state.seq,
     usage: state.usage,
     graph: state.graph,

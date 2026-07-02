@@ -231,6 +231,95 @@ test('engine: steering inserts a re-plan instead of a Lead chat turn', async () 
   );
 });
 
+test('engine: council fans out plan candidates + synthesis and merges review lenses', async () => {
+  const calls: Array<{ kind: string; provider: string; resumed: boolean }> = [];
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      const prompt = opts.request.prompt;
+      const isPlanSchema = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      const kind = prompt.includes('independent plan candidate')
+        ? 'plan-candidate'
+        : prompt.includes('SYNTHESIZER')
+          ? 'synthesis'
+          : prompt.includes('review lens')
+            ? 'review-lens'
+            : isPlanSchema
+              ? 'plan'
+              : 'build';
+      calls.push({ kind, provider: opts.driver.id, resumed: opts.request.resumeSessionId !== undefined });
+      const planJson = JSON.stringify({
+        status: 'done',
+        summary: `plan via ${kind}`,
+        tasks: [{ id: 'T1', title: 'Do the work', description: 'do it fully' }],
+      });
+      const reviewJson = JSON.stringify({
+        status: 'done',
+        summary: `verdict via ${kind}`,
+        followUpTasks: [{ title: 'Fix shared issue' }],
+      });
+      const resultText = isPlanSchema
+        ? planJson
+        : kind === 'review-lens'
+          ? reviewJson
+          : JSON.stringify({ status: 'done', summary: 'built' });
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: `sess-${opts.driver.id}`,
+        resultText,
+        result: isPlanSchema ? null : (JSON.parse(resultText) as never),
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.01 },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Important goal',
+    config: {
+      reviewPolicy: 'final',
+      verifyPolicy: 'none',
+      importance: 'high',
+      council: { plan: 3, review: 2, providers: ['claude', 'codex'] },
+    },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+
+  const snapshot = engine.getSnapshot();
+  assert.equal(snapshot?.status, 'completed');
+  assert.equal(snapshot?.importance, 'high');
+
+  const counts = calls.reduce<Record<string, number>>((acc, call) => {
+    acc[call.kind] = (acc[call.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  // 3 independent plan candidates, then ONE synthesis on the planner session.
+  assert.equal(counts['plan-candidate'], 3);
+  assert.equal(counts['synthesis'], 1);
+  // 2 review lenses merged in code — no extra single-reviewer turn.
+  assert.equal(counts['review-lens'], 2);
+  assert.equal(counts['plan'] ?? 0, 0);
+
+  // Candidates rotate across the configured providers.
+  const candidateProviders = calls.filter((c) => c.kind === 'plan-candidate').map((c) => c.provider);
+  assert.ok(candidateProviders.includes('claude') && candidateProviders.includes('codex'));
+
+  // The two lenses proposed the same follow-up → deduped to ONE fix task.
+  const fixTasks = snapshot!.graph.items.filter((item) => item.title === 'Fix shared issue');
+  assert.equal(fixTasks.length, 1);
+});
+
 test('engine: a persistently blocked builder blocks the item and the run — honestly', async () => {
   const engine = new RunEngine({
     turnRunner: async (opts) => {

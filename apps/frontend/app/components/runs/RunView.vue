@@ -32,7 +32,9 @@ const workspace = ref('');
 const provider = ref<'claude' | 'codex' | 'antigravity'>('claude');
 const reviewPolicy = ref<'final' | 'per-task' | 'none'>('final');
 const verifyPolicy = ref<'per-build' | 'final' | 'both' | 'none'>('both');
+const importance = ref<'low' | 'normal' | 'high' | 'critical'>('normal');
 const steering = ref('');
+const verboseFeed = ref(false);
 const pickerOpen = ref(false);
 const selectedItemId = ref<string | null>(null);
 const showChanges = ref(false);
@@ -78,6 +80,14 @@ const verifyOptions = computed(() => [
   { value: 'final', label: t('runs.options.verifyFinal') },
   { value: 'none', label: t('runs.options.verifyNone') },
 ]);
+// Importance sizes the COUNCIL: independent plan candidates + review lenses.
+// The write path stays single-agent regardless (docs/REDESIGN.md §3).
+const importanceOptions = computed(() => [
+  { value: 'low', label: t('runs.importance.low') },
+  { value: 'normal', label: t('runs.importance.normal') },
+  { value: 'high', label: t('runs.importance.high') },
+  { value: 'critical', label: t('runs.importance.critical') },
+]);
 
 async function onCreate(): Promise<void> {
   if (!goal.value.trim() || !workspace.value.trim()) return;
@@ -94,6 +104,7 @@ async function onCreate(): Promise<void> {
         builder: { provider: provider.value },
         reviewPolicy: reviewPolicy.value,
         verifyPolicy: verifyPolicy.value,
+        importance: importance.value,
       },
     });
     await runs.start();
@@ -119,11 +130,11 @@ async function onStop(): Promise<void> {
   }
 }
 
-async function onSteer(): Promise<void> {
+async function onSteer(interrupt = false): Promise<void> {
   const body = steering.value.trim();
   if (!body) return;
   try {
-    await runs.steer(body);
+    await runs.steer(body, interrupt);
     steering.value = '';
   } catch {
     /* surfaced via runs.loadError + toast */
@@ -194,10 +205,14 @@ function eventLine(event: RunEventDto): string {
   }
 }
 
+// Verbose mode = watch EVERYTHING the agent emits (stderr and usage included) —
+// the headless replacement for staring at the old PTY scrollback.
 const eventFeed = computed(() =>
-  runs.events.filter(
-    (event) => !(event.type === 'agent' && (event.agent?.type === 'stderr' || event.agent?.type === 'usage')),
-  ),
+  verboseFeed.value
+    ? runs.events
+    : runs.events.filter(
+        (event) => !(event.type === 'agent' && (event.agent?.type === 'stderr' || event.agent?.type === 'usage')),
+      ),
 );
 
 function formatTokens(): string {
@@ -228,6 +243,13 @@ function formatCost(): string {
           <BaseButton size="sm" variant="ghost" data-testid="run-toggle-changes" @click="onToggleChanges">
             {{ t('runs.changes.title') }}
           </BaseButton>
+          <span
+            v-if="runs.run.importance !== 'normal'"
+            class="status importance"
+            :data-importance="runs.run.importance"
+          >
+            {{ t(`runs.importance.${runs.run.importance}`) }}
+          </span>
           <span class="status" :data-status="runs.run.status" data-testid="run-status">
             {{ t(`runs.status.${runs.run.status}`) }}
           </span>
@@ -301,7 +323,11 @@ function formatCost(): string {
         <BaseField :label="t('runs.verifyPolicy')">
           <BaseSelect v-model="verifyPolicy" :options="verifyOptions" />
         </BaseField>
+        <BaseField :label="t('runs.importanceLabel')">
+          <BaseSelect v-model="importance" data-testid="run-importance" :options="importanceOptions" />
+        </BaseField>
       </div>
+      <p class="hint">{{ t('runs.importanceHint') }}</p>
       <BaseButton type="submit" data-testid="run-create" :loading="runs.isBusy('create') || runs.isBusy('start')">
         {{ t('runs.createAndStart') }}
       </BaseButton>
@@ -364,14 +390,20 @@ function formatCost(): string {
 
         <!-- Live activity + steering -->
         <div class="card activity" :aria-label="t('runs.events')">
-          <h2>{{ t('runs.events') }}</h2>
+          <div class="activity-head">
+            <h2>{{ t('runs.events') }}</h2>
+            <label class="verbose">
+              <input v-model="verboseFeed" type="checkbox" data-testid="run-verbose" />
+              {{ t('runs.verbose') }}
+            </label>
+          </div>
           <ul ref="feedEl" class="feed" aria-live="polite" data-testid="run-feed">
             <li v-for="event in eventFeed" :key="event.seq" :data-type="event.type">
               <span class="seq">#{{ event.seq }}</span>
               <span class="line">{{ eventLine(event) }}</span>
             </li>
           </ul>
-          <form class="steer" @submit.prevent="onSteer">
+          <form class="steer" @submit.prevent="onSteer(false)">
             <BaseInput v-model="steering" data-testid="run-steer-input" :placeholder="t('runs.steerPlaceholder')" />
             <BaseButton
               type="submit"
@@ -381,6 +413,16 @@ function formatCost(): string {
               :disabled="!steering.trim()"
             >
               {{ t('runs.steer') }}
+            </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="danger"
+              data-testid="run-steer-now"
+              :title="t('runs.steerNowHint')"
+              :disabled="!steering.trim() || !runs.isActive"
+              @click="onSteer(true)"
+            >
+              {{ t('runs.steerNow') }}
             </BaseButton>
           </form>
         </div>
@@ -685,6 +727,36 @@ function formatCost(): string {
 }
 .steer :deep(input) {
   flex: 1;
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.activity-head h2 {
+  margin: 0 0 10px;
+}
+.verbose {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0;
+}
+.status.importance[data-importance='critical'] {
+  color: var(--danger, #f87171);
+  border-color: currentColor;
+}
+.status.importance[data-importance='high'] {
+  color: var(--accent, #60a5fa);
+  border-color: currentColor;
 }
 .history-run {
   display: flex;

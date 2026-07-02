@@ -50,8 +50,9 @@ function buildInvocation(request: TurnRequest, tool: CliToolConfig): TurnInvocat
   if (request.resumeSessionId) args.push('--conversation', request.resumeSessionId);
   // Generous CLI-side ceiling; the runner enforces the real per-turn timeout.
   args.push('--print-timeout', '120m');
+  // `tool.extraArgs` is interactive-era config and is deliberately ignored here
+  // (see the codex driver note); only engine-supplied per-turn args apply.
   if (request.extraArgs?.length) args.push(...request.extraArgs);
-  if (tool.extraArgs?.length) args.push(...tool.extraArgs);
 
   args.push('--print', request.prompt + resultTrailer(resultFile));
 

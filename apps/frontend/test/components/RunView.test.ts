@@ -58,6 +58,8 @@ function snapshot(over: Partial<RunSnapshot> = {}): RunSnapshot {
     status: 'running',
     createdAt: '2026-07-02T10:00:00.000Z',
     profile: 'mission',
+    importance: 'normal',
+    council: { plan: 1, review: 1, providers: ['claude'] },
     seq: 5,
     usage: { turns: 2, inputTokens: 1200, outputTokens: 400, costUsd: 0.1234 },
     graph: {

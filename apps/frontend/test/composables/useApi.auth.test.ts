@@ -64,7 +64,13 @@ describe('useApi auth token + run routes', () => {
     await api.steerRun('focus');
     expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/steer', {
       method: 'POST',
-      body: { body: 'focus' },
+      body: { body: 'focus', interrupt: false },
+    });
+
+    await api.steerRun('focus now', true);
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/steer', {
+      method: 'POST',
+      body: { body: 'focus now', interrupt: true },
     });
 
     await api.listRunEvents(7);

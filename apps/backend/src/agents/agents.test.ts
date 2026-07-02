@@ -169,6 +169,16 @@ test('codex parser handles the OLD msg-envelope generation', () => {
   assert.equal(summary.resultText, 'done, all tests pass');
 });
 
+test('codex driver never inherits interactive-era tool extraArgs (--no-alt-screen regression)', () => {
+  const driver = getDriver('codex');
+  const tool = { ...cfg.cli.codex, extraArgs: ['--no-alt-screen'] };
+  const invocation = driver.buildInvocation({ prompt: 'x', permission: 'workspace-write' }, tool);
+  assert.ok(!invocation.args.includes('--no-alt-screen'));
+  // Engine-supplied per-turn args still pass through.
+  const withArgs = driver.buildInvocation({ prompt: 'x', extraArgs: ['--foo'] }, tool);
+  assert.ok(withArgs.args.includes('--foo'));
+});
+
 // --- Antigravity driver --------------------------------------------------------
 
 test('agy driver appends the result-file contract and honors conversation resume', () => {
