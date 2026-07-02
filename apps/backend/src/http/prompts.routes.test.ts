@@ -78,8 +78,6 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
   const ctx: AppCtx = {
     state: state(),
     manager: {} as AppCtx['manager'],
-    orchestrator: {} as AppCtx['orchestrator'],
-    runTemplates: {} as AppCtx['runTemplates'],
     promptGenerations: {
       listHistory: async (filters: unknown) => {
         seenFilters = filters;
@@ -88,10 +86,8 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
     } as AppCtx['promptGenerations'],
     queueService: {} as AppCtx['queueService'],
     limits: {} as AppCtx['limits'],
-    teamOrchestrator: {} as AppCtx['teamOrchestrator'],
-    teamTemplates: {} as AppCtx['teamTemplates'],
-    teamTranslations: {} as AppCtx['teamTranslations'],
     runEngine: {} as AppCtx['runEngine'],
+    providerConfig: {} as AppCtx['providerConfig'],
     save: async () => {},
   };
 

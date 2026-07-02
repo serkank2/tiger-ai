@@ -12,8 +12,7 @@ const emit = defineEmits<{
   openSettings: [];
   openComposer: [];
   openPrompts: [];
-  openTiger: [];
-  openTemplates: [];
+  openRuns: [];
 }>();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
@@ -244,10 +243,9 @@ function sendKey(ch: string) {
       </button>
     </div>
 
-    <BaseButton class="tiger" :title="t('terminals.openTemplates')" @click="emit('openTemplates')">{{
-      t('nav.templates')
+    <BaseButton class="tiger" :title="t('terminals.openRuns')" @click="emit('openRuns')">{{
+      t('nav.runs')
     }}</BaseButton>
-    <BaseButton class="tiger" :title="t('terminals.openTiger')" @click="emit('openTiger')">Tiger</BaseButton>
     <BaseButton class="new" variant="secondary" @click="emit('create')">{{ t('terminals.newTerminal') }}</BaseButton>
   </header>
 </template>

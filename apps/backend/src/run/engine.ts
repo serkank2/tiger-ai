@@ -13,7 +13,7 @@ import { TURN_RESULT_JSON_SCHEMA } from '../agents/result.js';
 import type { AgentEvent } from '../agents/events.js';
 import { composeSessionPreamble, composeTaskBrief } from '../context/brief.js';
 import { buildProjectMap } from '../context/project-map.js';
-import { computeTeamChanges } from '../team/changes.js';
+import { computeTeamChanges } from '../git/changes.js';
 import {
   VerificationService,
   discoverVerificationCommands,

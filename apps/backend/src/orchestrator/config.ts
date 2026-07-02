@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { AgentType, CliToolConfig, TigerConfig } from './types.js';
+import type { CliToolConfig, TigerConfig } from './types.js';
 
 let tmpSeq = 0;
 
@@ -195,7 +195,7 @@ export function normalizeConfig(parsed: unknown): TigerConfig {
 }
 
 /** Validate a user-supplied PUT /api/tiger/config body. Returns a 400-safe error message if invalid. */
-export function validateConfigPatch(input: unknown, current: TigerConfig): string | null {
+export function validateConfigPatch(input: unknown, _current: TigerConfig): string | null {
   if (!isPlainRecord(input)) return 'config body must be an object';
   const topLevel = ['version', 'cli', 'defaults', 'timing', 'execution'];
   const unknownTop = unknownKey(input, topLevel);
@@ -485,10 +485,6 @@ export function effortsForProvider(provider: Provider): readonly string[] {
   if (provider === 'codex') return TIGER_CODEX_EFFORTS;
   if (provider === 'antigravity') return TIGER_ANTIGRAVITY_EFFORTS;
   return TIGER_CLAUDE_EFFORTS;
-}
-
-function setHas(values: readonly string[], value: unknown): value is string {
-  return typeof value === 'string' && values.includes(value);
 }
 
 /** Load tiger/config.json, normalizing/repairing it; returns defaults if missing or corrupt. */

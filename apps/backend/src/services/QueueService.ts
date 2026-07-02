@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { config } from '../config.js';
-import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
+import { STAGE_ORDER, type StageId } from '../orchestrator/types.js';
 import { RuleEngine } from '../queue/RuleEngine.js';
 import { planRetry } from '../queue/retry.js';
 import {

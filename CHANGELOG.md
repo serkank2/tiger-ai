@@ -19,6 +19,18 @@ section (SemVer — `feat` ⇒ minor, `fix` ⇒ patch, breaking ⇒ major), bump
 
 ## [Unreleased]
 
+### Removed
+- **v1 execution engines deleted (second pass of the v2 redesign):** the Tiger staged pipeline
+  (`orchestrator/Orchestrator.ts`, `AgentSession`, stage compose/tasks/findings machinery), the
+  Team role-chat engine (`team/**` — `TeamOrchestrator`, role sessions, compose-turn, message-bus
+  file contract, sign-off done-gate), their REST routers (`/api/tiger`, `/api/team`), template
+  services, translation service, WS frames, MCP tools, and the frontend Tiger/Team/Templates
+  pages, stores, and component trees. Schema history is preserved verbatim in
+  `db/legacy-migrations.ts`. The queue's `project`/`team` targets now dispatch onto the v2 run
+  engine (create-run / steer), prompt generation runs as a headless v2 turn, Cue steers the v2
+  run, and provider CLI configuration moves to an app-level `providers.json`
+  (`providers/config-store.ts`).
+
 ### Added
 - **v2 execution core (docs/REDESIGN.md):** a full redesign of how Kaplan drives coding agents,
   built from an 18-source competitive study (vibe-kanban, ruflo, OpenHands, SWE-agent, Aider,

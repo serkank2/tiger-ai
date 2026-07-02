@@ -47,16 +47,14 @@ function fakeManager(): FakeManager {
 }
 
 function fakeCtx(manager: FakeManager): AppCtx {
-  const orchestrator = Object.assign(new EventEmitter(), { getState: () => ({ kind: 'tiger' }) });
   const limits = Object.assign(new EventEmitter(), { getState: () => ({ kind: 'limit' }) });
-  const teamOrchestrator = Object.assign(new EventEmitter(), { tryGetState: () => null });
+  const runEngine = Object.assign(new EventEmitter(), { getSnapshot: () => null });
   const promptGenerations = new EventEmitter();
   // queueService omitted (optional) to keep the connection snapshot deterministic.
   return {
     manager,
-    orchestrator,
     limits,
-    teamOrchestrator,
+    runEngine,
     promptGenerations,
     queueService: undefined,
     state: { settings: { commandRouting: { appendNewlineByDefault: true, startTerminalOnSend: true } } },
@@ -123,21 +121,14 @@ test('connection with no Origin (non-browser client) is allowed and gets the ini
   const h = await startServer();
   try {
     const ws = new WebSocket(h.url);
-    const msgs = await collectUntil(
-      ws,
-      (m) => m.some((x) => x.type === 'tiger.state') && m.some((x) => x.type === 'limit.state'),
-    );
-    assert.ok(
-      msgs.find((m) => m.type === 'tiger.state'),
-      'tiger.state snapshot sent on connect',
-    );
+    const msgs = await collectUntil(ws, (m) => m.some((x) => x.type === 'limit.state'));
     assert.ok(
       msgs.find((m) => m.type === 'limit.state'),
       'limit.state snapshot sent on connect',
     );
-    // No team snapshot since tryGetState() returned null.
+    // No run snapshot since getSnapshot() returned null.
     assert.equal(
-      msgs.some((m) => m.type === 'team.state'),
+      msgs.some((m) => m.type === 'run.state'),
       false,
     );
     ws.close();
@@ -272,25 +263,20 @@ test('ping is answered with a pong echoing the timestamp', async () => {
   }
 });
 
-test('team and tiger orchestrator events are broadcast as the matching server frames', async () => {
+test('run engine events are broadcast as run.state / run.event frames', async () => {
   const h = await startServer();
   try {
     const ws = new WebSocket(h.url);
     await once(ws, 'open');
-    const got = collectUntil(ws, (m) => m.some((x) => x.type === 'team.message'));
-    (h.ctx.teamOrchestrator as unknown as EventEmitter).emit('message', {
-      runId: 'run-1',
-      seq: 1,
-      from: 'r1',
-      to: 'all',
-      kind: 'chat',
-      body: 'hello team',
-      createdAt: 'x',
+    const got = collectUntil(ws, (m) => m.some((x) => x.type === 'run.event'));
+    (h.ctx.runEngine as unknown as EventEmitter).emit('engine-event', {
+      kind: 'event',
+      event: { seq: 3, at: 'x', type: 'note', runId: 'run-1', text: 'hello run' },
     });
     const msgs = await got;
-    const frame = msgs.find((m) => m.type === 'team.message') as Extract<ServerMsg, { type: 'team.message' }>;
+    const frame = msgs.find((m) => m.type === 'run.event') as Extract<ServerMsg, { type: 'run.event' }>;
     assert.equal(frame.runId, 'run-1');
-    assert.equal(frame.message.body, 'hello team');
+    assert.equal(frame.event.text, 'hello run');
     ws.close();
   } finally {
     await h.close();

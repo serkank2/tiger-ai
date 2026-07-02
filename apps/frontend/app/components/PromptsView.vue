@@ -32,7 +32,6 @@ const history = usePromptHistoryStore();
 const generation = usePromptGenerationStore();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
-const tiger = useTigerStore();
 const conn = useConnectionStore();
 const notices = useNoticesStore();
 const socket = useSocket();
@@ -54,7 +53,6 @@ const runOnSend = ref(false);
 const sending = ref(false);
 const saving = ref(false);
 const enqueuing = ref(false);
-const usingProject = ref(false);
 const actionError = ref<string | null>(null);
 
 const tabs = computed<{ id: Tab; label: string }[]>(() => [
@@ -103,7 +101,6 @@ const hasReusableText = computed(() => currentSource.value.text.trim().length > 
 const canSend = computed(
   () => conn.status === 'connected' && hasReusableText.value && selectedTermIds.value.length > 0 && !sending.value,
 );
-const canUseAsProjectPrompt = computed(() => tiger.initialized && hasReusableText.value && !usingProject.value);
 
 watch(
   () => `${currentSource.value.kind}:${currentSource.value.title}:${currentSource.value.generationId ?? ''}`,
@@ -289,26 +286,6 @@ function editReusableText(): void {
   notices.push(t('prompts.notices.loadedIntoEditor'), 'info');
 }
 
-async function useAsProjectPrompt(): Promise<void> {
-  if (!canUseAsProjectPrompt.value) return;
-  usingProject.value = true;
-  actionError.value = null;
-  try {
-    if (currentSource.value.kind === 'generation' && currentSource.value.generationId) {
-      await generation.reuse(currentSource.value.generationId, 'use-as-project-prompt');
-      await tiger.load();
-      notices.push(t('prompts.notices.projectPromptUpdated'), 'info');
-    } else {
-      await tiger.replaceProjectPrompt(currentSource.value.text);
-    }
-    await history.fetchAll({}, { silent: true }).catch(() => {});
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    usingProject.value = false;
-  }
-}
-
 async function enqueueReusableText(): Promise<void> {
   if (!hasReusableText.value || enqueuing.value) return;
   enqueuing.value = true;
@@ -316,13 +293,11 @@ async function enqueueReusableText(): Promise<void> {
   try {
     if (currentSource.value.kind === 'generation' && currentSource.value.generationId) {
       await generation.reuse(currentSource.value.generationId, 'enqueue', {
-        workspacePath: tiger.workspace ?? undefined,
         provider: enqueueProvider.value,
       });
     } else {
       await api.enqueueQueueJob({
         prompt: currentSource.value.text,
-        workspacePath: tiger.workspace ?? undefined,
         projectName: currentSource.value.title,
         provider: enqueueProvider.value,
       });
@@ -435,10 +410,7 @@ async function submitGeneration(input: {
   effort?: string;
 }): Promise<void> {
   activeTab.value = 'generation';
-  await generation.start({
-    ...input,
-    projectId: tiger.workspace ?? undefined,
-  });
+  await generation.start(input);
 }
 
 let unbindHistory: (() => void) | null = null;
@@ -450,7 +422,6 @@ onMounted(() => {
   void history.fetchAll().catch(() => {});
   if (!terminals.loaded) void terminals.fetchAll().catch(() => {});
   if (!groups.loaded) void groups.load().catch(() => {});
-  if (!tiger.loaded) void tiger.load().catch(() => {});
   unbindHistory = history.bindSocket();
   unbindGeneration = generation.bindSocket();
 });
@@ -579,14 +550,6 @@ onBeforeUnmount(() => {
 
           <div class="actions">
             <BaseButton variant="secondary" @click="editReusableText">{{ t('prompts.reuse.edit') }}</BaseButton>
-            <BaseButton
-              variant="secondary"
-              :loading="usingProject"
-              :disabled="!canUseAsProjectPrompt"
-              @click="useAsProjectPrompt"
-            >
-              {{ t('prompts.reuse.useAsProjectPrompt') }}
-            </BaseButton>
             <select v-model="enqueueProvider" :aria-label="t('prompts.reuse.queueProvider')">
               <option value="mixed">{{ t('prompts.reuse.mixedQueue') }}</option>
               <option value="claude">{{ t('prompts.reuse.claudeQueue') }}</option>
@@ -608,8 +571,6 @@ onBeforeUnmount(() => {
               {{ t('prompts.reuse.sendToCount', { n: selectedTermIds.length }) }}
             </BaseButton>
           </div>
-
-          <p v-if="!tiger.initialized" class="hint">{{ t('prompts.reuse.openTigerHint') }}</p>
           <p v-if="actionError" class="error">{{ actionError }}</p>
         </template>
       </aside>

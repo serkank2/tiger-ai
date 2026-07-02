@@ -78,14 +78,11 @@ npm run migrate:down -w @kaplan/backend   # roll back the last migration
 ## Backend subsystem map (`apps/backend/src`)
 
 - `agents/` + `run/` + `context/` + `verify/` — the **v2 execution core** (headless agent turns
-  over a WorkGraph with engine-run verification; see `docs/REDESIGN.md` — this supersedes the
-  PTY-driven Tiger/Team execution model, which stays mounted as legacy during migration).
+  over a WorkGraph with engine-run verification; see `docs/REDESIGN.md`). The v1 PTY-driven
+  Tiger/Team engines have been removed; `orchestrator/` retains only provider config + usage
+  probing, and `providers/config-store.ts` is the global CLI-config home.
 - `terminal/` — `TerminalManager` / `TerminalSession`: the `node-pty` PTY model (serialized ops,
   generation tagging, input routing).
-- `orchestrator/` — the Tiger staged pipeline that drives interactive agent CLIs in real PTYs and
-  advances on `.done` completion markers.
-- `team/` — the autonomous AI Team engine (`TeamOrchestrator`): task board, append-only
-  `conversation.jsonl`, and the pure code-enforced done-gate.
 - `queue/` — the MySQL-backed durable command queue + `Scheduler` (lease + `SKIP LOCKED`,
   per-provider lanes).
 - `ws/` — the WebSocket hub that pushes live terminal output and run-state deltas.
@@ -103,7 +100,7 @@ Other directories you will encounter: `http/` (REST routers under `/api`), `serv
   polls for live data).
 - **One Pinia store per domain** on the frontend — the single source of truth components read.
 - **A single authoritative writer per persisted artifact** on the backend (e.g. the
-  `TeamOrchestrator` is the only writer of `conversation.jsonl`).
+  `RunEngine` is the only writer of a run's `events.jsonl`).
 - **Match the surrounding code.** Mirror each file's existing naming, comment density, and idioms
   rather than introducing a new style.
 
@@ -112,14 +109,13 @@ Other directories you will encounter: `http/` (REST routers under `/api`), `serv
 The backend ships a config-gated stdio MCP server that exposes the board to coding agents. It is
 **off by default** and starts only when `KAPLAN_MCP_ENABLED` is set to `1`/`true`/`yes`
 (`apps/backend/src/mcp/server.ts`). When enabled it exposes these tools: `list_queue_jobs`,
-`get_queue_job`, `enqueue_prompt`, `get_tiger_state`, `get_team_run`, `list_team_messages`, and
-`post_team_steering`.
+`get_queue_job`, `enqueue_prompt`, `get_run`, `list_run_events`, and `steer_run`.
 
 ## Do not
 
 - **Never commit a real `.env`.** `.env` and `.env.*` are gitignored; only `*.env.example` files are
   tracked. Never paste real secrets into docs, commits, or the transcript.
-- **`.tiger/` is private team bookkeeping and is gitignored.** Do not commit it, and do not treat its
+- **`.tiger/` is private run bookkeeping and is gitignored.** Do not commit it, and do not treat its
   contents as product source.
 - **No unrelated refactors.** Make the smallest change that fully solves the task; do not reformat or
   "improve" code outside your task while you are in there.

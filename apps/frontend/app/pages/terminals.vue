@@ -90,8 +90,7 @@ watch(shouldPollPreviews, syncPreviewPoll);
       @open-composer="showComposer = true"
       @open-prompts="navigateTo('/prompts')"
       @open-settings="navigateTo('/settings')"
-      @open-tiger="navigateTo('/tiger')"
-      @open-templates="navigateTo('/templates')"
+      @open-runs="navigateTo('/runs')"
     />
 
     <div v-if="terminals.loadError && !terminals.loaded" class="error-shell">

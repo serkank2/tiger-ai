@@ -77,18 +77,13 @@ describe('i18n scaffolding', () => {
       'queue.pipeline.history',
       'queue.pipeline.livePipeline',
       'queue.enqueue.placeholders.prompt',
-      'team.changes.commit',
-      'team.changes.createPr',
-      'team.export.jsonTooltip',
-      'team.export.markdownTooltip',
-      'tiger.runAll.builtInTemplate',
-      'tiger.runAll.customTemplate',
       'prompts.view.saved',
       'prompts.view.unsaved',
       'prompts.view.ready',
       'prompts.generation.status.queued',
       'prompts.generation.status.running',
-      'team.steer.placeholder',
+      'runs.title',
+      'runs.steer',
     ];
 
     for (const key of requiredKeys) {

@@ -37,9 +37,9 @@ retry window — Kaplan never silently boots on stale file state. After migratio
 
 1. Loads the defensively-validated JSON state file (atomic writes, corruption quarantine +
    `.bak`) for UI/terminal definitions.
-2. Constructs the `TerminalManager`, the Tiger `Orchestrator`, the `TeamOrchestrator`, the
-   `QueueService` + `Scheduler`, the `LimitService`, and the template services — all sharing a
-   single MySQL pool (`db/pool.ts`).
+2. Constructs the `TerminalManager`, the v2 `RunEngine`, the `ProviderConfigStore`, the
+   `QueueService` + `Scheduler`, the `LimitService`, and the prompt-generation service — all
+   sharing a single MySQL pool (`db/pool.ts`).
 3. Installs middleware in order: per-request id + child logger + access log
    (`requestContext`), `helmet`, CORS, a server-side Origin guard, optional shared-token auth,
    and an optional per-IP rate limiter.
@@ -87,63 +87,12 @@ run, kill all PTYs, close the DB pool, and exit — with a 2s safety-net timer.
 - **Input routing.** Input is fanned out to a target set — `selected`, a `group`, or `all` —
   with **protected-terminal** exclusion so a destructive broadcast can't hit a guarded session.
 
-### `orchestrator/` — the Tiger staged pipeline
+### Retired: the v1 Tiger staged pipeline and Team role-chat engine
 
-Tiger drives a fixed staged pipeline (`StageId` / `STAGE_ORDER`):
-
-```
-brainstorming → writing-plan → writing-tasks → merge-tasks → executing-plan
-              → task-review → requesting-code-review
-```
-
-- **Interactive, not headless.** Agents run as _interactive_ CLIs in real PTYs (Claude, Codex,
-  Antigravity, …), driven the same way a human would drive them. Completion is detected via a
-  `.done` marker file, with output-idle and hard-timeout fallbacks. This is the project's
-  defining execution model — agents are interactive PTY CLIs, not API calls.
-- **Bounded worker pool.** Fan-out stages and the dynamic claim-drain loops (executing-plan /
-  task-review) share the `worker-pool.ts` helpers: `runPool` (fixed list) and `drainPool`
-  (claim-until-empty). Both guarantee **at most `execution.maxConcurrent` PTYs run at once** —
-  a 20-task stage can no longer launch 20 PTYs.
-- **Worktree-per-task (optional).** With isolation enabled, each task runs in its own git
-  worktree on a throwaway branch off a base ref (`git/worktree.ts`); the result is diffed and
-  merged back, then the worktree is removed — safe parallelism without files stomping.
-- **Atomic claiming.** Tasks and review findings are claimed via atomic file rename, and stale
-  claims are reclaimed on resume (`tasks.ts`, `findings.ts`) so an interrupted run never
-  deadlocks.
-- **Leases.** Execution holds a MySQL execution lease with heartbeat (`persistence.ts`) so a
-  crashed run's lease expires and can be reclaimed.
-
-### `team/` — the AI Team engine
-
-`TeamOrchestrator` runs an autonomous multi-agent team. A **Lead** coordinates role agents
-(business analyst, developer, tester, …) that run as **persistent per-role CLI sessions**
-(`role-session.ts`) so each role's context is preserved across turns.
-
-- **Roles** (`types.ts`): reusable `RoleTemplate`s instantiate into `RoleInstance`s with a
-  persona, responsibilities, CLI config (tool/model/effort/permission), `canWriteCode`, and
-  `requiredForSignoff`. Live status: idle/thinking/working/waiting/blocked/done/failed.
-- **Task board** (`task-board.ts`): a file-backed todo/in-progress/done board drives
-  delegation; claiming is true FIFO across the board (no role starvation).
-- **Message bus** (`message-bus.ts`): the single authoritative writer of `conversation.jsonl`
-  (append-only, `seq`-ordered). It **forces a message's `from` and a sign-off's `roleId` to the
-  executing role**, so one agent can never impersonate another to self-assign work or sign off.
-- **Done-gate** (`completion.ts`): a pure, code-enforced gate. A run completes _only_ when
-  every gate is clear — all tasks done, no pending findings, **verification passed**, no pending
-  steering, and **every required role holds a fresh sign-off** (a board with queued/in-progress
-  per-role work also blocks). `DoneGateState.openBlockers` lists exactly _why_ a run is still
-  open, surfaced to the UI.
-- **Live WS events** (`TeamEvent`): `message`, `state`, `role`, `steering`, `done`, and
-  `changes`. The orchestrator emits each; the WS layer fans them out as `team.<type>` frames.
-- **Run history & metrics**: compact per-turn / per-verification / per-sign-off snapshots plus
-  duration/provider rollups ride in `TeamRunState` (the conversation streams separately).
-- **Git-write** (`git/write.ts`): the Team "Stage / Commit / Create-PR" controls. Every git/gh
-  call uses `spawn(..., { shell: false })` with discrete argv tokens (no shell injection
-  possible) and a timeout; Kaplan deliberately **never** runs a bare `git push`/force-push —
-  `gh pr create` performs its own push.
-- **Changes view** (`changes.ts`): read-only working-tree diff vs HEAD (file list + colorized
-  diff + ± summary), best-effort and degrading cleanly on a non-git workspace.
-- **Stop vs Close**: _Stop_ pauses (sessions stay alive, resumable); _Close_ permanently ends
-  the run (sessions killed, cannot resume).
+Both v1 execution engines (interactive-PTY driving, `.done` markers, role-turn chat,
+sign-off done-gate) were removed after the v2 core landed — see `docs/REDESIGN.md`
+for the autopsy and `db/legacy-migrations.ts` for their preserved schema history.
+The queue's `project`/`team` targets now dispatch onto the v2 run engine.
 
 ### `queue/` + `services/QueueService.ts` — durable command queue
 
@@ -217,8 +166,8 @@ MySQL pool (`db/pool.ts`), idempotent migrations keyed in `schema_migrations`
 
 ## Invariants worth knowing
 
-- **Single authoritative writer** per persisted artifact — e.g. the `TeamOrchestrator` is the
-  only writer of `conversation.jsonl`; the runner only parses and returns.
+- **Single authoritative writer** per persisted artifact — e.g. the `RunEngine` is the only
+  writer of a run's `state.json` / `events.jsonl`.
 - **An agent's output may only ever speak as itself** — the message bus forces a message's
   `from` and a sign-off's `roleId` to the executing role.
 - **One run per workspace** — a MySQL execution lease (with heartbeat) is shared by Tiger and

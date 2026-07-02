@@ -3,11 +3,12 @@
 Executes `docs/REDESIGN.md`. Tasks are **strictly sequential** (one worker, no parallel agents);
 each keeps the tree buildable. Status: ☐ todo · ◐ in progress · ☑ done.
 
-> **Status (2026-07-02):** RT-01…RT-08 landed in the first pass (backend core + control plane +
-> Runs UI; all gates green: backend 599 tests, frontend 260 tests, lint 0 errors, prod build).
-> RT-09/RT-10 are ◐ — the v2 engine supersedes the v1 Team/Tiger execution model and the `mission`
-> profile is live, but the legacy engines/views stay mounted until their surfaces are fully
-> migrated and deleted. RT-11…RT-14 are the follow-up pass.
+> **Status (2026-07-02, second pass):** RT-01…RT-11 and RT-13 are ☑ — the v1 Tiger/Team engines,
+> routes, stores, views, and tests are DELETED (schema history preserved in
+> `db/legacy-migrations.ts`; queue `project`/`team` targets now dispatch onto the v2 run engine;
+> prompt generation runs headless). Remaining: RT-12's diff-review panel on the Runs screen and
+> RT-14's README/config-table rewrite. Gates: backend 312 tests, frontend 171 tests, lint 0
+> errors, both typechecks + prod build green.
 
 ## RT-01 ☑ AgentRuntime foundation (`apps/backend/src/agents/`)
 
@@ -65,18 +66,18 @@ Add `get_brief`, `list_new_messages(afterSeq)`, `post_message`, `claim_task`, `c
 `/api/runs` CRUD + start/stop/steer for v2 runs; WS fan-out of engine events; boot wiring;
 graceful shutdown aborts turns via AbortSignal (no PTY kills for agents).
 
-## RT-09 ◐ Tiger absorbed
+## RT-09 ☑ Tiger retired
 
 Tiger pipeline becomes a preset profile (plan→build→review) on the WorkGraph engine; existing
 Tiger REST/UI surface mapped or explicitly deprecated; stage-file compose machinery deleted.
 
-## RT-10 ◐ Team v1 decommission
+## RT-10 ☑ Team v1 decommissioned
 
 `TeamOrchestrator` role-chat loop, role-session PTY driving, compose-turn, message-bus file
 contract replaced by engine-backed equivalents; conversation/history kept as the engine's event
 log; run history endpoints preserved.
 
-## RT-11 ☐ Support layers reviewed & re-pointed
+## RT-11 ☑ Support layers reviewed & re-pointed
 
 Limits gate consumes real usage/cost from result events; queue/terminals/security/db reviewed,
 dead code deleted (`.done` watchers, stall detection, `/compact` typing, poison/reclaim paths).
@@ -87,13 +88,13 @@ Run board (task graph + statuses), live turn stream (normalized events, not scra
 review, cost meter per turn/task/run, steering box; Pinia stores + types aligned to new DTOs;
 terminals page untouched (human PTYs).
 
-## RT-13 ☐ Test suite realignment
+## RT-13 ☑ Test suite realignment
 
 New units (drivers, result contract, brief composer, graph scheduler, verify service, engine
 loop with fake driver); obsolete v1 tests removed with their code; backend + frontend suites
 green.
 
-## RT-14 ☐ Docs & release
+## RT-14 ◐ Docs & release (ARCHITECTURE/AGENTS/CHANGELOG updated; full README/config-table rewrite pending)
 
 README / ARCHITECTURE / AGENTS.md rewritten for v2; CHANGELOG entry; config flag table
 (`KAPLAN_*`); migration notes for `.tiger` layout.

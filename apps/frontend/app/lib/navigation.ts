@@ -39,22 +39,6 @@ export const NAV_ITEMS: NavItem[] = [
     hint: 'v2 runs — headless agents over a work graph with engine-run checks',
   },
   {
-    key: 'projects',
-    to: '/tiger',
-    label: 'Projects',
-    labelKey: 'nav.projects',
-    icon: '🐅',
-    hint: 'Tiger AI software-team orchestrator',
-  },
-  {
-    key: 'team',
-    to: '/team',
-    label: 'Team',
-    labelKey: 'nav.team',
-    icon: '👥',
-    hint: 'AI Team — role agents that converse, build, and sign off',
-  },
-  {
     key: 'queue',
     to: '/queue',
     label: 'Queue',
@@ -77,14 +61,6 @@ export const NAV_ITEMS: NavItem[] = [
     labelKey: 'nav.prompts',
     icon: '💬',
     hint: 'Prompt history and generation',
-  },
-  {
-    key: 'templates',
-    to: '/templates',
-    label: 'Templates',
-    labelKey: 'nav.templates',
-    icon: '🧩',
-    hint: 'Run-all templates and presets',
   },
   {
     key: 'limits',

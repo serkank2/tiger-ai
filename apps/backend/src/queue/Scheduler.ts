@@ -1,36 +1,27 @@
-import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import { nanoid } from 'nanoid';
-import {
-  STAGE_ORDER,
-  type OrchestratorState,
-  type StageId,
-  type StageRunConfig,
-  type TigerConfig,
-} from '../orchestrator/types.js';
-import type { ExecutionOwner } from '../orchestrator/persistence.js';
 import type { QueueService, QueueControlEvent } from '../services/QueueService.js';
 import type { QueueJob, QueueTargetType, QueueTeamTargetPayload, QueueTerminalTargetPayload } from './types.js';
 import type { PersistedState, TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
-import type { CreateTeamRunInput } from '../team/TeamOrchestrator.js';
 
-export interface QueueOrchestrator extends EventEmitter {
-  initialize(workspace: string, projectPrompt: string): Promise<void>;
-  getConfig(): TigerConfig;
-  getState(): OrchestratorState;
-  startStage(stageId: StageId, cfg: StageRunConfig, auto?: boolean): void;
-  stopStage(): void;
-  setExecutionOwner(owner: ExecutionOwner | null): void;
-}
+// ---------------------------------------------------------------------------
+// Queue dispatcher. Leases jobs (SKIP LOCKED upstream) and executes them
+// against one of two targets:
+//   - terminal: create + start a PTY terminal with the job's command (human
+//     terminals remain a first-class feature).
+//   - run (legacy target types 'project' and 'team' both map here): drive the
+//     v2 RunEngine — 'project'/'team create' jobs become a new run with the
+//     job's prompt as the goal; 'team append' jobs steer the active run. The
+//     v1 Tiger stage pipeline and Team role-chat these targets used to drive
+//     are gone (docs/REDESIGN.md).
+// ---------------------------------------------------------------------------
 
 export interface SchedulerOptions {
   owner?: string;
-  /** Execution owner persisted for queue-dispatched runs. Defaults to a per-process `queue:*` owner. */
-  executionOwner?: ExecutionOwner;
   leaseMs?: number;
   idlePollMs?: number;
   terminalTarget?: QueueTerminalTargetRuntime;
-  teamTarget?: QueueTeamTargetRuntime;
+  runTarget?: QueueRunTargetRuntime;
 }
 
 export interface QueueTerminalTargetRuntime {
@@ -42,41 +33,26 @@ export interface QueueTerminalTargetRuntime {
   save(): Promise<void>;
 }
 
-export interface QueueTeamTargetRuntime {
-  tryGetState(): { runId: string } | null;
+/** Minimal structural view of the v2 RunEngine the scheduler drives. */
+export interface QueueRunTargetRuntime {
+  getSnapshot(): { runId: string; status: string } | null;
+  createRun(input: { workspace: string; goal: string }): Promise<{ runId: string }>;
+  start(): { runId: string; status: string };
+  stop(reason?: string): Promise<unknown>;
   steer(body: string): Promise<unknown>;
-  createTeamRun(input: CreateTeamRunInput): Promise<{ runId: string }>;
-  start(): Promise<unknown>;
+  on(event: 'engine-event', listener: (payload: QueueRunEngineEvent) => void): unknown;
+  off(event: 'engine-event', listener: (payload: QueueRunEngineEvent) => void): unknown;
 }
 
-const TERMINAL_STAGE_STATUSES = new Set(['completed', 'failed', 'stopped']);
+export interface QueueRunEngineEvent {
+  kind: string;
+  state?: { runId: string; status: string; message?: string };
+}
+
+const RUN_TERMINAL_STATUSES = new Set(['completed', 'blocked', 'failed', 'stopped']);
 
 function nowMs(): number {
   return Date.now();
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function defaultStageConfig(config: TigerConfig, stageId: StageId): StageRunConfig {
-  const d = config.defaults;
-  return {
-    claudeAgents: d.claudeAgents,
-    codexAgents: d.codexAgents,
-    antigravityAgents: d.antigravityAgents,
-    claudeModel: d.claudeModel,
-    codexModel: d.codexModel,
-    antigravityModel: d.antigravityModel,
-    claudeEffort: d.claudeEffort,
-    codexEffort: d.codexEffort,
-    antigravityEffort: d.antigravityEffort,
-    claudePermission: d.claudePermission,
-    codexPermission: d.codexPermission,
-    antigravityPermission: d.antigravityPermission,
-    parallel: d.parallel,
-    mergeAgent: stageId === 'merge-tasks' ? 'claude' : undefined,
-  };
 }
 
 function messageFromUnknown(err: unknown): string {
@@ -114,18 +90,12 @@ function teamPayload(job: QueueJob): QueueTeamTargetPayload {
   return payload as unknown as QueueTeamTargetPayload;
 }
 
-function teamRoles(value: unknown): CreateTeamRunInput['roles'] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map((role) => ({ ...role })) as CreateTeamRunInput['roles'];
-}
-
 export class Scheduler {
   private readonly owner: string;
-  private readonly executionOwner: ExecutionOwner;
   private readonly leaseMs: number;
   private readonly idlePollMs: number;
   private readonly terminalTarget?: QueueTerminalTargetRuntime;
-  private readonly teamTarget?: QueueTeamTargetRuntime;
+  private readonly runTarget?: QueueRunTargetRuntime;
   private wakeTimer: NodeJS.Timeout | null = null;
   private resumeTimer: NodeJS.Timeout | null = null;
   private working = false;
@@ -134,15 +104,13 @@ export class Scheduler {
 
   constructor(
     private readonly queue: QueueService,
-    private readonly orchestrator: QueueOrchestrator,
     options: SchedulerOptions = {},
   ) {
-    this.owner = options.owner ?? `queue-${process.pid}`;
-    this.executionOwner = options.executionOwner ?? { type: 'queue', id: `${process.pid}:${nanoid(6)}` };
+    this.owner = options.owner ?? `queue-${process.pid}-${nanoid(4)}`;
     this.leaseMs = options.leaseMs ?? 60_000;
     this.idlePollMs = options.idlePollMs ?? 5_000;
     this.terminalTarget = options.terminalTarget;
-    this.teamTarget = options.teamTarget;
+    this.runTarget = options.runTarget;
   }
 
   async start(): Promise<void> {
@@ -176,7 +144,9 @@ export class Scheduler {
 
   private readonly onQueueControl = (evt: QueueControlEvent): void => {
     if (evt.jobId !== this.activeJobId) return;
-    if (evt.action === 'pause' || evt.action === 'cancel') this.orchestrator.stopStage();
+    if (evt.action === 'pause' || evt.action === 'cancel') {
+      void this.runTarget?.stop(`Queue job ${evt.action} requested.`);
+    }
   };
 
   private async runLoop(): Promise<void> {
@@ -222,7 +192,7 @@ export class Scheduler {
         await this.runTeamJob(job);
         return;
       }
-      await this.runProjectJob(job);
+      await this.runWorkspaceJob(job);
     } catch (err) {
       const targetType = effectiveTargetType(job);
       await this.queue.failJob(
@@ -232,63 +202,22 @@ export class Scheduler {
       );
     } finally {
       if (leaseRefresh) clearInterval(leaseRefresh);
-      this.orchestrator.setExecutionOwner(null);
       this.activeJobId = null;
     }
   }
 
-  private async runProjectJob(job: QueueJob): Promise<void> {
-    // Persist every Tiger stage this job dispatches under the queue owner so execution_runs,
-    // run_stages, agent_runs, task claims, and finding claims are recorded as queue-owned (not manual).
-    this.orchestrator.setExecutionOwner(this.executionOwner);
+  /** 'project' jobs: run the queued prompt as a full v2 run against the workspace. */
+  private async runWorkspaceJob(job: QueueJob): Promise<void> {
+    const target = this.requireRunTarget();
     await fs.mkdir(job.workspacePath, { recursive: true });
-    await this.orchestrator.initialize(job.workspacePath, job.prompt);
-
-    const steps = await this.queue.listSteps(job.id);
-    const fromStage = job.configSnapshot.fromStage;
-    const fromIndex = fromStage ? STAGE_ORDER.indexOf(fromStage) : 0;
-    const firstIndex = fromIndex >= 0 ? fromIndex : 0;
-
-    for (const stage of STAGE_ORDER.slice(firstIndex)) {
-      if (this.stopped) return;
-      const latest = await this.queue.getJob(job.id);
-      if (!latest || latest.status !== 'running') return;
-
-      const step =
-        steps.find((s) => s.stepKey === stage) ?? (await this.queue.listSteps(job.id)).find((s) => s.stepKey === stage);
-      if (step?.status === 'completed' || step?.status === 'skipped') continue;
-
-      const decision = await this.queue.evaluateJobRules(latest);
-      if (!decision.allowed) {
-        await this.queue.blockRunningJob(job.id, decision);
-        await this.queue.markStepPending(job.id, stage, decision.reason);
-        return;
-      }
-
-      await this.queue.markStepRunning(job.id, stage);
-      const cfg = job.configSnapshot.configs?.[stage] ?? defaultStageConfig(this.orchestrator.getConfig(), stage);
-      const outcome = await this.runStage(stage, cfg);
-      const after = await this.queue.getJob(job.id);
-      if (!after) return;
-      if (after.status === 'paused') {
-        await this.queue.markStepPending(job.id, stage, 'Paused by user.');
-        return;
-      }
-      if (after.status === 'canceled') {
-        await this.queue.markStepPending(job.id, stage, 'Canceled by user.');
-        return;
-      }
-      if (outcome.status === 'completed') {
-        await this.queue.markStepCompleted(job.id, stage);
-        continue;
-      }
-      const reason = outcome.message || `Stage ${stage} ended with status ${outcome.status}.`;
-      await this.queue.markStepFailed(job.id, stage, reason);
-      await this.queue.failJob(job.id, reason);
+    const created = await target.createRun({ workspace: job.workspacePath, goal: job.prompt });
+    await this.queue.recordTargetRef(job.id, { runId: created.runId });
+    const outcome = await this.driveRunToEnd(target, created.runId);
+    if (outcome.status === 'completed') {
+      await this.queue.completeJob(job.id);
       return;
     }
-
-    await this.queue.completeJob(job.id);
+    await this.queue.failJob(job.id, outcome.message ?? `run ended with status ${outcome.status}`, 'run_dispatch');
   }
 
   private async runTerminalJob(job: QueueJob): Promise<void> {
@@ -319,52 +248,64 @@ export class Scheduler {
     await this.queue.completeJob(job.id);
   }
 
+  /** 'team' jobs map onto the v2 run: append = steer the active run; create = new run. */
   private async runTeamJob(job: QueueJob): Promise<void> {
-    if (!this.teamTarget) throw new Error('Queue team target is not configured.');
+    const target = this.requireRunTarget();
     const payload = teamPayload(job);
     const body = job.body ?? job.prompt;
     if (payload.mode === 'append') {
-      const active = this.teamTarget.tryGetState();
+      const active = target.getSnapshot();
       if (!active || active.runId !== payload.runId) {
-        throw new Error(`No active team run is available for ${payload.runId}.`);
+        throw new Error(`No active run is available for ${payload.runId}.`);
       }
-      await this.teamTarget.steer(body);
+      await target.steer(body);
       await this.queue.recordTargetRef(job.id, { runId: active.runId });
       await this.queue.completeJob(job.id);
       return;
     }
 
-    const created = await this.teamTarget.createTeamRun({
+    const created = await target.createRun({
       workspace: payload.workspacePath ?? payload.workspace ?? job.workspacePath,
       goal: body,
-      roles: teamRoles(payload.roles),
-      orchestrationMode: payload.orchestrationMode,
     });
-    await this.teamTarget.start();
     await this.queue.recordTargetRef(job.id, { runId: created.runId });
-    await this.queue.completeJob(job.id);
+    const outcome = await this.driveRunToEnd(target, created.runId);
+    if (outcome.status === 'completed') {
+      await this.queue.completeJob(job.id);
+      return;
+    }
+    await this.queue.failJob(job.id, outcome.message ?? `run ended with status ${outcome.status}`, 'run_dispatch');
   }
 
-  private runStage(stageId: StageId, cfg: StageRunConfig): Promise<{ status: string; message?: string }> {
+  /** Start the created run and resolve when the engine reports a terminal status. */
+  private driveRunToEnd(target: QueueRunTargetRuntime, runId: string): Promise<{ status: string; message?: string }> {
     return new Promise((resolve, reject) => {
-      const onState = (state: OrchestratorState): void => {
-        const stage = state.stages[stageId];
-        if (!stage || stage.status === 'running' || !TERMINAL_STAGE_STATUSES.has(stage.status)) return;
+      const onEvent = (payload: QueueRunEngineEvent): void => {
+        if (payload.kind !== 'state' || payload.state?.runId !== runId) return;
+        if (!RUN_TERMINAL_STATUSES.has(payload.state.status)) return;
         cleanup();
-        resolve({ status: stage.status, message: stage.message });
+        resolve({ status: payload.state.status, message: payload.state.message });
       };
       const cleanup = (): void => {
-        this.orchestrator.off('state', onState);
+        target.off('engine-event', onEvent);
       };
-      this.orchestrator.on('state', onState);
+      target.on('engine-event', onEvent);
       try {
-        this.orchestrator.startStage(stageId, cfg, false);
-        onState(this.orchestrator.getState());
+        const started = target.start();
+        if (RUN_TERMINAL_STATUSES.has(started.status)) {
+          cleanup();
+          resolve({ status: started.status });
+        }
       } catch (err) {
         cleanup();
         reject(err);
       }
     });
+  }
+
+  private requireRunTarget(): QueueRunTargetRuntime {
+    if (!this.runTarget) throw new Error('Queue run target is not configured.');
+    return this.runTarget;
   }
 
   private async armResumeTimer(): Promise<void> {

@@ -7,9 +7,6 @@ import type { CommandTarget, TerminalRuntimeStatus } from '../store/types.js';
 import { parseClientMessage, type ServerMsg } from './protocol.js';
 import { logger } from '../obs/logger.js';
 import { verifyUpgrade } from '../http/middleware/auth.js';
-import { toTeamRunStateDto } from '../team/snapshot.js';
-import type { TeamRunState as EngineTeamRunState } from '../team/TeamOrchestrator.js';
-import type { TeamMessage, RoleSnapshot, DoneGateState, SteeringDirective, TeamChangesEvent } from '../team/types.js';
 
 interface Peer {
   ws: WebSocket;
@@ -58,7 +55,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     },
   });
   const peers = new Set<Peer>();
-  const { manager, state, orchestrator, queueService, promptGenerations, limits, teamOrchestrator, runEngine } = ctx;
+  const { manager, state, queueService, promptGenerations, limits, runEngine } = ctx;
 
   const send = (ws: WebSocket, msg: ServerMsg): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -102,12 +99,6 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   manager.on('status', onStatus);
   manager.on('exit', onExit);
 
-  // Tiger orchestrator state: push the full snapshot to every peer whenever it changes.
-  // (Agent terminal output itself rides the term.* path above, since orchestrator agents
-  // run on the shared manager.)
-  const onTigerState = (s: import('../orchestrator/types.js').OrchestratorState) =>
-    broadcast({ type: 'tiger.state', state: s });
-  orchestrator.on('state', onTigerState);
   const onQueueState = (s: import('../queue/types.js').QueueState) => broadcast({ type: 'queue.state', state: s });
   queueService?.on('state', onQueueState);
   const onGenerationState = (s: import('../services/PromptGenerationService.js').PromptGenerationState) =>
@@ -118,29 +109,6 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
   queueService?.on('history.changed', onHistoryChanged);
   const onLimitState = (s: import('../limits/types.js').LimitStatus) => broadcast({ type: 'limit.state', state: s });
   limits.on('state', onLimitState);
-
-  // AI Team: push the compact run snapshot on every state change, and stream each
-  // new conversation message live so the company-chat panel updates in real time.
-  const onTeamState = (s: EngineTeamRunState) =>
-    broadcast({ type: 'team.state', runId: s.runId, state: toTeamRunStateDto(s) });
-  teamOrchestrator.on('state', onTeamState);
-  const onTeamMessage = (m: TeamMessage) => broadcast({ type: 'team.message', runId: m.runId, message: m });
-  teamOrchestrator.on('message', onTeamMessage);
-  // Live per-role status, done-gate progress, injected steering, and the git changeset
-  // summary. The `changes` event is gated on having a listener (the orchestrator only
-  // computes the diff when someone is listening), so attaching here is what makes it fire.
-  const onTeamRole = (p: { runId: string; role: RoleSnapshot }) =>
-    broadcast({ type: 'team.role', runId: p.runId, role: p.role });
-  teamOrchestrator.on('role', onTeamRole);
-  const onTeamDone = (p: { runId: string; gate: DoneGateState }) =>
-    broadcast({ type: 'team.done', runId: p.runId, gate: p.gate });
-  teamOrchestrator.on('done', onTeamDone);
-  const onTeamSteering = (p: { runId: string; directive: SteeringDirective }) =>
-    broadcast({ type: 'team.steering', runId: p.runId, directive: p.directive });
-  teamOrchestrator.on('steering', onTeamSteering);
-  const onTeamChanges = (p: { runId: string; changes: TeamChangesEvent }) =>
-    broadcast({ type: 'team.changes', runId: p.runId, changes: p.changes });
-  teamOrchestrator.on('changes', onTeamChanges);
 
   // v2 run engine: one multiplexed handler — full snapshots as `run.state`,
   // per-turn normalized agent/verification/item events as `run.event`.
@@ -154,11 +122,7 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     const peer: Peer = { ws, attached: new Set(), alive: true };
     peers.add(peer);
     // Send the current orchestrator snapshot immediately so a fresh client is in sync.
-    send(ws, { type: 'tiger.state', state: orchestrator.getState() });
     send(ws, { type: 'limit.state', state: limits.getState() });
-    const teamSnapshot = teamOrchestrator.tryGetState();
-    if (teamSnapshot)
-      send(ws, { type: 'team.state', runId: teamSnapshot.runId, state: toTeamRunStateDto(teamSnapshot) });
     const runSnapshot = runEngine?.getSnapshot();
     if (runSnapshot) send(ws, { type: 'run.state', runId: runSnapshot.runId, state: runSnapshot });
     if (queueService)
@@ -289,13 +253,6 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     manager.off('output', onOutput);
     manager.off('status', onStatus);
     manager.off('exit', onExit);
-    orchestrator.off('state', onTigerState);
-    teamOrchestrator.off('state', onTeamState);
-    teamOrchestrator.off('message', onTeamMessage);
-    teamOrchestrator.off('role', onTeamRole);
-    teamOrchestrator.off('done', onTeamDone);
-    teamOrchestrator.off('steering', onTeamSteering);
-    teamOrchestrator.off('changes', onTeamChanges);
     queueService?.off('state', onQueueState);
     promptGenerations.off('state', onGenerationState);
     promptGenerations.off('history.changed', onHistoryChanged);

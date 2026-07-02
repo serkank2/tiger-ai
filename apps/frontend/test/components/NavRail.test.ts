@@ -28,10 +28,10 @@ describe('NavRail', () => {
   });
 
   it('marks the active item from a nested route prefix', () => {
-    const wrapper = mountRail('/tiger/run');
+    const wrapper = mountRail('/runs/live');
     const active = wrapper.findAll('a.item.active');
     expect(active).toHaveLength(1);
-    expect(active[0]!.text()).toContain('Projects');
+    expect(active[0]!.text()).toContain('Runs');
   });
 
   it('marks nothing active for an unknown path', () => {

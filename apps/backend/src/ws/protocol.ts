@@ -1,17 +1,8 @@
 import type { CommandTarget, TerminalRunState } from '../store/types.js';
-import type { OrchestratorState } from '../orchestrator/types.js';
 import type { QueueState } from '../queue/types.js';
 import type { PromptGenerationState } from '../services/PromptGenerationService.js';
 import type { LimitStatus } from '../limits/types.js';
 import type { RunEvent, RunSnapshot } from '../run/types.js';
-import type {
-  TeamRunState,
-  TeamMessage,
-  RoleSnapshot,
-  DoneGateState,
-  SteeringDirective,
-  TeamChangesEvent,
-} from '../team/types.js';
 
 // ---------------------------------------------------------------------------
 // WebSocket message protocol. One socket per browser window; terminals are
@@ -117,11 +108,6 @@ export interface PongMsg {
   type: 'pong';
   ts?: number;
 }
-/** Full Tiger orchestrator state snapshot pushed whenever it changes. */
-export interface TigerStateMsg {
-  type: 'tiger.state';
-  state: OrchestratorState;
-}
 /** Full queue state snapshot pushed whenever it changes. */
 export interface QueueStateMsg {
   type: 'queue.state';
@@ -140,42 +126,6 @@ export interface HistoryChangedMsg {
 export interface LimitStateMsg {
   type: 'limit.state';
   state: LimitStatus;
-}
-/** Compact AI-team run snapshot pushed whenever the run state changes. */
-export interface TeamStateMsg {
-  type: 'team.state';
-  runId: string;
-  state: TeamRunState;
-}
-/** A single new AI-team conversation message appended to the live transcript. */
-export interface TeamMessageMsg {
-  type: 'team.message';
-  runId: string;
-  message: TeamMessage;
-}
-/** Compact per-role state update pushed whenever a role's live status changes. */
-export interface TeamRoleMsg {
-  type: 'team.role';
-  runId: string;
-  role: RoleSnapshot;
-}
-/** The run's done-gate snapshot pushed whenever completion progress changes. */
-export interface TeamDoneMsg {
-  type: 'team.done';
-  runId: string;
-  gate: DoneGateState;
-}
-/** A steering directive injected into the run, pushed to all peers. */
-export interface TeamSteeringMsg {
-  type: 'team.steering';
-  runId: string;
-  directive: SteeringDirective;
-}
-/** The run's git changeset summary, pushed when the working tree changes. */
-export interface TeamChangesMsg {
-  type: 'team.changes';
-  runId: string;
-  changes: TeamChangesEvent;
 }
 /** v2 run engine: full run snapshot pushed on every state change. */
 export interface RunStateMsg {
@@ -199,17 +149,10 @@ export type ServerMsg =
   | ErrorMsg
   | BroadcastResultMsg
   | PongMsg
-  | TigerStateMsg
   | QueueStateMsg
   | GenerationStateMsg
   | HistoryChangedMsg
   | LimitStateMsg
-  | TeamStateMsg
-  | TeamMessageMsg
-  | TeamRoleMsg
-  | TeamDoneMsg
-  | TeamSteeringMsg
-  | TeamChangesMsg
   | RunStateMsg
   | RunEventMsg;
 

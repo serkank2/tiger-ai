@@ -18,28 +18,19 @@ import { createGroupsRouter } from './http/groups.routes.js';
 import { createSettingsRouter } from './http/settings.routes.js';
 import { createFsRouter } from './http/fs.routes.js';
 import { createPromptsRouter } from './http/prompts.routes.js';
-import { createTigerRouter } from './http/tiger.routes.js';
 import { createLimitsRouter } from './http/limits.routes.js';
 import { createQueueRouter } from './http/queue.routes.js';
-import { createTeamRouter } from './http/team.routes.js';
 import { createCueRouter } from './http/cue.routes.js';
 import { createRunsRouter } from './http/runs.routes.js';
 import { RunEngine } from './run/engine.js';
 import { CueEngine } from './cue/CueEngine.js';
 import { ensurePromptsDir } from './prompts/store.js';
 import { createWsServer } from './ws/socket.js';
-import { Orchestrator } from './orchestrator/Orchestrator.js';
-import { MySqlExecutionPersistence } from './orchestrator/persistence.js';
 import { closeDbPool, getDbPool } from './db/pool.js';
 import { migrate } from './db/migrate.js';
-import { MySqlRunTemplateRepository } from './repositories/run-templates.js';
 import { MySqlLimitRepository } from './repositories/LimitRepository.js';
 import { MysqlQueueRepository } from './queue/MysqlQueueRepository.js';
-import { MySqlTeamTemplateRepository } from './repositories/team-templates.js';
-import { RunTemplateService } from './services/run-templates.js';
-import { TeamTemplateService } from './services/team-templates.js';
-import { TeamTranslationService } from './services/TeamTranslationService.js';
-import { TeamOrchestrator, createTeamTurnRunner } from './team/TeamOrchestrator.js';
+import { ProviderConfigStore } from './providers/config-store.js';
 import { createDefaultPromptGenerationService } from './services/PromptGenerationService.js';
 import { LimitService } from './services/LimitService.js';
 import { QueueService } from './services/QueueService.js';
@@ -64,13 +55,11 @@ const state = await loadState();
 await ensurePromptsDir(); // create <repo>/prompts (or KAPLAN_PROMPTS_DIR) if missing
 const manager = new TerminalManager();
 manager.setDefinitions(state.terminals);
-const dbPool = await getDbPool();
 const save = () => saveState(state);
-const orchestrator = new Orchestrator(manager, {
-  persistence: new MySqlExecutionPersistence(dbPool),
-});
-const runTemplates = new RunTemplateService(new MySqlRunTemplateRepository(dbPool), () => orchestrator.getConfig());
-orchestrator.setRunTemplateService(runTemplates);
+// Global provider CLI configuration (executables/models/permission modes) — the
+// single config source the run engine, prompt generation, and queue read.
+const providerConfig = new ProviderConfigStore();
+await providerConfig.initialize();
 const limits = new LimitService({
   manager,
   state,
@@ -81,77 +70,31 @@ const limits = new LimitService({
 });
 await limits.initialize();
 const queueService = new QueueService(new MysqlQueueRepository());
-const promptGenerations = createDefaultPromptGenerationService(
-  manager,
-  state,
-  () => orchestrator.getConfig(),
-  () => {
-    const tiger = orchestrator.getState();
-    return { projectId: tiger.workspace, tigerRoot: tiger.tigerRoot };
-  },
-);
-
-// AI Team: reusable role/team templates and the autonomous run engine. The team
-// engine drives real CLI turns on the shared TerminalManager (same path Tiger
-// uses) and shares the per-workspace execution lease so a Team run and a Tiger
-// stage can never spawn agents against the same .tiger root at once.
-const teamTemplates = new TeamTemplateService(new MySqlTeamTemplateRepository(dbPool), () => orchestrator.getConfig());
-const teamOrchestrator = new TeamOrchestrator({
-  executionPersistence: new MySqlExecutionPersistence(dbPool),
-  runner: createTeamTurnRunner({ manager, config: orchestrator.getConfig() }),
-  limitService: limits,
-  // Live runs default to parallel "company" orchestration: the Lead fans independent work out to
-  // multiple developers at once, each isolated in its own git worktree (merged back on completion)
-  // so simultaneous writers never collide. Falls back to a single writer on non-git workspaces.
-  // When the matching KAPLAN_TEAM_* env var is explicitly set we honor it (config already parsed
-  // it); otherwise we apply the parallel live defaults. The raw config defaults stay sequential so
-  // unit tests that construct an orchestrator without options keep their deterministic behavior.
-  orchestrationMode: process.env.KAPLAN_TEAM_ORCHESTRATION_MODE ? config.team.orchestrationMode : 'company',
-  worktreePerTask: process.env.KAPLAN_TEAM_WORKTREE_PER_TASK ? config.team.worktreePerTask : true,
-  maxConcurrentReadOnly: process.env.KAPLAN_TEAM_MAX_CONCURRENT_READ_ONLY ? config.team.maxConcurrentReadOnly : 4,
-  maxConcurrentWrite: process.env.KAPLAN_TEAM_MAX_CONCURRENT_WRITE ? config.team.maxConcurrentWrite : 4,
-});
-const queueScheduler = new Scheduler(queueService, orchestrator, {
-  terminalTarget: { state, manager, save },
-  teamTarget: teamOrchestrator,
-});
-const teamTranslations = new TeamTranslationService({ manager, getConfig: () => orchestrator.getConfig() });
 
 // v2 run engine: headless agent turns (stream-json / exec --json) over a
-// WorkGraph — no PTYs, no marker files. CLI executables/flags come from the
-// same Tiger config store the legacy engines read, so provider settings stay
-// in one place during the migration.
-const runEngine = new RunEngine({ loadCliConfig: async () => orchestrator.getConfig() });
+// WorkGraph — no PTYs, no marker files (docs/REDESIGN.md).
+const runEngine = new RunEngine({ loadCliConfig: async () => providerConfig.getConfig() });
+const promptGenerations = createDefaultPromptGenerationService(
+  state,
+  () => providerConfig.getConfig(),
+  () => ({ projectId: runEngine.getSnapshot()?.workspace ?? null, tigerRoot: null }),
+);
+const queueScheduler = new Scheduler(queueService, {
+  terminalTarget: { state, manager, save },
+  runTarget: runEngine,
+});
 
 const ctx: AppCtx = {
   state,
   manager,
-  orchestrator,
-  runTemplates,
   promptGenerations,
   queueService,
   limits,
-  teamOrchestrator,
-  teamTemplates,
-  teamTranslations,
   runEngine,
+  providerConfig,
   save,
 };
 
-// Tiger opens to a project launcher (no auto-attach). Migrate a legacy lastWorkspace into the
-// projects list so existing projects still appear in the launcher.
-if (state.tiger?.lastWorkspace) {
-  state.tiger.projects ??= [];
-  if (!state.tiger.projects.includes(state.tiger.lastWorkspace)) {
-    state.tiger.projects.push(state.tiger.lastWorkspace);
-    void saveState(state);
-  }
-}
-
-await runTemplates.initialize({
-  legacyTemplateDirs: legacyRunTemplateDirs(state.tiger?.projects ?? []),
-});
-await teamTemplates.initialize();
 await queueScheduler.start();
 
 const app = express();
@@ -191,13 +134,8 @@ if (config.rateLimit.enabled) {
 // JSON parser, mounted BEFORE the global 64kb cap so prompt writes aren't pre-limited.
 app.use('/api/prompts', express.json({ limit: '160kb' }), createPromptsRouter(ctx));
 
-// Tiger accepts a full project prompt (can be large) on /workspace — give it a roomier parser
-// mounted before the global tight cap.
-app.use('/api/tiger', express.json({ limit: '2mb' }), createTigerRouter(ctx));
 app.use('/api/queue', express.json({ limit: '2mb' }), createQueueRouter(ctx));
-// Team goals/personas can be sizable; give this router a roomier parser too.
-app.use('/api/team', express.json({ limit: '2mb' }), createTeamRouter(ctx));
-// v2 runs: goals can be long documents; match the team parser budget.
+// v2 runs: goals can be long documents; give this router a roomier parser.
 app.use('/api/runs', express.json({ limit: '2mb' }), createRunsRouter(ctx));
 
 app.use(express.json({ limit: '64kb' })); // payloads are tiny; cap well below any abuse
@@ -305,14 +243,11 @@ async function shutdown(signal: string): Promise<void> {
   queueScheduler.stop();
   if (cueEngine) await cueEngine.stop().catch(() => {});
   if (mcp) await mcp.close().catch(() => {});
-  orchestrator.stopStage(); // abort any running stage so no new agents spawn
-  if (teamOrchestrator.tryGetState()) await teamOrchestrator.close('Backend shutting down.').catch(() => {});
   // v2 runs: abort in-flight headless turns (kills the process trees, persists state).
   if (runEngine.getSnapshot()?.status === 'running') await runEngine.stop('Backend shutting down.').catch(() => {});
   limits.stop();
   manager.beginShutdown();
   await autostartDone.catch(() => {});
-  await orchestrator.killAgents();
   await manager.killAll();
 
   // Safety net: if draining hangs on lingering sockets, force exit so shutdown can't wedge.
@@ -338,13 +273,6 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection', { err: reason });
 });
-
-function legacyRunTemplateDirs(projects: string[]): string[] {
-  const dirs = new Set<string>();
-  dirs.add(path.join(config.repoRoot, '.tiger', 'run-templates'));
-  for (const project of projects) dirs.add(path.join(project, '.tiger', 'run-templates'));
-  return [...dirs];
-}
 
 async function pingDb(): Promise<boolean> {
   try {

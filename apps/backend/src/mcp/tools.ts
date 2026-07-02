@@ -11,7 +11,7 @@ import { isWorkspaceAllowed } from '../security/workspace.js';
  * actual board logic is testable without spinning up a transport or a real DB.
  *
  * The toolset is deliberately READ-heavy with a few SAFE additive writes
- * (`enqueue_prompt`, `post_team_steering`). Destructive board operations
+ * (`enqueue_prompt`, `steer_run`). Destructive board operations
  * (cancel/pause/delete) are intentionally excluded from the initial surface.
  */
 
@@ -161,68 +161,6 @@ export function buildTools(): McpToolDef[] {
           provider: job.provider,
           projectName: job.projectName,
         };
-      },
-    }),
-    // ----------------------------------------------------------------- tiger (read)
-    defineTool({
-      name: 'get_tiger_state',
-      title: 'Get Tiger orchestrator state',
-      description:
-        'Snapshot of the Tiger multi-agent orchestrator: active workspace, current stage, busy flag, stage list, task/findings summaries.',
-      inputShape: {},
-      readOnly: true,
-      async run(ctx) {
-        return ctx.orchestrator.getState();
-      },
-    }),
-    // ------------------------------------------------------------------ team (read)
-    defineTool({
-      name: 'get_team_run',
-      title: 'Get active team run',
-      description:
-        'Snapshot of the AI-team run currently held in memory (status, roles, directives, sign-offs). Returns active=false when no run is loaded.',
-      inputShape: {},
-      readOnly: true,
-      async run(ctx) {
-        const state = ctx.teamOrchestrator.tryGetState();
-        if (!state) return { active: false };
-        return { active: true, run: state };
-      },
-    }),
-    defineTool({
-      name: 'list_team_messages',
-      title: 'List team messages',
-      description:
-        'List messages from the active team run conversation, optionally only those after a given sequence number (for polling).',
-      inputShape: {
-        afterSeq: z
-          .number()
-          .int()
-          .nonnegative()
-          .optional()
-          .describe('Return only messages with seq greater than this value.'),
-      },
-      readOnly: true,
-      async run(ctx, args) {
-        if (!ctx.teamOrchestrator.tryGetState()) return { active: false, messages: [] };
-        const messages = await ctx.teamOrchestrator.listMessages(args.afterSeq ?? 0);
-        return { active: true, count: messages.length, messages };
-      },
-    }),
-    // ------------------------------------------------------------------ team (write)
-    defineTool({
-      name: 'post_team_steering',
-      title: 'Post a team steering directive',
-      description:
-        "Send a steering directive to the Lead of the active team run. Queued FIFO and picked up on the Lead's next turn. Fails if no steerable run is active.",
-      inputShape: { body: z.string().min(1).describe('The steering directive text.') },
-      readOnly: false,
-      async run(ctx, args) {
-        if (!ctx.teamOrchestrator.tryGetState()) {
-          return { ok: false, error: 'no_active_team_run' };
-        }
-        const message = await ctx.teamOrchestrator.steer(args.body);
-        return { ok: true, messageId: message.id, createdAt: message.createdAt };
       },
     }),
     // ------------------------------------------------------------- v2 runs (read)

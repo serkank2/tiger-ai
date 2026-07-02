@@ -72,15 +72,6 @@ export function createPromptsRouter(ctx: AppCtx): Router {
       return;
     }
 
-    if (action === 'use-as-project-prompt') {
-      const state = await ctx.orchestrator.replaceProjectPrompt(generation.outputText ?? '');
-      await ctx.promptGenerations.recordReuseAction(generation.id, 'use-as-project-prompt', {
-        projectId: generation.projectId,
-      });
-      res.json({ action, generation: await ctx.promptGenerations.get(generation.id), tiger: state });
-      return;
-    }
-
     if (action === 'enqueue') {
       const job = await ctx.queueService.enqueue({
         prompt: generation.outputText ?? '',

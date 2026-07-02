@@ -1,7 +1,12 @@
 import type { Pool } from 'mysql2/promise';
 import { getDbPool } from './pool.js';
-import { EXECUTION_CHECKPOINT_MIGRATION, EXECUTION_WORKSPACE_LEASE_MIGRATION } from '../orchestrator/persistence.js';
-import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION, TEAM_ATTEMPTS_MIGRATION } from '../team/persistence.js';
+import {
+  TEAM_MIGRATION,
+  TEAM_TEMPLATES_MIGRATION,
+  TEAM_ATTEMPTS_MIGRATION,
+  EXECUTION_CHECKPOINT_MIGRATION,
+  EXECUTION_WORKSPACE_LEASE_MIGRATION,
+} from './legacy-migrations.js';
 
 interface Migration {
   id: string;
