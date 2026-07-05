@@ -17,8 +17,7 @@ export function createFsRouter(_ctx: AppCtx): Router {
   const enforced = (): boolean => config.security.enforceWorkspaceBoundary;
   const pickerAllowed = (p: string): boolean =>
     !enforced() || isWorkspaceAllowed(p, config.security.workspaceAllowlist, config.dataDir, true).ok;
-  const pickerRoot = (): string =>
-    (enforced() && config.security.workspaceAllowlist[0]) || os.homedir();
+  const pickerRoot = (): string => (enforced() && config.security.workspaceAllowlist[0]) || os.homedir();
 
   router.get('/home', (_req, res) => {
     res.json({ home: pickerRoot(), sep: path.sep });

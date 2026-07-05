@@ -787,9 +787,10 @@ export class RunEngine extends EventEmitter {
     const assigned: string[] = [];
     for (const task of plan.tasks) {
       const wanted = task.id?.trim();
-      const id = wanted && !state.graph.items.some((entry) => entry.id === wanted) && !idMap.has(wanted)
-        ? wanted
-        : nextItemId(state.graph, 'T');
+      const id =
+        wanted && !state.graph.items.some((entry) => entry.id === wanted) && !idMap.has(wanted)
+          ? wanted
+          : nextItemId(state.graph, 'T');
       if (wanted) idMap.set(wanted, id);
       assigned.push(id);
       // Reserve the id immediately so nextItemId can't hand it out twice.
@@ -1494,9 +1495,7 @@ export class RunEngine extends EventEmitter {
   private async itemDescriptionForReview(item: WorkItem): Promise<string> {
     const state = this.requireState();
     const changes = await computeTeamChanges(state.workspace, nowIso()).catch(() => null);
-    const stat = changes?.summary
-      ? `+${changes.summary.insertions ?? 0}/-${changes.summary.deletions ?? 0}`
-      : '';
+    const stat = changes?.summary ? `+${changes.summary.insertions ?? 0}/-${changes.summary.deletions ?? 0}` : '';
     const diffBlock = changes?.diff?.trim()
       ? `\n\n## Working-tree diff (${changes.files.length} file(s), ${stat})\n\n` +
         '```diff\n' +

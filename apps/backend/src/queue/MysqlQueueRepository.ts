@@ -223,8 +223,12 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
   constructor(private readonly conn: Queryable) {}
 
   async nextPosition(): Promise<number> {
+    // FOR UPDATE so two concurrent enqueue transactions don't read the same MAX
+    // and insert duplicate positions (the row lock serializes them). Inside an
+    // enqueue transaction (this.conn is the tx connection) this holds the lock
+    // until commit; outside a tx it degrades to a plain read (still correct).
     const rows = await this.select<RowDataPacket[]>(
-      'SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM queue_jobs',
+      'SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM queue_jobs FOR UPDATE',
     );
     return Number((rows[0] as { next_position?: unknown } | undefined)?.next_position ?? 1);
   }

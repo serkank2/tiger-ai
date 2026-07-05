@@ -414,7 +414,9 @@ function parseLocaleRelativeMs(text: string): number | null {
 
 /** Numeric day/month/year date in EU order: DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY (year optional). */
 function parseNumericDmyDate(text: string, timeZone: string, now: Date): Date | null {
-  const match = text.match(/\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?:[ ,]+(?:\D{0,4})?(\d{1,2}):(\d{2}))?/);
+  // Separator class includes '-' so hyphenated EU dates (DD-MM-YYYY) parse too,
+  // matching this function's doc contract (they previously fell through to null).
+  const match = text.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?:[ ,]+(?:\D{0,4})?(\d{1,2}):(\d{2}))?/);
   if (!match?.[1] || !match[2]) return null;
   const day = Number(match[1]);
   const month = Number(match[2]);

@@ -6,6 +6,7 @@ import type { LimitGate } from '../limits/gate.js';
 import { StateLimitGate } from '../limits/gate.js';
 import { getDriver } from '../agents/providers/registry.js';
 import { runAgentTurn } from '../agents/runner.js';
+import { logger } from '../obs/logger.js';
 import type { AgentRunState, AgentType, TigerConfig, TigerTiming } from '../orchestrator/types.js';
 import { defaultTigerConfig, effortsForProvider, isLaunchSafeModel } from '../orchestrator/config.js';
 import type { PersistedState } from '../store/types.js';
@@ -218,19 +219,30 @@ export class PromptGenerationService extends EventEmitter {
       error: null,
       completedAt: new Date().toISOString(),
     });
-    await this.historyRepository.record({
-      projectId: current.projectId,
-      kind: 'generated',
-      inputText: current.inputText,
-      outputText: current.outputText,
-      generationId: current.id,
-      metadata: {
-        agentType: current.agentType,
-        model: current.model,
-        costUsd: report.usage?.costUsd ?? null,
-      },
-    });
-    this.emitHistoryChanged();
+    // The generation is already committed as `done` above. The history record is
+    // a best-effort side-artifact — if it throws (transient DB hiccup) it must
+    // NOT bubble to start()'s catch, which would flip the successful result back
+    // to `failed` and block the copy/enqueue/save reuse actions.
+    try {
+      await this.historyRepository.record({
+        projectId: current.projectId,
+        kind: 'generated',
+        inputText: current.inputText,
+        outputText: current.outputText,
+        generationId: current.id,
+        metadata: {
+          agentType: current.agentType,
+          model: current.model,
+          costUsd: report.usage?.costUsd ?? null,
+        },
+      });
+      this.emitHistoryChanged();
+    } catch (err) {
+      logger.warn('prompt generation: history record failed (result kept)', {
+        generationId: current.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
     this.emitState(current, 'idle');
   }
 

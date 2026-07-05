@@ -14,6 +14,8 @@ import type { TigerConfig } from '../orchestrator/types.js';
 export class ProviderConfigStore {
   private cfg: TigerConfig = defaultTigerConfig();
   private loaded = false;
+  /** Serializes writes so two concurrent PUTs can't diverge in-memory vs on-disk. */
+  private writeChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly file = path.join(appConfig.dataDir, 'providers.json')) {}
 
@@ -28,10 +30,20 @@ export class ProviderConfigStore {
     return this.cfg;
   }
 
-  /** Replace the config (normalized) and persist it. */
-  async update(next: unknown): Promise<TigerConfig> {
-    this.cfg = normalizeConfig(next);
-    await saveConfig(this.file, this.cfg);
-    return this.cfg;
+  /**
+   * Replace the config (normalized) and persist it. Serialized: two concurrent
+   * updates would otherwise interleave across the `await save`, so memory could
+   * reflect one write while `providers.json` reflects the other (which the next
+   * boot would then silently reload as the truth).
+   */
+  update(next: unknown): Promise<TigerConfig> {
+    const run = this.writeChain.then(async () => {
+      const normalized = normalizeConfig(next);
+      await saveConfig(this.file, normalized);
+      this.cfg = normalized; // set AFTER the successful write so memory matches disk
+      return normalized;
+    });
+    this.writeChain = run.catch(() => undefined);
+    return run;
   }
 }
