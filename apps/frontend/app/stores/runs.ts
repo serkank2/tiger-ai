@@ -3,7 +3,35 @@ import { defineStore } from 'pinia';
 import { useApi } from '~/composables/useApi';
 import { useSocket } from '~/composables/useSocket';
 import { errText } from '~/lib/apiError';
-import type { RunChanges, RunCreateConfigInput, RunEventDto, RunIndexEntry, RunSnapshot, ServerMessage } from '~/types';
+import type {
+  RunAgentEventDto,
+  RunChanges,
+  RunCreateConfigInput,
+  RunEventDto,
+  RunIndexEntry,
+  RunSnapshot,
+  ServerMessage,
+} from '~/types';
+
+/** One rendered line of a per-agent terminal (a trimmed agent event). */
+export interface RunTerminalLine {
+  seq: number;
+  at: string;
+  type: RunAgentEventDto['type'];
+  text?: string;
+  tool?: { name: string; detail?: string };
+}
+
+/** One per-agent terminal pane, accumulated from `run.event` agent frames. */
+export interface RunTerminal {
+  id: string;
+  provider?: string;
+  model?: string;
+  itemId?: string;
+  live: boolean;
+  lines: RunTerminalLine[];
+  lastAt: string;
+}
 
 /**
  * v2 runs store — the single source of truth the Runs screen reads.
@@ -29,9 +57,12 @@ export const useRunsStore = defineStore('runs', () => {
   const history = ref<RunIndexEntry[]>([]);
   /** A past run opened read-only from the history list. */
   const historyRun = ref<RunSnapshot | null>(null);
+  /** Per-agent terminal panes (keyed by agentId, insertion-ordered). */
+  const terminals = ref<Record<string, RunTerminal>>({});
 
   const status = computed(() => run.value?.status ?? null);
   const items = computed(() => run.value?.graph.items ?? []);
+  const terminalList = computed(() => Object.values(terminals.value));
   const isActive = computed(() => status.value === 'running');
   const canStart = computed(
     () => status.value === 'created' || status.value === 'blocked' || status.value === 'stopped',
@@ -51,9 +82,16 @@ export const useRunsStore = defineStore('runs', () => {
     run.value = next;
     loaded.value = true;
     loadError.value = null;
+    // A settled run has no in-flight turns — every terminal goes idle.
+    if (next?.status !== 'running' && Object.values(terminals.value).some((pane) => pane.live)) {
+      const settled: Record<string, RunTerminal> = {};
+      for (const [id, pane] of Object.entries(terminals.value)) settled[id] = { ...pane, live: false };
+      terminals.value = settled;
+    }
   }
 
   const EVENT_FEED_CAP = 500;
+  const TERMINAL_LINE_CAP = 400;
 
   function appendEvent(event: RunEventDto): void {
     if (event.seq <= lastSeq.value) return; // replay/dupe guard
@@ -61,6 +99,37 @@ export const useRunsStore = defineStore('runs', () => {
     const next = events.value.length >= EVENT_FEED_CAP ? events.value.slice(-EVENT_FEED_CAP + 1) : events.value.slice();
     next.push(event);
     events.value = next;
+    if (event.type === 'agent' && event.agentId && event.agent) appendTerminalLine(event, event.agent);
+  }
+
+  /** Route an agent event into its terminal pane (bounded per-agent scrollback). */
+  function appendTerminalLine(event: RunEventDto, agent: RunAgentEventDto): void {
+    const id = event.agentId!;
+    const existing = terminals.value[id];
+    const pane: RunTerminal = existing
+      ? { ...existing }
+      : {
+          id,
+          provider: event.provider,
+          model: event.model,
+          itemId: event.itemId,
+          live: true,
+          lines: [],
+          lastAt: event.at,
+        };
+    pane.provider = event.provider ?? pane.provider;
+    pane.model = event.model ?? pane.model;
+    pane.itemId = event.itemId ?? pane.itemId;
+    pane.lastAt = event.at;
+    // `result` is the provider's authoritative end-of-turn signal.
+    pane.live = agent.type !== 'result';
+    if (agent.type !== 'usage') {
+      const lines =
+        pane.lines.length >= TERMINAL_LINE_CAP ? pane.lines.slice(-TERMINAL_LINE_CAP + 1) : pane.lines.slice();
+      lines.push({ seq: event.seq, at: agent.at, type: agent.type, text: agent.text, tool: agent.tool });
+      pane.lines = lines;
+    }
+    terminals.value = { ...terminals.value, [id]: pane };
   }
 
   /** WS fan-in. Registered once by the page; returns the unsubscribe pair. */
@@ -104,6 +173,7 @@ export const useRunsStore = defineStore('runs', () => {
       const { run: snapshot } = await api.createRun(input);
       events.value = [];
       lastSeq.value = 0;
+      terminals.value = {};
       applySnapshot(snapshot);
     } catch (e) {
       loadError.value = errText(e);
@@ -215,6 +285,8 @@ export const useRunsStore = defineStore('runs', () => {
     changes,
     history,
     historyRun,
+    terminals,
+    terminalList,
     status,
     items,
     isActive,

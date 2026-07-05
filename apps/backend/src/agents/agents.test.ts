@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { defaultTigerConfig } from '../orchestrator/config.js';
+import { PLAN_RESULT_JSON_SCHEMA } from '../run/plan.js';
 import { parseTurnResult, fallbackTurnResult, TURN_RESULT_JSON_SCHEMA } from './result.js';
 import { getDriver } from './providers/registry.js';
 import { runAgentTurn } from './runner.js';
@@ -129,6 +130,47 @@ test('codex driver builds exec argv with resume, schema file, and stdin prompt',
   assert.ok(invocation.resultFile?.endsWith('last-message.txt'));
   const schemaFile = Object.keys(invocation.preludeFiles ?? {})[0];
   assert.ok(schemaFile?.endsWith('output-schema.json'));
+});
+
+test('codex output schema is converted to OpenAI-strict form (all keys required, optionals nullable)', () => {
+  const driver = getDriver('codex');
+  const scratch = path.join(os.tmpdir(), 'kaplan-test-scratch-strict');
+  const invocation = driver.buildInvocation(
+    { prompt: 'plan', permission: 'read-only', resultSchema: PLAN_RESULT_JSON_SCHEMA, scratchDir: scratch },
+    cfg.cli.codex,
+  );
+  const schemaJson = Object.values(invocation.preludeFiles ?? {})[0] ?? '';
+  const schema = JSON.parse(schemaJson) as {
+    required: string[];
+    properties: Record<string, { type: unknown } & Record<string, unknown>>;
+  };
+  // Strict mode: every property key must be listed in `required`…
+  assert.deepEqual([...schema.required].sort(), Object.keys(schema.properties).sort());
+  // …at every nesting level (this exact omission made the API reject the turn
+  // with invalid_json_schema: "Missing 'id'").
+  const items = (schema.properties.tasks as unknown as { items: typeof schema }).items;
+  assert.deepEqual([...items.required].sort(), Object.keys(items.properties).sort());
+  assert.equal((items as unknown as { additionalProperties: boolean }).additionalProperties, false);
+  // Optional keys became nullable; required keys keep their exact type.
+  assert.deepEqual(items.properties.id!.type, ['string', 'null']);
+  assert.deepEqual(items.properties.dependsOn!.type, ['array', 'null']);
+  assert.equal(items.properties.title!.type, 'string');
+});
+
+test('codex parser emits ONE result even when the CLI closes with error + turn.failed', () => {
+  const parser = getDriver('codex').createParser();
+  const events = [
+    ...parser.push('{"type":"thread.started","thread_id":"t-9"}'),
+    ...parser.push('{"type":"error","error":{"message":"invalid schema"}}'),
+    ...parser.push('{"type":"turn.failed"}'),
+  ];
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['turn-started', 'result'],
+  );
+  const summary = parser.finish();
+  assert.equal(summary.isError, true);
+  assert.equal(summary.errorDetail, 'invalid schema');
 });
 
 test('codex parser handles the NEW event generation', () => {

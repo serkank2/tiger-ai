@@ -4,7 +4,8 @@ import { badRequest, conflict, notFound } from './errors.js';
 import { assertWorkspaceAllowed } from '../security/workspace.js';
 import { computeTeamChanges } from '../git/changes.js';
 import { readRunEvents, readRunIndex, readRunSnapshot } from '../run/history.js';
-import type { RunConfig } from '../run/types.js';
+import { effortsForProvider, isLaunchSafeModel } from '../orchestrator/config.js';
+import type { CouncilMember, RunConfig } from '../run/types.js';
 
 /**
  * REST control plane for v2 runs (docs/REDESIGN.md §5). Side-effecting
@@ -122,8 +123,8 @@ function sanitizeConfig(raw: unknown): Partial<RunConfig> | undefined {
       if (provider === 'claude' || provider === 'codex' || provider === 'antigravity') {
         out[slot] = {
           provider,
-          model: typeof record.model === 'string' ? record.model : undefined,
-          effort: typeof record.effort === 'string' ? record.effort : undefined,
+          model: sanitizeModel(provider, record.model),
+          effort: sanitizeEffort(provider, record.effort),
           permission: typeof record.permission === 'string' ? record.permission : undefined,
         };
       }
@@ -162,11 +163,46 @@ function sanitizeConfig(raw: unknown): Partial<RunConfig> | undefined {
           (p): p is 'claude' | 'codex' | 'antigravity' => p === 'claude' || p === 'codex' || p === 'antigravity',
         )
       : [];
+    const members = sanitizeCouncilMembers(council.members);
     out.council = {
       plan: typeof council.plan === 'number' ? Math.max(1, Math.min(12, Math.floor(council.plan))) : 1,
       review: typeof council.review === 'number' ? Math.max(1, Math.min(12, Math.floor(council.review))) : 1,
       providers,
+      ...(members.length ? { members } : {}),
     };
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+/** A launch-safe model override, or undefined ('' and unsafe values mean "provider default"). */
+function sanitizeModel(provider: 'claude' | 'codex' | 'antigravity', raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  return isLaunchSafeModel(provider, raw) ? raw : undefined;
+}
+
+/** A provider-valid reasoning effort, or undefined ('' means "provider default"). */
+function sanitizeEffort(provider: 'claude' | 'codex' | 'antigravity', raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  return effortsForProvider(provider).includes(raw) ? raw : undefined;
+}
+
+/** The explicit council roster: whitelisted providers, clamped counts, launch-safe models. */
+function sanitizeCouncilMembers(raw: unknown): CouncilMember[] {
+  if (!Array.isArray(raw)) return [];
+  const members: CouncilMember[] = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    const provider = record.provider;
+    if (provider !== 'claude' && provider !== 'codex' && provider !== 'antigravity') continue;
+    const count = typeof record.count === 'number' && Number.isFinite(record.count) ? Math.floor(record.count) : 0;
+    if (count < 1) continue;
+    members.push({
+      provider,
+      count: Math.min(count, 8),
+      model: sanitizeModel(provider, record.model),
+      effort: sanitizeEffort(provider, record.effort),
+    });
+  }
+  return members;
 }

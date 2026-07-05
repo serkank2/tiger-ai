@@ -320,6 +320,100 @@ test('engine: council fans out plan candidates + synthesis and merges review len
   assert.equal(fixTasks.length, 1);
 });
 
+test('engine: an explicit council roster pins per-provider counts + models and stamps event identity', async () => {
+  const seats: Array<{ kind: string; provider: string; model?: string; effort?: string }> = [];
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      const prompt = opts.request.prompt;
+      const isPlanSchema = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      const kind = prompt.includes('independent plan candidate')
+        ? 'plan-candidate'
+        : prompt.includes('SYNTHESIZER')
+          ? 'synthesis'
+          : prompt.includes('review lens')
+            ? 'review-lens'
+            : isPlanSchema
+              ? 'plan'
+              : 'build';
+      seats.push({ kind, provider: opts.driver.id, model: opts.request.model, effort: opts.request.effort });
+      // Every turn streams one persisted event (text) and one live-only line (raw).
+      opts.onEvent?.({ type: 'text', at: new Date().toISOString(), text: `${kind} speaking` });
+      opts.onEvent?.({ type: 'raw', at: new Date().toISOString(), text: 'raw noise' });
+      const resultText = isPlanSchema
+        ? JSON.stringify({
+            status: 'done',
+            summary: 'one task',
+            tasks: [{ id: 'T1', title: 'Do it', description: 'do it fully' }],
+          })
+        : JSON.stringify({ status: 'done', summary: 'ok' });
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: `sess-${opts.driver.id}`,
+        resultText,
+        result: isPlanSchema ? null : { status: 'done', summary: 'ok' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Goal',
+    config: {
+      reviewPolicy: 'final',
+      verifyPolicy: 'none',
+      council: {
+        plan: 1,
+        review: 1,
+        providers: [],
+        members: [
+          { provider: 'claude', model: 'opus', effort: 'xhigh', count: 2 },
+          { provider: 'codex', model: 'gpt-5.5', count: 1 },
+        ],
+      },
+    },
+  });
+
+  // The roster IS the council: 2 + 1 seats at both read-only phases.
+  const snapshotBefore = engine.getSnapshot();
+  assert.equal(snapshotBefore?.council.plan, 3);
+  assert.equal(snapshotBefore?.council.review, 3);
+  assert.deepEqual(snapshotBefore?.council.providers, ['claude', 'codex']);
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+  assert.equal(engine.getSnapshot()?.status, 'completed');
+
+  const planSeats = seats
+    .filter((seat) => seat.kind === 'plan-candidate')
+    .map((seat) => `${seat.provider}:${seat.model}:${seat.effort ?? '-'}`)
+    .sort();
+  assert.deepEqual(planSeats, ['claude:opus:xhigh', 'claude:opus:xhigh', 'codex:gpt-5.5:-']);
+  const reviewSeats = seats
+    .filter((seat) => seat.kind === 'review-lens')
+    .map((seat) => `${seat.provider}:${seat.model}`)
+    .sort();
+  assert.deepEqual(reviewSeats, ['claude:opus', 'claude:opus', 'codex:gpt-5.5']);
+
+  // Persisted agent events carry the terminal identity; raw stays live-only.
+  const events = await engine.listEvents(0);
+  const agentEvents = events.filter((event) => event.type === 'agent');
+  assert.ok(agentEvents.length > 0);
+  assert.ok(agentEvents.every((event) => typeof event.agentId === 'string' && event.provider !== undefined));
+  assert.ok(agentEvents.some((event) => event.agentId === 'plan-candidate-1'));
+  assert.ok(agentEvents.some((event) => event.agentId === 'builder' && event.model === undefined));
+  assert.ok(agentEvents.every((event) => event.agent?.type !== 'raw'));
+});
+
 test('engine: a persistently blocked builder blocks the item and the run — honestly', async () => {
   const engine = new RunEngine({
     turnRunner: async (opts) => {

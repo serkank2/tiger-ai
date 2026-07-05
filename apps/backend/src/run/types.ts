@@ -34,6 +34,14 @@ export type VerifyPolicy = 'per-build' | 'final' | 'both' | 'none';
  */
 export type RunImportance = 'low' | 'normal' | 'high' | 'critical';
 
+/** One user-selected council seat group: N candidates from a provider, optionally pinned to a model/effort. */
+export interface CouncilMember {
+  provider: AgentType;
+  model?: string;
+  effort?: string;
+  count: number;
+}
+
 export interface RunCouncilConfig {
   /** Independent plan candidates synthesized into the final graph (1 = no council). */
   plan: number;
@@ -41,6 +49,11 @@ export interface RunCouncilConfig {
   review: number;
   /** Provider rotation for council candidates (defaults to the builder's provider). */
   providers: AgentType[];
+  /**
+   * Explicit roster (user-chosen provider × count × model). When present it IS
+   * the council: it sizes plan/review and wins over the importance preset.
+   */
+  members?: CouncilMember[];
 }
 
 export interface RunAgentConfig {
@@ -124,6 +137,13 @@ export type RunEventType =
   /** Short engine narration (planning applied, fix task created, …). */
   | 'note';
 
+/** Identity of the agent stream an `agent` event belongs to (one UI terminal pane). */
+export interface RunAgentSource {
+  agentId: string;
+  provider: AgentType;
+  model?: string;
+}
+
 export interface RunEvent {
   seq: number;
   at: string;
@@ -131,6 +151,10 @@ export interface RunEvent {
   runId: string;
   /** Present for item-status / agent / most notes. */
   itemId?: string;
+  /** Agent-stream identity for `agent` events — groups events into per-agent terminals. */
+  agentId?: string;
+  provider?: AgentType;
+  model?: string;
   /** run-status payload. */
   status?: RunStatus;
   /** item-status payload. */

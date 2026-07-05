@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   getRunChanges: vi.fn(),
   listRuns: vi.fn(),
   getRunById: vi.fn(),
+  getProvidersConfig: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -95,9 +96,26 @@ function snapshot(over: Partial<RunSnapshot> = {}): RunSnapshot {
   };
 }
 
+const providerEntry = (models: string[], efforts: string[] = ['']) => ({
+  executable: 'x',
+  model: models[0] ?? '',
+  effort: '',
+  permission: 'default',
+  models,
+  efforts,
+  permissionModes: ['default'],
+});
+
 async function mountView(run: RunSnapshot | null) {
   api.getCurrentRun.mockResolvedValue({ run });
   api.listRunEvents.mockResolvedValue({ events: [] });
+  api.getProvidersConfig.mockResolvedValue({
+    config: {
+      claude: providerEntry(['opus', 'sonnet'], ['', 'low', 'high', 'xhigh']),
+      codex: providerEntry(['gpt-5.5'], ['', 'low', 'high']),
+      antigravity: providerEntry(['Gemini 3.1 Pro (High)']),
+    },
+  });
   const wrapper = mount(RunView, { attachTo: document.body, global: { stubs } });
   await flushPromises();
   return wrapper;
@@ -152,6 +170,73 @@ describe('RunView', () => {
     const panel = wrapper.find('[data-testid="run-changes"]');
     expect(panel.exists()).toBe(true);
     expect(panel.text()).toContain('src/a.ts');
+  });
+
+  it('renders per-agent terminal panes from live agent events and steers from the panel', async () => {
+    const wrapper = await mountView(snapshot());
+    const { useRunsStore } = await import('~/stores/runs');
+    const runs = useRunsStore();
+    runs.appendEvent({
+      seq: 10,
+      at: 'now',
+      type: 'agent',
+      runId: 'run-1',
+      itemId: 'T1',
+      agentId: 'builder',
+      provider: 'claude',
+      model: 'opus',
+      agent: { type: 'text', at: 'now', text: 'editing the file' },
+    });
+    runs.appendEvent({
+      seq: 11,
+      at: 'now',
+      type: 'agent',
+      runId: 'run-1',
+      itemId: 'P1',
+      agentId: 'plan-candidate-2',
+      provider: 'codex',
+      agent: { type: 'stderr', at: 'now', text: 'a diagnostic line' },
+    });
+    await flushPromises();
+
+    const builderPane = wrapper.find('[data-testid="run-terminal-builder"]');
+    expect(builderPane.exists()).toBe(true);
+    expect(builderPane.text()).toContain('editing the file');
+    expect(builderPane.text()).toContain('claude');
+    expect(builderPane.text()).toContain('opus');
+    expect(wrapper.find('[data-testid="run-terminal-plan-candidate-2"]').text()).toContain('a diagnostic line');
+
+    // Intervention lives next to the terminals: the panel steer row works.
+    api.steerRun.mockResolvedValue({ run: snapshot() });
+    await wrapper.find('[data-testid="run-terminals-steer-input"]').setValue('change course');
+    await wrapper.find('[data-testid="run-terminals"] form').trigger('submit');
+    await flushPromises();
+    expect(api.steerRun).toHaveBeenCalledWith('change course', false);
+  });
+
+  it('sends the explicit council roster and builder model on create', async () => {
+    const wrapper = await mountView(null);
+    api.createRun.mockResolvedValue({ run: snapshot({ status: 'created' }) });
+    api.startRun.mockResolvedValue({ run: snapshot() });
+
+    await wrapper.find('[data-testid="run-goal"]').setValue('Build it');
+    await wrapper.find('[data-testid="run-workspace"]').setValue('C:/w');
+    await wrapper.find('[data-testid="run-builder-model"]').setValue('sonnet');
+    await wrapper.find('[data-testid="run-builder-effort"]').setValue('xhigh');
+    await wrapper.find('[data-testid="run-council-count-claude"]').setValue('2');
+    await wrapper.find('[data-testid="run-council-model-claude"]').setValue('opus');
+    await wrapper.find('[data-testid="run-council-effort-claude"]').setValue('high');
+    await wrapper.find('[data-testid="run-council-count-codex"]').setValue('1');
+    await wrapper.find('[data-testid="run-create-form"]').trigger('submit');
+    await flushPromises();
+
+    expect(api.createRun).toHaveBeenCalledTimes(1);
+    const input = api.createRun.mock.calls[0]![0];
+    expect(input.config.builder).toEqual({ provider: 'claude', model: 'sonnet', effort: 'xhigh' });
+    expect(input.config.council.members).toEqual([
+      { provider: 'claude', count: 2, model: 'opus', effort: 'high' },
+      { provider: 'codex', count: 1, model: undefined, effort: undefined },
+    ]);
   });
 
   it('loads and lists run history on toggle', async () => {

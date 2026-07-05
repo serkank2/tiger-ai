@@ -131,4 +131,58 @@ describe('runs store', () => {
     await expect(runs.steer('focus')).rejects.toThrow('run is stopped');
     expect(runs.loadError).toContain('run is stopped');
   });
+
+  it('agent events accumulate into per-agent terminal panes (result ends the turn, usage adds no line)', () => {
+    const runs = useRunsStore();
+    const agentEvent = (seq: number, type: string, over: Partial<RunEventDto> = {}) =>
+      event(seq, {
+        type: 'agent',
+        itemId: 'T1',
+        agentId: 'builder',
+        provider: 'claude',
+        model: 'opus',
+        agent: { type: type as never, at: `at-${seq}`, text: `${type} ${seq}` },
+        ...over,
+      });
+
+    runs.appendEvent(agentEvent(1, 'turn-started'));
+    runs.appendEvent(agentEvent(2, 'text'));
+    runs.appendEvent(agentEvent(3, 'usage'));
+    runs.appendEvent(agentEvent(4, 'stderr'));
+    runs.appendEvent(
+      event(5, {
+        type: 'agent',
+        itemId: 'P1',
+        agentId: 'plan-candidate-1',
+        provider: 'codex',
+        agent: { type: 'text', at: 'at-5', text: 'candidate speaks' },
+      }),
+    );
+
+    expect(runs.terminalList.map((pane) => pane.id)).toEqual(['builder', 'plan-candidate-1']);
+    const builder = runs.terminals['builder']!;
+    expect(builder.provider).toBe('claude');
+    expect(builder.model).toBe('opus');
+    expect(builder.live).toBe(true);
+    // usage events update liveness but add no scrollback line.
+    expect(builder.lines.map((line) => line.type)).toEqual(['turn-started', 'text', 'stderr']);
+
+    runs.appendEvent(agentEvent(6, 'result'));
+    expect(runs.terminals['builder']!.live).toBe(false);
+  });
+
+  it('a settled run.state snapshot marks every terminal idle', () => {
+    const runs = useRunsStore();
+    runs.appendEvent(
+      event(1, {
+        type: 'agent',
+        agentId: 'builder',
+        provider: 'claude',
+        agent: { type: 'text', at: 'a', text: 'hi' },
+      }),
+    );
+    expect(runs.terminals['builder']!.live).toBe(true);
+    runs.applySnapshot(snapshot({ status: 'completed' }));
+    expect(runs.terminals['builder']!.live).toBe(false);
+  });
 });

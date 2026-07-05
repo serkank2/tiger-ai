@@ -962,10 +962,20 @@ export type RunStatus = 'created' | 'running' | 'blocked' | 'completed' | 'faile
 export type RunProfile = 'mission' | 'pipeline';
 export type RunImportance = 'low' | 'normal' | 'high' | 'critical';
 
+/** One user-selected council seat group: N candidates from a provider, optionally pinned to a model/effort. */
+export interface RunCouncilMember {
+  provider: 'claude' | 'codex' | 'antigravity';
+  model?: string;
+  effort?: string;
+  count: number;
+}
+
 export interface RunCouncilConfig {
   plan: number;
   review: number;
   providers: ('claude' | 'codex' | 'antigravity')[];
+  /** Explicit roster (provider × count × model); when present it sizes the council. */
+  members?: RunCouncilMember[];
 }
 
 export interface RunItemUsage {
@@ -1050,6 +1060,10 @@ export interface RunEventDto {
   type: 'run-status' | 'item-status' | 'agent' | 'verification' | 'steering' | 'note';
   runId: string;
   itemId?: string;
+  /** Agent-stream identity for `agent` events — groups events into per-agent terminals. */
+  agentId?: string;
+  provider?: string;
+  model?: string;
   status?: RunStatus;
   itemStatus?: string;
   agent?: RunAgentEventDto;

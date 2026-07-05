@@ -96,6 +96,24 @@ export default {
     steerNowHint:
       'Aborts the in-flight turn and applies this steering immediately — sessions resume with their context.',
     verbose: 'Verbose',
+    terminals: {
+      title: 'Terminals',
+      empty: 'Agent streams appear here the moment a turn starts.',
+      live: 'live',
+      idle: 'idle',
+      turnStarted: 'turn started',
+      turnEnded: 'turn ended',
+    },
+    council: {
+      title: 'Agents (council)',
+      hint: 'Pick how many agents start from each provider and which model each uses. They run in parallel at the plan and review phases; the writer always stays single. Any selection here overrides the importance preset.',
+      count: 'Count',
+      model: 'Model',
+      effort: 'Effort',
+      builderModel: 'Model',
+      defaultModel: 'Provider default',
+      total: 'Parallel agents',
+    },
     confirmStop: {
       title: 'Stop this run?',
       message:

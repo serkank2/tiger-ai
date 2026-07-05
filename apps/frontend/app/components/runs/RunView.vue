@@ -16,35 +16,59 @@ import FolderPicker from '~/components/FolderPicker.vue';
 import RunChangesPanel from '~/components/runs/RunChangesPanel.vue';
 import RunHistoryPanel from '~/components/runs/RunHistoryPanel.vue';
 import RunItemModal from '~/components/runs/RunItemModal.vue';
+import RunTerminalsPanel from '~/components/runs/RunTerminalsPanel.vue';
 import { useRunsStore } from '~/stores/runs';
+import { useApi } from '~/composables/useApi';
 import { useDialog } from '~/composables/useDialog';
 import { useT } from '~/composables/useT';
-import type { RunEventDto, RunWorkItem } from '~/types';
+import type { ProvidersConfig, RunCouncilMember, RunEventDto, RunWorkItem } from '~/types';
 
 const runs = useRunsStore();
+const api = useApi();
 const dialog = useDialog();
 const { t } = useT();
 
 const LAST_WORKSPACE_KEY = 'kaplan.runs.lastWorkspace';
 
+type Provider = 'claude' | 'codex' | 'antigravity';
+const PROVIDERS: Provider[] = ['claude', 'codex', 'antigravity'];
+
 const goal = ref('');
 const workspace = ref('');
-const provider = ref<'claude' | 'codex' | 'antigravity'>('claude');
+const provider = ref<Provider>('claude');
+const builderModel = ref('');
+const builderEffort = ref('');
 const reviewPolicy = ref<'final' | 'per-task' | 'none'>('final');
 const verifyPolicy = ref<'per-build' | 'final' | 'both' | 'none'>('both');
 const importance = ref<'low' | 'normal' | 'high' | 'critical'>('normal');
+// Explicit council roster: how many agents start from each provider, and with
+// which model/effort. Any selection overrides the importance preset (counts as
+// strings — HTML select values are strings).
+const councilCounts = ref<Record<Provider, string>>({ claude: '0', codex: '0', antigravity: '0' });
+const councilModels = ref<Record<Provider, string>>({ claude: '', codex: '', antigravity: '' });
+const councilEfforts = ref<Record<Provider, string>>({ claude: '', codex: '', antigravity: '' });
+const providersCfg = ref<ProvidersConfig | null>(null);
 const steering = ref('');
 const verboseFeed = ref(false);
 const pickerOpen = ref(false);
 const selectedItemId = ref<string | null>(null);
 const showChanges = ref(false);
 const showHistory = ref(false);
+const showTerminals = ref(true);
 const feedEl = ref<HTMLElement | null>(null);
 
 let unbind: (() => void) | null = null;
 onMounted(() => {
   unbind = runs.bindSocket();
   void runs.load();
+  // Model lists for the builder/council selects; selects fall back to
+  // "provider default" when the config is unavailable.
+  void api
+    .getProvidersConfig()
+    .then(({ config }) => {
+      providersCfg.value = config;
+    })
+    .catch(() => {});
   try {
     workspace.value = localStorage.getItem(LAST_WORKSPACE_KEY) ?? '';
   } catch {
@@ -53,6 +77,12 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   unbind?.();
+});
+
+// Model/effort lists are provider-specific — a switched builder keeps no stale pin.
+watch(provider, () => {
+  builderModel.value = '';
+  builderEffort.value = '';
 });
 
 const showCreate = computed(
@@ -88,6 +118,43 @@ const importanceOptions = computed(() => [
   { value: 'high', label: t('runs.importance.high') },
   { value: 'critical', label: t('runs.importance.critical') },
 ]);
+const countOptions = ['0', '1', '2', '3', '4', '5', '6'].map((value) => ({ value, label: value }));
+
+function providerLabel(p: Provider): string {
+  return providerOptions.find((option) => option.value === p)?.label ?? p;
+}
+
+function modelOptions(p: Provider): Array<{ value: string; label: string }> {
+  const models = providersCfg.value?.[p]?.models ?? [];
+  return [
+    { value: '', label: t('runs.council.defaultModel') },
+    ...models.map((model) => ({ value: model, label: model })),
+  ];
+}
+
+function effortOptions(p: Provider): Array<{ value: string; label: string }> {
+  const efforts = (providersCfg.value?.[p]?.efforts ?? []).filter((effort) => effort !== '');
+  return [
+    { value: '', label: t('runs.council.defaultModel') },
+    ...efforts.map((effort) => ({ value: effort, label: effort })),
+  ];
+}
+
+const councilMembers = computed<RunCouncilMember[]>(() =>
+  PROVIDERS.flatMap((p) => {
+    const count = Number(councilCounts.value[p]);
+    if (!Number.isFinite(count) || count < 1) return [];
+    return [
+      {
+        provider: p,
+        count,
+        model: councilModels.value[p] || undefined,
+        effort: councilEfforts.value[p] || undefined,
+      },
+    ];
+  }),
+);
+const councilTotal = computed(() => councilMembers.value.reduce((total, member) => total + member.count, 0));
 
 async function onCreate(): Promise<void> {
   if (!goal.value.trim() || !workspace.value.trim()) return;
@@ -101,15 +168,21 @@ async function onCreate(): Promise<void> {
       workspace: workspace.value.trim(),
       goal: goal.value.trim(),
       config: {
-        builder: { provider: provider.value },
+        builder: {
+          provider: provider.value,
+          model: builderModel.value || undefined,
+          effort: builderEffort.value || undefined,
+        },
         reviewPolicy: reviewPolicy.value,
         verifyPolicy: verifyPolicy.value,
         importance: importance.value,
+        ...(councilMembers.value.length ? { council: { members: councilMembers.value } } : {}),
       },
     });
     await runs.start();
     goal.value = '';
     showChanges.value = false;
+    showTerminals.value = true;
   } catch {
     /* surfaced via runs.loadError + toast */
   }
@@ -205,13 +278,17 @@ function eventLine(event: RunEventDto): string {
   }
 }
 
-// Verbose mode = watch EVERYTHING the agent emits (stderr and usage included) —
-// the headless replacement for staring at the old PTY scrollback.
+// Verbose mode = watch EVERYTHING the agent emits (stderr/raw/usage included) —
+// the full stream also renders per-agent in the terminals panel.
 const eventFeed = computed(() =>
   verboseFeed.value
     ? runs.events
     : runs.events.filter(
-        (event) => !(event.type === 'agent' && (event.agent?.type === 'stderr' || event.agent?.type === 'usage')),
+        (event) =>
+          !(
+            event.type === 'agent' &&
+            (event.agent?.type === 'stderr' || event.agent?.type === 'usage' || event.agent?.type === 'raw')
+          ),
       ),
 );
 
@@ -240,6 +317,14 @@ function formatCost(): string {
           {{ t('runs.history.title') }}
         </BaseButton>
         <template v-if="runs.run">
+          <BaseButton
+            size="sm"
+            variant="ghost"
+            data-testid="run-toggle-terminals"
+            @click="showTerminals = !showTerminals"
+          >
+            {{ t('runs.terminals.title') }}
+          </BaseButton>
           <BaseButton size="sm" variant="ghost" data-testid="run-toggle-changes" @click="onToggleChanges">
             {{ t('runs.changes.title') }}
           </BaseButton>
@@ -317,6 +402,12 @@ function formatCost(): string {
         <BaseField :label="t('runs.provider')">
           <BaseSelect v-model="provider" :options="providerOptions" />
         </BaseField>
+        <BaseField :label="t('runs.council.builderModel')">
+          <BaseSelect v-model="builderModel" data-testid="run-builder-model" :options="modelOptions(provider)" />
+        </BaseField>
+        <BaseField :label="t('runs.council.effort')">
+          <BaseSelect v-model="builderEffort" data-testid="run-builder-effort" :options="effortOptions(provider)" />
+        </BaseField>
         <BaseField :label="t('runs.reviewPolicy')">
           <BaseSelect v-model="reviewPolicy" :options="reviewOptions" />
         </BaseField>
@@ -328,6 +419,30 @@ function formatCost(): string {
         </BaseField>
       </div>
       <p class="hint">{{ t('runs.importanceHint') }}</p>
+
+      <!-- Explicit council roster: how many agents from which provider, on which model. -->
+      <fieldset class="council">
+        <legend>{{ t('runs.council.title') }}</legend>
+        <p class="hint">{{ t('runs.council.hint') }}</p>
+        <div v-for="p in PROVIDERS" :key="p" class="council-row">
+          <span class="council-name">{{ providerLabel(p) }}</span>
+          <BaseField :label="t('runs.council.count')">
+            <BaseSelect v-model="councilCounts[p]" :data-testid="`run-council-count-${p}`" :options="countOptions" />
+          </BaseField>
+          <BaseField :label="t('runs.council.model')">
+            <BaseSelect v-model="councilModels[p]" :data-testid="`run-council-model-${p}`" :options="modelOptions(p)" />
+          </BaseField>
+          <BaseField :label="t('runs.council.effort')">
+            <BaseSelect
+              v-model="councilEfforts[p]"
+              :data-testid="`run-council-effort-${p}`"
+              :options="effortOptions(p)"
+            />
+          </BaseField>
+        </div>
+        <p class="council-total" data-testid="run-council-total">{{ t('runs.council.total') }}: {{ councilTotal }}</p>
+      </fieldset>
+
       <BaseButton type="submit" data-testid="run-create" :loading="runs.isBusy('create') || runs.isBusy('start')">
         {{ t('runs.createAndStart') }}
       </BaseButton>
@@ -341,6 +456,15 @@ function formatCost(): string {
         :changes="runs.changes"
         :loading="runs.isBusy('changes')"
         @refresh="runs.loadChanges()"
+      />
+
+      <!-- Per-agent live terminals + attached steering (intervene while watching). -->
+      <RunTerminalsPanel
+        v-if="showTerminals"
+        :terminals="runs.terminalList"
+        :active="runs.isActive"
+        :steer-busy="runs.isBusy('steer')"
+        @steer="(body, interrupt) => runs.steer(body, interrupt)"
       />
 
       <div class="layout">
@@ -746,6 +870,36 @@ function formatCost(): string {
   cursor: pointer;
 }
 .hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0;
+}
+.council {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.council legend {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.council-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.council-name {
+  min-width: 110px;
+  font-size: 13px;
+  padding-bottom: 8px;
+}
+.council-total {
   color: var(--text-dim);
   font-size: 12px;
   margin: 0;

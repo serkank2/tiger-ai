@@ -25,6 +25,7 @@ import { upsertRunIndex } from './history.js';
 import { isDrained, nextItemId, propagateDoom, selectRunnable, summarizeGraph, type WorkItem } from './graph.js';
 import {
   toRunSnapshot,
+  type RunAgentSource,
   type RunConfig,
   type RunEvent,
   type RunSnapshot,
@@ -155,14 +156,31 @@ export class RunEngine extends EventEmitter {
     };
     // Sequential-build clamp until worktree merge-back lands (see header note).
     if (config.maxParallelBuilds !== 1) config.maxParallelBuilds = 1;
-    // Council sizing: explicit counts win; otherwise the importance preset.
+    // Council sizing: an explicit roster (per-provider counts + models) IS the
+    // council; otherwise explicit counts; otherwise the importance preset.
     const preset = COUNCIL_PRESETS[config.importance] ?? COUNCIL_PRESETS.normal;
     const requested = input.config?.council;
-    config.council = {
-      plan: clampCount(requested?.plan ?? preset.plan),
-      review: clampCount(requested?.review ?? preset.review),
-      providers: (requested?.providers?.length ? requested.providers : [config.builder.provider]).slice(0, 3),
-    };
+    const members = (requested?.members ?? [])
+      .filter((member) => Number.isFinite(member.count) && member.count > 0)
+      .map((member) => ({ ...member, count: Math.min(Math.floor(member.count), COUNCIL_MAX) }));
+    const rosterSize = Math.min(
+      members.reduce((total, member) => total + member.count, 0),
+      COUNCIL_MAX,
+    );
+    if (rosterSize > 0) {
+      config.council = {
+        plan: rosterSize,
+        review: rosterSize,
+        providers: [...new Set(members.map((member) => member.provider))],
+        members,
+      };
+    } else {
+      config.council = {
+        plan: clampCount(requested?.plan ?? preset.plan),
+        review: clampCount(requested?.review ?? preset.review),
+        providers: (requested?.providers?.length ? requested.providers : [config.builder.provider]).slice(0, 3),
+      };
+    }
     this.state = {
       runId,
       workspace: path.resolve(input.workspace),
@@ -494,7 +512,8 @@ export class RunEngine extends EventEmitter {
       cwd: state.workspace,
       hardTimeoutMs: state.config.hardTurnTimeoutMs,
       signal: this.linkTurnSignal(item.id, signal),
-      onEvent: (event) => void this.onAgentEvent(item, event),
+      onEvent: (event) =>
+        void this.onAgentEvent(item, { agentId: item.agentKey, provider: agent.provider, model: agent.model }, event),
     });
     this.activeTurnAborts.delete(item.id);
 
@@ -689,7 +708,15 @@ export class RunEngine extends EventEmitter {
   /** One read-only, one-shot council candidate turn. Null when it failed. */
   private async runCouncilCandidate(
     item: WorkItem,
-    input: { role: 'plan' | 'review'; lens: string; index: number; provider: AgentType; brief: string },
+    input: {
+      role: 'plan' | 'review';
+      lens: string;
+      index: number;
+      provider: AgentType;
+      model?: string;
+      effort?: string;
+      brief: string;
+    },
     signal: AbortSignal,
   ): Promise<{ text: string | undefined; report: AgentTurnReport } | null> {
     const state = this.requireState();
@@ -711,6 +738,8 @@ export class RunEngine extends EventEmitter {
       tool: cli.cli[input.provider],
       request: {
         prompt,
+        model: input.model,
+        effort: input.effort,
         permission: this.readOnlyPermission(input.provider),
         allowDangerous: false,
         resultSchema: input.role === 'plan' ? PLAN_RESULT_JSON_SCHEMA : TURN_RESULT_JSON_SCHEMA,
@@ -719,7 +748,8 @@ export class RunEngine extends EventEmitter {
       cwd: state.workspace,
       hardTimeoutMs: state.config.hardTurnTimeoutMs,
       signal,
-      onEvent: (event) => void this.onAgentEvent(item, event),
+      onEvent: (event) =>
+        void this.onAgentEvent(item, { agentId: name, provider: input.provider, model: input.model }, event),
     });
     this.accountUsage(item, report);
     if (report.state !== 'completed') {
@@ -744,21 +774,40 @@ export class RunEngine extends EventEmitter {
     return 'default';
   }
 
+  /**
+   * Flat council seats (provider + model per candidate). The explicit roster
+   * wins; otherwise rotate the configured provider list, model unset.
+   */
+  private councilSeats(count: number, council: RunConfig['council']): CouncilSeat[] {
+    const state = this.requireState();
+    if (council.members?.length) {
+      const seats: CouncilSeat[] = [];
+      for (const member of council.members) {
+        for (let index = 0; index < member.count; index += 1) {
+          seats.push({ provider: member.provider, model: member.model, effort: member.effort });
+        }
+      }
+      return seats.slice(0, COUNCIL_MAX);
+    }
+    return Array.from({ length: count }, (_, index) => ({
+      provider: council.providers[index % council.providers.length] ?? state.config.builder.provider,
+    }));
+  }
+
   /** Fan out N independent plan candidates (parallel, read-only, distinct lenses). */
   private async runPlanCouncil(
     item: WorkItem,
     council: RunConfig['council'],
     signal: AbortSignal,
   ): Promise<CouncilPlanCandidate[]> {
-    const state = this.requireState();
+    const seats = this.councilSeats(council.plan, council);
     await this.record({
       type: 'note',
       itemId: item.id,
-      text: `Council: ${council.plan} independent plan candidate(s) across [${council.providers.join(', ')}] before synthesis.`,
+      text: `Council: ${seats.length} independent plan candidate(s) across [${describeSeats(seats)}] before synthesis.`,
     });
-    const briefs = Array.from({ length: council.plan }, (_, index) => {
+    const briefs = seats.map((seat, index) => {
       const lens = PLAN_LENSES[index % PLAN_LENSES.length] ?? 'general';
-      const provider = council.providers[index % council.providers.length] ?? state.config.builder.provider;
       const brief = composeTaskBrief({
         title: `${item.id} — independent plan candidate ${index + 1}`,
         description:
@@ -766,13 +815,21 @@ export class RunEngine extends EventEmitter {
           `\n\nYOUR ASSIGNED PERSPECTIVE (argue THIS angle hard; the other candidates cover the rest): ${lens}. ` +
           'You are ONE independent voice on a planning council — do NOT write any files or code; produce only your plan JSON.',
       });
-      return { lens, provider, brief };
+      return { lens, provider: seat.provider, model: seat.model, effort: seat.effort, brief };
     });
     const results = await Promise.all(
       briefs.map((candidate, index) =>
         this.runCouncilCandidate(
           item,
-          { role: 'plan', lens: candidate.lens, index, provider: candidate.provider, brief: candidate.brief },
+          {
+            role: 'plan',
+            lens: candidate.lens,
+            index,
+            provider: candidate.provider,
+            model: candidate.model,
+            effort: candidate.effort,
+            brief: candidate.brief,
+          },
           signal,
         ),
       ),
@@ -818,15 +875,17 @@ export class RunEngine extends EventEmitter {
     council: RunConfig['council'],
     signal: AbortSignal,
   ): Promise<AgentTurnReport | null> {
-    const state = this.requireState();
+    const seats = this.councilSeats(council.review, council);
     await this.record({
       type: 'note',
       itemId: item.id,
-      text: `Council: ${council.review} independent review lens(es) across [${council.providers.join(', ')}].`,
+      text: `Council: ${seats.length} independent review lens(es) across [${describeSeats(seats)}].`,
     });
-    const lenses = Array.from({ length: council.review }, (_, index) => ({
+    const lenses = seats.map((seat, index) => ({
       lens: REVIEW_LENSES[index % REVIEW_LENSES.length] ?? 'correctness',
-      provider: council.providers[index % council.providers.length] ?? state.config.builder.provider,
+      provider: seat.provider,
+      model: seat.model,
+      effort: seat.effort,
     }));
     const results = await Promise.all(
       lenses.map((entry, index) =>
@@ -837,6 +896,8 @@ export class RunEngine extends EventEmitter {
             lens: entry.lens,
             index,
             provider: entry.provider,
+            model: entry.model,
+            effort: entry.effort,
             brief: composeTaskBrief({
               title: `${item.id} — review lens ${index + 1}`,
               description:
@@ -1070,11 +1131,21 @@ export class RunEngine extends EventEmitter {
     if (this.deltaLog.length > 500) this.deltaLog.shift();
   }
 
-  private async onAgentEvent(item: WorkItem, event: AgentEvent): Promise<void> {
-    // Live fan-out; persist a trimmed copy (raw/stderr noise stays live-only).
-    if (event.type === 'raw') return;
+  private async onAgentEvent(item: WorkItem, source: RunAgentSource, event: AgentEvent): Promise<void> {
+    // Live fan-out of EVERYTHING (the per-agent terminal feed); persist a
+    // trimmed copy — raw/stderr noise stays live-only.
     const trimmed: AgentEvent = { ...event, text: event.text?.slice(0, 4000) };
-    await this.record({ type: 'agent', itemId: item.id, agent: trimmed }, event.type === 'stderr');
+    await this.record(
+      {
+        type: 'agent',
+        itemId: item.id,
+        agentId: source.agentId,
+        provider: source.provider,
+        model: source.model,
+        agent: trimmed,
+      },
+      event.type === 'stderr' || event.type === 'raw',
+    );
   }
 
   // --- state / persistence -----------------------------------------------------
@@ -1157,6 +1228,22 @@ interface CouncilPlanCandidate {
   lens: string;
   provider: AgentType;
   plan: NonNullable<ReturnType<typeof parsePlanResult>>;
+}
+
+interface CouncilSeat {
+  provider: AgentType;
+  model?: string;
+  effort?: string;
+}
+
+/** Compact seat summary for notes: `claude:opus×2, codex` (count omitted when 1). */
+function describeSeats(seats: CouncilSeat[]): string {
+  const groups = new Map<string, number>();
+  for (const seat of seats) {
+    const key = seat.model ? `${seat.provider}:${seat.model}` : seat.provider;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  return [...groups.entries()].map(([key, count]) => (count > 1 ? `${key}×${count}` : key)).join(', ');
 }
 
 function clampCount(value: number): number {

@@ -49,7 +49,7 @@ function buildInvocation(request: TurnRequest, tool: CliToolConfig): TurnInvocat
     args.push('-o', resultFile);
     if (request.resultSchema) {
       const schemaFile = path.join(request.scratchDir, 'output-schema.json');
-      preludeFiles[schemaFile] = JSON.stringify(request.resultSchema);
+      preludeFiles[schemaFile] = JSON.stringify(toStrictSchema(request.resultSchema));
       args.push('--output-schema', schemaFile);
     }
   }
@@ -73,15 +73,69 @@ function buildInvocation(request: TurnRequest, tool: CliToolConfig): TurnInvocat
 
 type JsonRecord = Record<string, unknown>;
 
+// ---------------------------------------------------------------------------
+// OpenAI structured outputs run in "strict" mode: every key in `properties`
+// must be listed in `required`, `additionalProperties` must be false at every
+// object level, and optionality is expressed as a nullable TYPE instead of an
+// absent key. The shared contract schemas keep normal JSON-Schema optionality
+// (claude accepts them as-is), so they are converted here on the way into
+// `--output-schema` — otherwise the API rejects the turn with
+// `invalid_json_schema` before the agent even starts.
+// ---------------------------------------------------------------------------
+function toStrictSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(toStrictSchema);
+  if (typeof node !== 'object' || node === null) return node;
+  const out: JsonRecord = { ...(node as JsonRecord) };
+  if (typeof out.properties === 'object' && out.properties !== null) {
+    const props = out.properties as JsonRecord;
+    const required = new Set(
+      Array.isArray(out.required) ? out.required.filter((key): key is string => typeof key === 'string') : [],
+    );
+    const strictProps: JsonRecord = {};
+    for (const [key, prop] of Object.entries(props)) {
+      const strict = toStrictSchema(prop);
+      strictProps[key] = required.has(key) ? strict : nullableSchema(strict);
+    }
+    out.properties = strictProps;
+    out.required = Object.keys(props);
+    out.additionalProperties = false;
+  }
+  if ('items' in out) out.items = toStrictSchema(out.items);
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(out[key])) out[key] = (out[key] as unknown[]).map(toStrictSchema);
+  }
+  return out;
+}
+
+/** Express "optional" as "nullable" (strict mode has no optional properties). */
+function nullableSchema(schema: unknown): unknown {
+  if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) return schema;
+  const record = schema as JsonRecord;
+  const type = record.type;
+  if (typeof type === 'string') return type === 'null' ? record : { ...record, type: [type, 'null'] };
+  if (Array.isArray(type)) return type.includes('null') ? record : { ...record, type: [...type, 'null'] };
+  return { anyOf: [record, { type: 'null' }] };
+}
+
 function createParser(): TurnStreamParser {
   const summary: TurnStreamSummary = {};
   let announced = false;
+  let resultEmitted = false;
 
   const announce = (sessionId?: string): AgentEvent[] => {
     if (sessionId) summary.sessionId = sessionId;
     if (announced) return [];
     announced = true;
     return [agentEvent.turnStarted(sessionId)];
+  };
+
+  // The CLI can close a turn with more than one terminal event (e.g. `error`
+  // followed by `turn.failed`); the summary keeps absorbing them, but only ONE
+  // result event reaches the stream — doubles rendered as two "turn ended"s.
+  const emitResult = (input: Parameters<typeof agentEvent.result>[0]): AgentEvent[] => {
+    if (resultEmitted) return [];
+    resultEmitted = true;
+    return [agentEvent.result(input)];
   };
 
   const push = (line: string): AgentEvent[] => {
@@ -108,12 +162,13 @@ function createParser(): TurnStreamParser {
     if (type === 'turn.completed') {
       const usage = readNewUsage(payload.usage as JsonRecord | undefined);
       if (usage) summary.usage = usage;
-      return [agentEvent.result({ text: summary.resultText, usage: summary.usage, sessionId: summary.sessionId })];
+      return emitResult({ text: summary.resultText, usage: summary.usage, sessionId: summary.sessionId });
     }
     if (type === 'turn.failed' || type === 'error') {
       summary.isError = true;
-      summary.errorDetail = errorMessage(payload) ?? 'codex reported a failed turn';
-      return [agentEvent.result({ text: summary.resultText, usage: summary.usage, isError: true })];
+      // A later generic close (turn.failed) must not clobber a specific error.
+      summary.errorDetail = errorMessage(payload) ?? summary.errorDetail ?? 'codex reported a failed turn';
+      return emitResult({ text: summary.resultText, usage: summary.usage, isError: true });
     }
 
     // ---- older `{id, msg:{type}}` generation -------------------------------
@@ -153,11 +208,11 @@ function createParser(): TurnStreamParser {
           if (typeof msg.last_agent_message === 'string' && msg.last_agent_message.trim()) {
             summary.resultText = msg.last_agent_message;
           }
-          return [agentEvent.result({ text: summary.resultText, usage: summary.usage, sessionId: summary.sessionId })];
+          return emitResult({ text: summary.resultText, usage: summary.usage, sessionId: summary.sessionId });
         case 'error':
           summary.isError = true;
           summary.errorDetail = typeof msg.message === 'string' ? msg.message : 'codex reported an error';
-          return [agentEvent.result({ text: summary.resultText, usage: summary.usage, isError: true })];
+          return emitResult({ text: summary.resultText, usage: summary.usage, isError: true });
         default:
           return [];
       }

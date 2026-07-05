@@ -86,6 +86,24 @@ const tr: MessageSchema = {
     steerNow: 'Hemen uygula',
     steerNowHint: 'Devam eden turu iptal edip yönlendirmeyi anında uygular — oturumlar bağlamlarıyla devam eder.',
     verbose: 'Ayrıntılı',
+    terminals: {
+      title: 'Terminaller',
+      empty: 'Agent akışları tur başladığı anda burada belirir.',
+      live: 'canlı',
+      idle: 'boşta',
+      turnStarted: 'tur başladı',
+      turnEnded: 'tur bitti',
+    },
+    council: {
+      title: 'Agentlar (konsey)',
+      hint: 'Her sağlayıcıdan kaç agent başlayacağını ve hangisinin hangi modeli kullanacağını seçin. Plan ve inceleme aşamalarında paralel çalışırlar; yazan agent her zaman tektir. Buradaki seçim önem ön ayarının yerine geçer.',
+      count: 'Adet',
+      model: 'Model',
+      effort: 'Efor',
+      builderModel: 'Model',
+      defaultModel: 'Sağlayıcı varsayılanı',
+      total: 'Paralel agent',
+    },
     confirmStop: {
       title: 'Bu koşu durdurulsun mu?',
       message:
