@@ -20,38 +20,19 @@ import type {
   QueueJob,
   QueueRule,
   QueueState,
-  CreateTeamRunResponse,
-  RoleConfigInput,
-  RoleReconfigureInput,
-  TeamChanges,
-  TeamArtifact,
-  TeamMessageHistoryParams,
-  TeamMessagePage,
-  TeamRunsResponse,
-  TeamRunStateResponse,
-  TeamRunStartInput,
-  TeamSteeringInput,
-  TeamTemplate,
-  TeamTemplatePayload,
-  TeamTemplatesResponse,
   TerminalDto,
   TerminalInput,
   TerminalStatus,
-  TigerConfig,
-  TigerProjectInfo,
-  TigerRunTemplate,
-  TigerRunTemplatePayload,
-  TigerStageId,
-  TigerStageRunConfig,
-  TigerState,
-  TigerUsage,
-  TeamCommitResult,
-  TeamPrInput,
-  TeamPrResult,
-  TeamAttemptsResponse,
   CueEngineStatus,
   CueSubscriptionStatus,
   CueSubscriptionInput,
+  RunSnapshot,
+  RunEventDto,
+  RunCreateConfigInput,
+  RunChanges,
+  RunIndexEntry,
+  ProvidersConfig,
+  ProvidersConfigPatch,
 } from '~/types';
 
 /**
@@ -120,10 +101,18 @@ export function useApi() {
     // no-token path stays byte-identical (the second arg remains `undefined`).
     const token = getStoredAuthToken();
     const withAuth = token
-      ? { ...(opts ?? {}), headers: { ...((opts as { headers?: Record<string, string> })?.headers ?? {}), Authorization: `Bearer ${token}` } }
+      ? {
+          ...(opts ?? {}),
+          headers: {
+            ...((opts as { headers?: Record<string, string> })?.headers ?? {}),
+            Authorization: `Bearer ${token}`,
+          },
+        }
       : opts;
     return ($fetch<T>(`${base}${path}`, withAuth) as Promise<T>).catch((e: unknown) => {
-      surfaceAuthError((e as { status?: number; statusCode?: number })?.status ?? (e as { statusCode?: number })?.statusCode);
+      surfaceAuthError(
+        (e as { status?: number; statusCode?: number })?.status ?? (e as { statusCode?: number })?.statusCode,
+      );
       throw e;
     });
   };
@@ -136,9 +125,11 @@ export function useApi() {
     updateTerminal: (id: string, body: Partial<TerminalInput>) =>
       req<TerminalDto>(`/api/terminals/${id}`, { method: 'PUT', body }),
     deleteTerminal: (id: string) => req<void>(`/api/terminals/${id}`, { method: 'DELETE' }),
-    startTerminal: (id: string, size?: Size) => req<TerminalStatus>(`/api/terminals/${id}/start`, { method: 'POST', body: size ?? {} }),
+    startTerminal: (id: string, size?: Size) =>
+      req<TerminalStatus>(`/api/terminals/${id}/start`, { method: 'POST', body: size ?? {} }),
     stopTerminal: (id: string) => req<TerminalStatus>(`/api/terminals/${id}/stop`, { method: 'POST' }),
-    restartTerminal: (id: string, size?: Size) => req<TerminalStatus>(`/api/terminals/${id}/restart`, { method: 'POST', body: size ?? {} }),
+    restartTerminal: (id: string, size?: Size) =>
+      req<TerminalStatus>(`/api/terminals/${id}/restart`, { method: 'POST', body: size ?? {} }),
 
     listGroups: () => req<Group[]>('/api/groups'),
     createGroup: (body: { name: string; color?: string }) => req<Group>('/api/groups', { method: 'POST', body }),
@@ -159,59 +150,13 @@ export function useApi() {
       req<PromptFile>('/api/prompts', { method: 'POST', body: { path, content, overwrite } }),
     updatePrompt: (path: string, content: string, expectedVersion?: string) =>
       req<PromptFile>('/api/prompts/file', { method: 'PUT', body: { path, content, expectedVersion } }),
-    deletePrompt: (path: string) => req<void>(`/api/prompts/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+    deletePrompt: (path: string) =>
+      req<void>(`/api/prompts/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
     renamePrompt: (fromPath: string, toPath: string, overwrite = false) =>
       req<PromptFile>('/api/prompts/rename', { method: 'POST', body: { fromPath, toPath, overwrite } }),
     listPromptHistory: (filters: PromptHistoryFilters = {}) =>
       req<PromptHistoryListResponse>(`/api/prompts/history${queryString(filters as Record<string, unknown>)}`),
 
-    // --- Tiger orchestrator ---
-    getTigerState: () => req<TigerState>('/api/tiger/state'),
-    getTigerConfig: () => req<TigerConfig>('/api/tiger/config'),
-    listTigerProjects: () => req<TigerProjectInfo[]>('/api/tiger/projects'),
-    openTigerProject: (path: string) =>
-      req<TigerState>('/api/tiger/projects/open', { method: 'POST', body: { path } }),
-    closeTigerProject: () => req<TigerState>('/api/tiger/projects/close', { method: 'POST' }),
-    forgetTigerProject: (path: string) =>
-      req<TigerProjectInfo[]>('/api/tiger/projects', { method: 'DELETE', body: { path } }),
-    updateTigerConfig: (body: Partial<TigerConfig>) =>
-      req<TigerConfig>('/api/tiger/config', { method: 'PUT', body }),
-    initTigerWorkspace: (path: string, projectPrompt: string) =>
-      req<TigerState>('/api/tiger/workspace', { method: 'POST', body: { path, projectPrompt } }),
-    replaceTigerProjectPrompt: (projectPrompt: string) =>
-      req<TigerState>('/api/tiger/project-prompt', { method: 'PUT', body: { projectPrompt } }),
-    runTigerStage: (stage: TigerStageId, cfg: TigerStageRunConfig, auto = false) =>
-      req<TigerState>(`/api/tiger/stages/${stage}/run`, { method: 'POST', body: { ...cfg, auto } }),
-    runAllTiger: (configs: Partial<Record<TigerStageId, TigerStageRunConfig>>, fromStage?: TigerStageId) =>
-      req<TigerState>('/api/tiger/run-all', { method: 'POST', body: { configs, fromStage } }),
-    listTigerTemplates: () => req<TigerRunTemplate[]>('/api/tiger/templates'),
-    createTigerTemplate: (t: TigerRunTemplatePayload) =>
-      req<TigerRunTemplate[]>('/api/tiger/templates', { method: 'POST', body: t }),
-    updateTigerTemplate: (id: string, t: Partial<TigerRunTemplatePayload>) =>
-      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}`, { method: 'PUT', body: t }),
-    duplicateTigerTemplate: (id: string, t?: Partial<TigerRunTemplatePayload>) =>
-      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}/duplicate`, {
-        method: 'POST',
-        body: t ?? {},
-      }),
-    applyTigerTemplate: (id: string) =>
-      req<TigerRunTemplate>(`/api/tiger/templates/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
-    archiveTigerTemplate: (id: string) =>
-      req<TigerRunTemplate[]>(`/api/tiger/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    saveTigerTemplate: (t: TigerRunTemplatePayload) =>
-      req<TigerRunTemplate[]>('/api/tiger/templates', { method: 'POST', body: t }),
-    deleteTigerTemplate: (name: string) =>
-      req<TigerRunTemplate[]>(`/api/tiger/templates?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
-    retryTigerStage: (stage: TigerStageId) =>
-      req<TigerState>(`/api/tiger/stages/${stage}/retry`, { method: 'POST' }),
-    continueTigerStage: (stage: TigerStageId) =>
-      req<TigerState>(`/api/tiger/stages/${stage}/continue`, { method: 'POST' }),
-    routeTigerCorrection: (target: 'executing-plan' | 'task-review') =>
-      req<TigerState>('/api/tiger/route', { method: 'POST', body: { target } }),
-    stopTiger: () => req<TigerState>('/api/tiger/stop', { method: 'POST' }),
-    readTigerFile: (path: string) =>
-      req<{ path: string; content: string }>(`/api/tiger/file?path=${encodeURIComponent(path)}`),
-    getTigerUsage: () => req<TigerUsage>('/api/tiger/usage'),
     getLimits: () => req<LimitStatus>('/api/limits'),
     refreshLimits: () => req<LimitStatus>('/api/limits/refresh', { method: 'POST' }),
     listLimitRules: () => req<LimitRule[]>('/api/limits/rules'),
@@ -221,105 +166,11 @@ export function useApi() {
     deleteLimitRule: (id: string) =>
       req<LimitStatus>(`/api/limits/rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
-    // --- Team orchestrator ---
-    listTeamTemplates: () => req<TeamTemplatesResponse>('/api/team/templates'),
-    listTeamProjects: () => req<{ projects: string[]; lastWorkspace: string | null }>('/api/team/projects'),
-    createTeamTemplate: (body: TeamTemplatePayload) =>
-      req<{ template: TeamTemplate }>('/api/team/templates', { method: 'POST', body }),
-    updateTeamTemplate: (id: string, body: TeamTemplatePayload) =>
-      req<{ template: TeamTemplate }>(`/api/team/templates/${encodeURIComponent(id)}`, { method: 'PUT', body }),
-    duplicateTeamTemplate: (id: string, body: { name?: string } = {}) =>
-      req<{ template: TeamTemplate }>(`/api/team/templates/${encodeURIComponent(id)}/duplicate`, { method: 'POST', body }),
-    deleteTeamTemplate: (id: string) =>
-      req<{ ok: boolean }>(`/api/team/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    getTeamState: () => req<TeamRunStateResponse>('/api/team/state'),
-    startTeamRun: (body: TeamRunStartInput) =>
-      req<TeamRunStateResponse | CreateTeamRunResponse>('/api/team/runs', { method: 'POST', body }),
-    stopTeamRun: (id: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
-    pauseTeamRun: (id: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
-    resumeTeamRun: (id: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
-    closeTeamRun: (id: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/close`, { method: 'POST' }),
-    steerTeamRun: (id: string, body: TeamSteeringInput) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/steer`, { method: 'POST', body }),
-    listTeamMessages: (runId: string, params: TeamMessageHistoryParams = {}) =>
-      req<TeamMessagePage>(`/api/team/runs/${encodeURIComponent(runId)}/messages${queryString(params as Record<string, unknown>)}`),
-    listTeamArtifacts: (runId: string) =>
-      req<TeamArtifact[]>(`/api/team/runs/${encodeURIComponent(runId)}/artifacts`),
-    readTeamArtifact: (runId: string, path: string) =>
-      req<{ path: string; content: string; artifact?: TeamArtifact }>(
-        `/api/team/runs/${encodeURIComponent(runId)}/artifacts/file?path=${encodeURIComponent(path)}`,
-      ),
-    getTeamChanges: (runId: string) =>
-      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/changes`),
-    /**
-     * Translate chat message bodies for display only. The team's agents always work in
-     * English (enforced server-side); this just changes what the human reads. Order of
-     * `translations` mirrors the input `texts`.
-     */
-    translateTeamMessages: (texts: string[], targetLang: 'tr' | 'en') =>
-      req<{ translations: string[] }>('/api/team/translate', {
-        method: 'POST',
-        body: { texts, targetLang },
-      }),
-    // Git-write routes: stage all, commit, and open a PR for the run's workspace.
-    stageTeamChanges: (runId: string) =>
-      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(runId)}/git/stage`, { method: 'POST' }),
-    commitTeamChanges: (runId: string, message: string) =>
-      req<TeamCommitResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/commit`, { method: 'POST', body: { message } }),
-    createTeamPr: (runId: string, body: TeamPrInput) =>
-      req<TeamPrResult>(`/api/team/runs/${encodeURIComponent(runId)}/git/pr`, { method: 'POST', body }),
-
-    // Run history + read-only rehydrate.
-    listTeamRuns: () => req<TeamRunsResponse>('/api/team/runs'),
-    getTeamRun: (id: string) => req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}`),
-    /** Absolute URL of the export download (json|markdown); the browser fetches it directly. */
-    teamExportUrl: (id: string, format: 'json' | 'markdown') =>
-      `${base}/api/team/runs/${encodeURIComponent(id)}/export?format=${format}`,
-
-    // Single-role control + mid-run role management.
-    pauseTeamRole: (id: string, roleId: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/pause`, { method: 'POST' }),
-    resumeTeamRole: (id: string, roleId: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/resume`, { method: 'POST' }),
-    steerTeamRole: (id: string, roleId: string, body: TeamSteeringInput) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/steer`, { method: 'POST', body }),
-    addTeamRole: (id: string, body: RoleConfigInput) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles`, { method: 'POST', body }),
-    reconfigureTeamRole: (id: string, roleId: string, body: RoleReconfigureInput) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body }),
-    removeTeamRole: (id: string, roleId: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
-
-    // --- Attempt model (vibe-kanban): try N times, compare, promote the best ---
-    listTeamAttempts: (id: string) =>
-      req<TeamAttemptsResponse>(`/api/team/runs/${encodeURIComponent(id)}/attempts`),
-    createTeamAttempt: (id: string) =>
-      req<TeamRunStateResponse>(`/api/team/runs/${encodeURIComponent(id)}/attempts`, { method: 'POST' }),
-    promoteTeamAttempt: (id: string, attemptId: string) =>
-      req<TeamRunStateResponse>(
-        `/api/team/runs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/promote`,
-        { method: 'POST' },
-      ),
-    getTeamAttemptDiff: (id: string, attemptId: string) =>
-      req<TeamChanges>(`/api/team/runs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/diff`),
-
-    // --- Team worktree-per-task (Part B): merge/cleanup a kept per-task worktree branch ---
-    mergeTeamWorktree: (id: string, taskId: string, cleanup = false) =>
-      req<TeamRunStateResponse>(
-        `/api/team/runs/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(taskId)}/merge`,
-        { method: 'POST', body: { cleanup } },
-      ),
-
     // --- Autonomous queue ---
     getQueueState: () => req<QueueState>('/api/queue/state'),
     getQueueHistory: (params: QueueHistoryQuery = {}) =>
       req<QueueHistoryResponse>(`/api/queue/history${queryString(params as Record<string, unknown>)}`),
-    enqueueQueueJob: (body: QueueEnqueueInput) =>
-      req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
+    enqueueQueueJob: (body: QueueEnqueueInput) => req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
     enqueueQueue: (body: QueueEnqueueInput) => req<QueueJob>('/api/queue/enqueue', { method: 'POST', body }),
     reorderQueue: (ids: string[]) => req<QueueState>('/api/queue/reorder', { method: 'POST', body: { ids } }),
     bulkQueue: (action: QueueBulkAction, ids: string[]) =>
@@ -341,10 +192,30 @@ export function useApi() {
     reusePromptGeneration: (id: string, action: PromptGenerationReuseAction, body: Record<string, unknown> = {}) =>
       req<Record<string, unknown>>(`/api/prompts/generate/${id}/reuse`, { method: 'POST', body: { ...body, action } }),
 
+    // --- v2 runs (WorkGraph engine) ---
+    createRun: (body: { workspace: string; goal: string; config?: RunCreateConfigInput }) =>
+      req<{ run: RunSnapshot }>('/api/runs', { method: 'POST', body }),
+    getCurrentRun: () => req<{ run: RunSnapshot | null }>('/api/runs/current'),
+    startRun: () => req<{ run: RunSnapshot }>('/api/runs/current/start', { method: 'POST' }),
+    stopRun: (reason?: string) =>
+      req<{ run: RunSnapshot }>('/api/runs/current/stop', { method: 'POST', body: reason ? { reason } : {} }),
+    steerRun: (body: string, interrupt = false) =>
+      req<{ run: RunSnapshot }>('/api/runs/current/steer', { method: 'POST', body: { body, interrupt } }),
+    interactiveInput: (agentId: string, data: string) =>
+      req<{ ok: boolean }>('/api/runs/current/input', { method: 'POST', body: { agentId, data } }),
+    interactiveComplete: (agentId: string) =>
+      req<{ ok: boolean }>('/api/runs/current/complete', { method: 'POST', body: { agentId } }),
+    listRunEvents: (afterSeq = 0) => req<{ events: RunEventDto[] }>(`/api/runs/current/events?afterSeq=${afterSeq}`),
+    getRunChanges: () => req<{ changes: RunChanges }>('/api/runs/current/changes'),
+    listRuns: () => req<{ runs: RunIndexEntry[] }>('/api/runs'),
+    getRunById: (runId: string) => req<{ run: RunSnapshot }>(`/api/runs/${encodeURIComponent(runId)}`),
+    getProvidersConfig: () => req<{ config: ProvidersConfig }>('/api/providers/config'),
+    updateProvidersConfig: (body: ProvidersConfigPatch) =>
+      req<{ config: ProvidersConfig }>('/api/providers/config', { method: 'PUT', body }),
+
     // --- Cue (event-driven orchestration engine) ---
     getCueStatus: () => req<CueEngineStatus>('/api/cue/status'),
-    listCueSubscriptions: () =>
-      req<{ subscriptions: CueSubscriptionStatus[] }>('/api/cue/subscriptions'),
+    listCueSubscriptions: () => req<{ subscriptions: CueSubscriptionStatus[] }>('/api/cue/subscriptions'),
     reloadCue: () => req<CueEngineStatus>('/api/cue/reload', { method: 'POST' }),
     triggerCue: (id: string, vars?: Record<string, string>) =>
       req<CueSubscriptionStatus>(`/api/cue/trigger/${encodeURIComponent(id)}`, {

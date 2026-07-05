@@ -35,13 +35,10 @@ function makeStubCtx(over: Partial<Record<string, unknown>> = {}): AppCtx {
         projectName: input.projectName ?? 'Queue',
       }),
     },
-    orchestrator: {
-      getState: () => ({ workspace: '/ws', initialized: true, busy: false, currentStage: null }),
-    },
-    teamOrchestrator: {
-      tryGetState: () => null,
-      listMessages: async () => [],
-      steer: async (body: string) => ({ id: 'msg-1', body, createdAt: 'now' }),
+    runEngine: {
+      getSnapshot: () => null,
+      listEvents: async () => [],
+      steer: async () => ({ runId: 'run-1', seq: 1 }),
     },
     ...over,
   };
@@ -49,15 +46,16 @@ function makeStubCtx(over: Partial<Record<string, unknown>> = {}): AppCtx {
 }
 
 test('buildTools exposes the expected board tool set', () => {
-  const names = buildTools().map((t) => t.name).sort();
+  const names = buildTools()
+    .map((t) => t.name)
+    .sort();
   assert.deepEqual(names, [
     'enqueue_prompt',
     'get_queue_job',
-    'get_team_run',
-    'get_tiger_state',
+    'get_run',
     'list_queue_jobs',
-    'list_team_messages',
-    'post_team_steering',
+    'list_run_events',
+    'steer_run',
   ]);
 });
 
@@ -74,9 +72,9 @@ test('every tool declares a name, title, description, and readOnly flag', () => 
 test('write tools are not marked read-only; read tools are', () => {
   const byName = new Map(buildTools().map((t) => [t.name, t]));
   assert.equal(byName.get('list_queue_jobs')!.readOnly, true);
-  assert.equal(byName.get('get_tiger_state')!.readOnly, true);
+  assert.equal(byName.get('get_run')!.readOnly, true);
   assert.equal(byName.get('enqueue_prompt')!.readOnly, false);
-  assert.equal(byName.get('post_team_steering')!.readOnly, false);
+  assert.equal(byName.get('steer_run')!.readOnly, false);
 });
 
 test('list_queue_jobs returns the expected shape from a stub ctx', async () => {
@@ -155,31 +153,32 @@ test('list_queue_jobs status arg is a closed enum (typos are rejected at the sch
   assert.equal(statusSchema.safeParse('bogus').success, false);
 });
 
-test('post_team_steering reports no_active_team_run when no run is loaded', async () => {
+test('steer_run reports no_active_run when no run is loaded', async () => {
   const ctx = makeStubCtx();
-  const tool = buildTools().find((t) => t.name === 'post_team_steering')!;
+  const tool = buildTools().find((t) => t.name === 'steer_run')!;
   const result = (await tool.run(ctx, { body: 'focus on tests' })) as { ok: boolean; error?: string };
   assert.equal(result.ok, false);
-  assert.equal(result.error, 'no_active_team_run');
+  assert.equal(result.error, 'no_active_run');
 });
 
-test('post_team_steering steers when a run is active', async () => {
+test('steer_run steers when a run is active', async () => {
   const ctx = makeStubCtx({
-    teamOrchestrator: {
-      tryGetState: () => ({ status: 'running' }),
-      listMessages: async () => [],
-      steer: async (body: string) => ({ id: 'msg-42', body, createdAt: 'now' }),
+    runEngine: {
+      getSnapshot: () => ({ runId: 'run-1', status: 'running' }),
+      listEvents: async () => [],
+      steer: async () => ({ runId: 'run-1', seq: 7 }),
     },
   });
-  const tool = buildTools().find((t) => t.name === 'post_team_steering')!;
-  const result = (await tool.run(ctx, { body: 'focus on tests' })) as { ok: boolean; messageId?: string };
+  const tool = buildTools().find((t) => t.name === 'steer_run')!;
+  const result = (await tool.run(ctx, { body: 'focus on tests' })) as { ok: boolean; runId?: string; seq?: number };
   assert.equal(result.ok, true);
-  assert.equal(result.messageId, 'msg-42');
+  assert.equal(result.runId, 'run-1');
+  assert.equal(result.seq, 7);
 });
 
-test('get_team_run returns active=false when no run loaded', async () => {
+test('get_run returns active=false when no run loaded', async () => {
   const ctx = makeStubCtx();
-  const tool = buildTools().find((t) => t.name === 'get_team_run')!;
+  const tool = buildTools().find((t) => t.name === 'get_run')!;
   const result = (await tool.run(ctx, {})) as { active: boolean };
   assert.equal(result.active, false);
 });

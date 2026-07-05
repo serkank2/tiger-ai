@@ -39,13 +39,7 @@ const describedby = computed(() => {
       {{ label }}<span v-if="required" class="req" aria-hidden="true">*</span>
     </label>
 
-    <slot
-      :id="inputId"
-      :describedby="describedby"
-      :invalid="invalid"
-      :hint-id="hintId"
-      :error-id="errorId"
-    />
+    <slot :id="inputId" :describedby="describedby" :invalid="invalid" :hint-id="hintId" :error-id="errorId" />
 
     <p v-if="hint" :id="hintId" class="hint">{{ hint }}</p>
     <p v-if="error" :id="errorId" class="error" role="alert">{{ error }}</p>

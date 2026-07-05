@@ -71,7 +71,10 @@ test('state.json normalization still keeps claude/codex limit snapshots', () => 
     terminals: [],
     groups: [],
     limits: {
-      snapshots: [{ ...antigravitySnapshot(), id: 'c', provider: 'claude' }, { ...antigravitySnapshot(), id: 'x', provider: 'codex' }],
+      snapshots: [
+        { ...antigravitySnapshot(), id: 'c', provider: 'claude' },
+        { ...antigravitySnapshot(), id: 'x', provider: 'codex' },
+      ],
       rules: [],
     },
   });

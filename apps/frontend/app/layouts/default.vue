@@ -15,9 +15,7 @@ const { t } = useT();
 
 // Localized nav entries: translate `label` via the item's `labelKey`, keeping the
 // English `label` as the fallback for any missing key.
-const navItems = computed(() =>
-  NAV_ITEMS.map((item) => ({ ...item, label: t(item.labelKey) })),
-);
+const navItems = computed(() => NAV_ITEMS.map((item) => ({ ...item, label: t(item.labelKey) })));
 
 const activeKey = computed(() => activeNavKey(route.path));
 const showLimitTopPanel = computed(() => Boolean(config.public.limitTopPanel));

@@ -58,8 +58,4 @@ export const copilotAdapter: ProviderAdapter = {
   },
 };
 
-export const EXPERIMENTAL_ADAPTERS: ProviderAdapter[] = [
-  opencodeAdapter,
-  geminiAdapter,
-  copilotAdapter,
-];
+export const EXPERIMENTAL_ADAPTERS: ProviderAdapter[] = [opencodeAdapter, geminiAdapter, copilotAdapter];

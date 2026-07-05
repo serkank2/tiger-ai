@@ -15,6 +15,13 @@ test('defaultTigerConfig uses the high-capability default profile', () => {
   assert.equal(defaults.codexPermission, 'yolo');
 });
 
+test('defaultTigerConfig execution: unlimited concurrency, one retry, continue-on-failure', () => {
+  const e = defaultTigerConfig().execution;
+  assert.equal(e.maxConcurrent, 0); // 0 = unlimited: every selected agent starts at once
+  assert.equal(e.maxAttempts, 2); // one automatic retry of a failed agent run
+  assert.equal(e.continueOnFailure, true); // skip a failed-but-partial stage and keep advancing
+});
+
 test('defaultTigerConfig adds Antigravity (agy) as a backward-compatible off-by-default provider', () => {
   const cfg = defaultTigerConfig();
   const d = cfg.defaults;
@@ -92,4 +99,27 @@ test('validateConfigPatch still accepts non-defaults patches (cli/timing/executi
   const current = defaultTigerConfig();
   assert.equal(validateConfigPatch({ execution: { maxConcurrent: 8 } }, current), null);
   assert.equal(validateConfigPatch({ timing: { markerPollMs: 2000 } }, current), null);
+});
+
+test('validateConfigPatch accepts the new execution fields and still rejects out-of-range/bad-type', () => {
+  const current = defaultTigerConfig();
+  // maxConcurrent 0 (= unlimited) is now valid; the new fields are accepted.
+  assert.equal(validateConfigPatch({ execution: { maxConcurrent: 0 } }, current), null);
+  assert.equal(validateConfigPatch({ execution: { maxAttempts: 3 } }, current), null);
+  assert.equal(validateConfigPatch({ execution: { continueOnFailure: false } }, current), null);
+  // Still rejected: above the cap, below the floor, and wrong type.
+  assert.notEqual(validateConfigPatch({ execution: { maxConcurrent: 65 } }, current), null);
+  assert.notEqual(validateConfigPatch({ execution: { maxAttempts: 0 } }, current), null);
+  assert.notEqual(validateConfigPatch({ execution: { continueOnFailure: 'yes' as never } }, current), null);
+});
+
+test('normalizeConfig fills the new execution fields and keeps the default for out-of-range maxAttempts', () => {
+  const n = normalizeConfig({
+    version: 1,
+    execution: { maxConcurrent: 0, maxAttempts: 999, continueOnFailure: false },
+  });
+  assert.equal(n.execution.maxConcurrent, 0);
+  assert.equal(n.execution.continueOnFailure, false);
+  // 999 is above the max (10), so normalizeNumberRecord keeps the source default (2).
+  assert.equal(n.execution.maxAttempts, 2);
 });

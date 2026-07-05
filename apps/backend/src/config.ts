@@ -56,14 +56,22 @@ function resolvePromptsDir(): string {
 
 function parseOrigins(): string[] {
   const raw = process.env.KAPLAN_CORS_ORIGINS;
-  if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (raw && raw.trim())
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   return ['http://localhost:3000', 'http://127.0.0.1:3000'];
 }
 
 /** Comma-separated absolute directories agents/runs may use as workspaces. */
 function parseList(name: string): string[] {
   const raw = process.env[name];
-  if (raw && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (raw && raw.trim())
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   return [];
 }
 
@@ -140,11 +148,7 @@ export const config = {
 
   // Structured logging. JSON in production, human-friendly otherwise; level gates output.
   log: {
-    level: (process.env.KAPLAN_LOG_LEVEL?.trim() || (isProd ? 'info' : 'debug')) as
-      | 'debug'
-      | 'info'
-      | 'warn'
-      | 'error',
+    level: (process.env.KAPLAN_LOG_LEVEL?.trim() || (isProd ? 'info' : 'debug')) as 'debug' | 'info' | 'warn' | 'error',
     json: envBool('KAPLAN_LOG_JSON', isProd),
   },
 
@@ -176,6 +180,13 @@ export const config = {
     // disabled, agents share the workspace cwd exactly as before (behavior is byte-for-byte
     // unchanged).
     worktreePerTask: envBool('KAPLAN_WORKTREE_PER_TASK', false),
+    // Honor a stage's EXPLICITLY-chosen dangerous/full-permission mode (e.g. claude
+    // `--dangerously-skip-permissions`, codex `--dangerously-bypass-approvals-and-sandbox`). In
+    // Tiger the user picks each stage's permission mode in the UI, so that selection IS the opt-in;
+    // apply it instead of silently downgrading to the CLI's prompt-for-everything default. Mirrors
+    // config.team.honorDangerousPermissions. Set KAPLAN_TIGER_HONOR_DANGEROUS_PERMISSIONS=0 for
+    // locked-down deployments that must ignore the selection.
+    honorDangerousPermissions: envBool('KAPLAN_TIGER_HONOR_DANGEROUS_PERMISSIONS', true),
   },
 
   // AI Team execution toggles.

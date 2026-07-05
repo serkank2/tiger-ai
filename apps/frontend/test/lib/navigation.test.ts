@@ -6,7 +6,7 @@ import { NAV_ITEMS, activeNavKey } from '~/lib/navigation';
 describe('navigation', () => {
   it('exposes a home for every major area', () => {
     const keys = NAV_ITEMS.map((i) => i.key);
-    for (const required of ['terminals', 'projects', 'queue', 'prompts', 'templates', 'limits', 'settings']) {
+    for (const required of ['terminals', 'runs', 'queue', 'prompts', 'limits', 'settings']) {
       expect(keys).toContain(required);
     }
   });
@@ -26,7 +26,7 @@ describe('navigation', () => {
 
   it('resolves the active entry by exact path and nested prefix', () => {
     expect(activeNavKey('/terminals')).toBe('terminals');
-    expect(activeNavKey('/tiger')).toBe('projects');
+    expect(activeNavKey('/runs')).toBe('runs');
     expect(activeNavKey('/limits/usage')).toBe('limits');
     expect(activeNavKey('/settings')).toBe('settings');
   });

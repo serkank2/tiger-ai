@@ -7,23 +7,18 @@ function source(relativePath: string): string {
 }
 
 describe('workbench responsive CSS', () => {
-  it('keeps terminal, tiger, and cue grids shrinkable at narrow widths', () => {
+  it('keeps terminal and cue grids shrinkable at narrow widths', () => {
     expect(source('TerminalGrid.vue')).toContain(
       'grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));',
-    );
-    expect(source('tiger/TigerView.vue')).toContain(
-      'grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));',
     );
     expect(source('cue/CueView.vue')).toContain(
       'grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));',
     );
   });
 
-  it('stacks the Tiger new-project workspace picker on narrow screens', () => {
-    const tigerView = source('tiger/TigerView.vue');
-
-    expect(tigerView).toContain('grid-template-columns: minmax(0, 1fr) auto;');
-    expect(tigerView).toContain('@media (max-width: 520px)');
-    expect(tigerView).toMatch(/\.wsrow \{\r?\n\s+grid-template-columns: 1fr;\r?\n\s+\}/);
+  it('stacks the Runs layout to one column on narrow screens', () => {
+    const runView = source('runs/RunView.vue');
+    expect(runView).toContain('@media (max-width: 1000px)');
+    expect(runView).toMatch(/grid-template-columns: 1fr;/);
   });
 });

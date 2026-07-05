@@ -11,12 +11,7 @@
  */
 
 /** The event kinds Cue can subscribe to. */
-export type CueEventType =
-  | 'file.changed'
-  | 'time.scheduled'
-  | 'time.once'
-  | 'agent.completed'
-  | 'cli.trigger';
+export type CueEventType = 'file.changed' | 'time.scheduled' | 'time.once' | 'agent.completed' | 'cli.trigger';
 
 /** A filesystem change kind, mirrored from `node:fs.watch`'s eventType plus a derived 'deleted'. */
 export type CueChangeType = 'created' | 'modified' | 'deleted' | 'any';

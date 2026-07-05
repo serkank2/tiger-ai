@@ -80,15 +80,7 @@ function displayText(item: PromptHistoryEvent): string {
 }
 
 function searchableText(item: PromptHistoryEvent): string {
-  return [
-    item.id,
-    item.kind,
-    item.projectId,
-    item.generationId,
-    item.inputText,
-    item.outputText,
-    statusOf(item),
-  ]
+  return [item.id, item.kind, item.projectId, item.generationId, item.inputText, item.outputText, statusOf(item)]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();
@@ -103,57 +95,52 @@ function fmtDate(value: string): string {
 
 <template>
   <section class="history-panel">
-    <div class="filters" aria-label="Prompt history filters">
+    <div class="filters" :aria-label="t('prompts.history.filtersAria')">
       <input v-model="q" :placeholder="t('prompts.history.searchPlaceholder')" spellcheck="false" />
       <select v-model="kind">
-        <option value="">All kinds</option>
+        <option value="">{{ t('prompts.history.allKinds') }}</option>
         <option v-for="value in kinds" :key="value" :value="value">{{ value.replaceAll('_', ' ') }}</option>
       </select>
       <select v-model="project">
-        <option value="">All projects</option>
+        <option value="">{{ t('prompts.history.allProjects') }}</option>
         <option v-for="value in projects" :key="value" :value="value">{{ value }}</option>
       </select>
       <select v-model="status">
-        <option value="">All statuses</option>
+        <option value="">{{ t('prompts.history.allStatuses') }}</option>
         <option v-for="value in statuses" :key="value" :value="value">{{ value }}</option>
       </select>
-      <input v-model="dateFrom" type="date" aria-label="From date" />
-      <input v-model="dateTo" type="date" aria-label="To date" />
+      <input v-model="dateFrom" type="date" :aria-label="t('prompts.history.fromDate')" />
+      <input v-model="dateTo" type="date" :aria-label="t('prompts.history.toDate')" />
       <button class="refresh" :disabled="loading || refreshing" @click="emit('refresh')">
-        {{ refreshing ? 'Updating' : 'Refresh' }}
+        {{ refreshing ? t('prompts.history.updating') : t('prompts.history.refresh') }}
       </button>
     </div>
 
     <div v-if="loading && !items.length" class="state">
-      <Spinner label="Loading prompt history" />
+      <Spinner :label="t('prompts.history.loading')" />
       <Skeleton :lines="5" />
     </div>
 
-    <EmptyState
-      v-else-if="error"
-      title="Prompt history unavailable"
-      :description="error"
-      tone="danger"
-    >
+    <EmptyState v-else-if="error" :title="t('prompts.history.unavailableTitle')" :description="error" tone="danger">
       <template #actions>
-        <button class="refresh" @click="emit('refresh')">Retry</button>
+        <button class="refresh" @click="emit('refresh')">{{ t('prompts.history.retry') }}</button>
       </template>
     </EmptyState>
 
     <EmptyState
       v-else-if="!items.length"
-      title="No prompt history yet"
-      description="Generated, queued, and reused prompts will appear here."
+      :title="t('prompts.history.emptyTitle')"
+      :description="t('prompts.history.emptyDescription')"
     />
 
     <EmptyState
       v-else-if="!filtered.length"
-      title="No matching prompts"
-      description="Adjust the search, kind, project, date, or status filters."
+      :title="t('prompts.history.noMatchesTitle')"
+      :description="t('prompts.history.noMatchesDescription')"
     />
 
     <div v-else class="history-grid">
-      <div class="list" aria-label="Prompt history results">
+      <div class="list" :aria-label="t('prompts.history.resultsAria')">
         <button
           v-for="item in filtered"
           :key="item.id"
@@ -170,7 +157,7 @@ function fmtDate(value: string): string {
         </button>
       </div>
 
-      <article class="compare" aria-label="Prompt comparison">
+      <article class="compare" :aria-label="t('prompts.history.compareAria')">
         <template v-if="selected">
           <header>
             <div>
@@ -181,12 +168,12 @@ function fmtDate(value: string): string {
           </header>
           <div class="compare-cols">
             <section>
-              <h4>Original</h4>
-              <pre>{{ selected.inputText || 'No original draft was stored.' }}</pre>
+              <h4>{{ t('prompts.history.original') }}</h4>
+              <pre>{{ selected.inputText || t('prompts.history.noOriginalStored') }}</pre>
             </section>
             <section>
-              <h4>Reusable prompt</h4>
-              <pre>{{ selected.outputText || selected.inputText || 'No prompt text was stored.' }}</pre>
+              <h4>{{ t('prompts.history.reusablePrompt') }}</h4>
+              <pre>{{ selected.outputText || selected.inputText || t('prompts.history.noPromptStored') }}</pre>
             </section>
           </div>
         </template>

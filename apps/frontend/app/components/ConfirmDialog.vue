@@ -39,10 +39,7 @@ function onCancel() {
       <BaseButton v-if="req.kind === 'confirm'" variant="ghost" @click="decide(false)">
         {{ req.cancelText ?? t('common.cancel') }}
       </BaseButton>
-      <BaseButton
-        :variant="req.danger ? 'danger' : 'primary'"
-        @click="decide(true)"
-      >
+      <BaseButton :variant="req.danger ? 'danger' : 'primary'" @click="decide(true)">
         {{ req.confirmText ?? (req.kind === 'alert' ? t('common.ok') : t('common.confirm')) }}
       </BaseButton>
     </template>

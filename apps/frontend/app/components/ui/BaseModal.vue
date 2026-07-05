@@ -34,9 +34,7 @@ let opener: HTMLElement | null = null;
 let prevOverflow = '';
 let backdropPointerClosed = false;
 
-const labelledBy = computed(() =>
-  props.labelledby ?? (props.title && !slots.header ? titleId : undefined),
-);
+const labelledBy = computed(() => props.labelledby ?? (props.title && !slots.header ? titleId : undefined));
 
 const FOCUSABLE =
   'a[href], area[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';

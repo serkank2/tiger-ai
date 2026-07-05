@@ -15,15 +15,7 @@ export interface TerminalStatus {
   endedAt?: string;
 }
 
-export type ShellKind =
-  | 'system-default'
-  | 'powershell'
-  | 'pwsh'
-  | 'cmd'
-  | 'bash'
-  | 'zsh'
-  | 'fish'
-  | 'custom';
+export type ShellKind = 'system-default' | 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'custom';
 
 export interface ShellSpec {
   kind: ShellKind;
@@ -202,10 +194,7 @@ export interface TigerRunTemplate {
   configs: Partial<Record<TigerStageId, TigerStageRunConfig>>;
 }
 
-export type TigerRunTemplatePayload = Pick<
-  TigerRunTemplate,
-  'name' | 'description' | 'fromStage' | 'configs'
->;
+export type TigerRunTemplatePayload = Pick<TigerRunTemplate, 'name' | 'description' | 'fromStage' | 'configs'>;
 
 export interface TigerProjectInfo {
   path: string;
@@ -368,7 +357,10 @@ export interface LimitDecision {
 export interface LimitStatus {
   snapshots: LimitSnapshot[];
   latest: LimitSnapshot[];
-  providers: Record<TigerAgentType, { provider: TigerAgentType; latest: LimitSnapshot[]; latestCheckedAt: string | null; ok: boolean; error?: string }>;
+  providers: Record<
+    TigerAgentType,
+    { provider: TigerAgentType; latest: LimitSnapshot[]; latestCheckedAt: string | null; ok: boolean; error?: string }
+  >;
   rules: LimitRule[];
   decision: LimitDecision;
   staleAfterMs: number;
@@ -962,6 +954,203 @@ export interface TeamChangesFrame {
   changes: TeamChangesEvent;
 }
 
+// --- v2 runs (mirror of apps/backend/src/run/types.ts) ---
+
+export type RunItemKind = 'plan' | 'build' | 'review';
+export type RunItemStatus = 'pending' | 'running' | 'verifying' | 'done' | 'blocked' | 'cancelled';
+export type RunStatus = 'created' | 'running' | 'blocked' | 'completed' | 'failed' | 'stopped';
+export type RunProfile = 'mission' | 'pipeline';
+export type RunImportance = 'low' | 'normal' | 'high' | 'critical';
+
+/** One user-selected council seat group: N candidates from a provider, optionally pinned to a model/effort. */
+export interface RunCouncilMember {
+  provider: 'claude' | 'codex' | 'antigravity';
+  model?: string;
+  effort?: string;
+  count: number;
+}
+
+export interface RunCouncilConfig {
+  plan: number;
+  review: number;
+  providers: ('claude' | 'codex' | 'antigravity')[];
+  /** Explicit roster (provider × count × model); when present it sizes the council. */
+  members?: RunCouncilMember[];
+}
+
+export interface RunItemUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+export interface RunWorkItem {
+  id: string;
+  kind: RunItemKind;
+  title: string;
+  description: string;
+  acceptanceCriteria?: string[];
+  dependsOn: string[];
+  status: RunItemStatus;
+  agentKey: string;
+  attempts: number;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  resultSummary?: string;
+  error?: string;
+  fixOf?: string;
+  usage?: RunItemUsage;
+}
+
+export interface RunVerificationRecord {
+  id: string;
+  command: string;
+  outcome: 'passed' | 'failed' | 'timeout' | 'error';
+  exitCode: number | null;
+  durationMs: number;
+  outputTail: string;
+  at: string;
+}
+
+export interface RunSteeringEntry {
+  id: string;
+  body: string;
+  createdAt: string;
+  status: 'pending' | 'applied';
+}
+
+export interface RunUsageTotals extends RunItemUsage {
+  turns: number;
+}
+
+export interface RunSnapshot {
+  runId: string;
+  workspace: string;
+  goal: string;
+  status: RunStatus;
+  message?: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  profile: RunProfile;
+  importance: RunImportance;
+  council: RunCouncilConfig;
+  /** Interactive-mode flag → UI shows per-agent input + complete controls. */
+  interactive?: boolean;
+  seq: number;
+  usage: RunUsageTotals;
+  graph: { items: RunWorkItem[] };
+  verifications: RunVerificationRecord[];
+  steering: RunSteeringEntry[];
+}
+
+export interface RunAgentEventDto {
+  type: 'turn-started' | 'text' | 'thinking' | 'tool-use' | 'tool-result' | 'usage' | 'result' | 'raw' | 'stderr';
+  at: string;
+  text?: string;
+  tool?: { name: string; detail?: string };
+  usage?: RunItemUsage;
+  sessionId?: string;
+  isError?: boolean;
+}
+
+export interface RunEventDto {
+  seq: number;
+  at: string;
+  type: 'run-status' | 'item-status' | 'agent' | 'verification' | 'steering' | 'note';
+  runId: string;
+  itemId?: string;
+  /** Agent-stream identity for `agent` events — groups events into per-agent terminals. */
+  agentId?: string;
+  provider?: string;
+  model?: string;
+  status?: RunStatus;
+  itemStatus?: string;
+  agent?: RunAgentEventDto;
+  verification?: RunVerificationRecord;
+  text?: string;
+}
+
+/** Full working-tree changeset for the current run (mirror of git/changes.ts). */
+export interface RunChangeFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'unknown';
+  oldPath?: string;
+}
+
+export interface RunChanges {
+  isGitRepo: boolean;
+  head: string | null;
+  branch: string | null;
+  files: RunChangeFile[];
+  diff: string;
+  diffTruncated: boolean;
+  summary: { files: number; insertions: number; deletions: number };
+  generatedAt: string;
+  note?: string;
+}
+
+/** One row of the global run-history index (mirror of run/history.ts). */
+export interface RunIndexEntry {
+  runId: string;
+  workspace: string;
+  goalPreview: string;
+  status: RunStatus;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  costUsd?: number;
+  turns: number;
+  itemsDone: number;
+  itemsTotal: number;
+}
+
+/** Provider CLI configuration as served by /api/providers/config. */
+export interface ProviderConfigEntry {
+  executable: string;
+  model: string;
+  effort: string;
+  permission: string;
+  models: string[];
+  efforts: string[];
+  permissionModes: string[];
+}
+
+export interface ProvidersConfig {
+  claude: ProviderConfigEntry;
+  codex: ProviderConfigEntry;
+  antigravity: ProviderConfigEntry;
+}
+
+export type ProvidersConfigPatch = Partial<
+  Record<
+    'claude' | 'codex' | 'antigravity',
+    Partial<Pick<ProviderConfigEntry, 'executable' | 'model' | 'effort' | 'permission'>>
+  >
+>;
+
+export interface RunCreateConfigInput {
+  profile?: RunProfile;
+  builder?: { provider: 'claude' | 'codex' | 'antigravity'; model?: string; effort?: string; permission?: string };
+  reviewPolicy?: 'final' | 'per-task' | 'none';
+  verifyPolicy?: 'per-build' | 'final' | 'both' | 'none';
+  allowDangerous?: boolean;
+  importance?: RunImportance;
+  council?: Partial<RunCouncilConfig>;
+  /** Interactive mode: agents run as live PTYs you watch and type into. */
+  interactive?: boolean;
+  /** Skip the planning phase — seed the goal as a single direct build task. */
+  skipPlanning?: boolean;
+  /** Build lanes: 1 = sequential; >1 = isolated worktrees merged back (needs git). */
+  maxParallelBuilds?: number;
+  /** Staged planning: max tasks planned per plan turn (mega-goals plan in batches). */
+  planBatchSize?: number;
+  /** Rotate an agent slot to a fresh session after N turns (0 = never). */
+  sessionRotateTurns?: number;
+}
+
 // --- Backend health (mirror of GET /api/health) ---
 
 export interface HealthStatus {
@@ -1196,12 +1385,7 @@ export interface PromptGenerationRecord {
   completedAt: string | null;
 }
 
-export type PromptGenerationReuseAction =
-  | 'copy'
-  | 'edit'
-  | 'save-to-library'
-  | 'use-as-project-prompt'
-  | 'enqueue';
+export type PromptGenerationReuseAction = 'copy' | 'edit' | 'save-to-library' | 'use-as-project-prompt' | 'enqueue';
 
 export interface PromptGenerationState {
   generation: PromptGenerationRecord;
@@ -1278,16 +1462,13 @@ export interface ServerMessage {
   gate?: DoneGateState;
   directive?: SteeringDirective;
   changes?: TeamChangesEvent;
+  // v2 run frames: `run.state` reuses `state` (as RunSnapshot); `run.event` carries `event`.
+  event?: RunEventDto;
 }
 
 // --- Cue (event-driven orchestration engine) ---
 
-export type CueEventType =
-  | 'file.changed'
-  | 'time.scheduled'
-  | 'time.once'
-  | 'agent.completed'
-  | 'cli.trigger';
+export type CueEventType = 'file.changed' | 'time.scheduled' | 'time.once' | 'agent.completed' | 'cli.trigger';
 
 export type CueTargetKind = 'queue' | 'team';
 

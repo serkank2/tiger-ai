@@ -139,7 +139,12 @@ test('QueueService exposes the explicit pipeline flag and keeps flag-off state l
   const existing = await service.enqueue({ prompt: 'Legacy project job', provider: 'codex' });
 
   await assert.rejects(
-    () => service.enqueue({ prompt: 'Terminal should not silently coerce', target: 'terminal', payload: { name: 'Hidden terminal' } }),
+    () =>
+      service.enqueue({
+        prompt: 'Terminal should not silently coerce',
+        target: 'terminal',
+        payload: { name: 'Hidden terminal' },
+      }),
     (err) => {
       assert.equal((err as { status?: number }).status, 400);
       assert.match((err as Error).message, /queuePipelineV2 is disabled/);

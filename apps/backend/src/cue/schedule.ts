@@ -24,7 +24,8 @@ export const MIN_INTERVAL_MS = 1000;
  */
 export function parseIntervalSpec(spec: string | number | undefined): number | null {
   if (spec === undefined || spec === null) return null;
-  if (typeof spec === 'number') return Number.isFinite(spec) && spec > 0 ? Math.max(MIN_INTERVAL_MS, Math.trunc(spec)) : null;
+  if (typeof spec === 'number')
+    return Number.isFinite(spec) && spec > 0 ? Math.max(MIN_INTERVAL_MS, Math.trunc(spec)) : null;
   const trimmed = spec.trim().toLowerCase();
   if (!trimmed) return null;
   if (/^\d+$/.test(trimmed)) {

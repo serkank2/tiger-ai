@@ -23,9 +23,7 @@ async function runLifecycle(action: () => unknown | Promise<unknown>) {
 
 const root = ref<HTMLElement | null>(null);
 const host = ref<HTMLElement | null>(null);
-const running = computed(
-  () => props.terminal.status.state === 'running' || props.terminal.status.state === 'starting',
-);
+const running = computed(() => props.terminal.status.state === 'running' || props.terminal.status.state === 'starting');
 const isActive = computed(() => terminals.activeId === props.terminal.id);
 
 // --- Grid virtualization -------------------------------------------------
@@ -154,7 +152,7 @@ function expand() {
       <div v-if="!live" class="tile-placeholder" data-testid="tile-placeholder">
         <span class="ph-state">{{ terminal.status.state }}</span>
         <span v-if="lastLine" class="ph-last">{{ lastLine }}</span>
-        <span v-else class="ph-idle">scrolled out of view</span>
+        <span v-else class="ph-idle">{{ t('terminals.tile.scrolledOut') }}</span>
       </div>
       <div v-else-if="!running" class="tile-hint">{{ terminal.status.state }} — ▶ to start</div>
     </div>
@@ -173,8 +171,7 @@ function expand() {
   border-radius: var(--radius-sm);
   overflow: hidden;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 18%, transparent), transparent 42%),
-    var(--bg-term);
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 18%, transparent), transparent 42%), var(--bg-term);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
     0 8px 22px color-mix(in srgb, var(--bg) 40%, transparent);
@@ -241,8 +238,7 @@ function expand() {
 }
 .tile.suspended {
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--bg-elev) 30%, transparent), transparent 56%),
-    var(--bg-term);
+    linear-gradient(135deg, color-mix(in srgb, var(--bg-elev) 30%, transparent), transparent 56%), var(--bg-term);
 }
 .tile.suspended::before {
   background: repeating-linear-gradient(

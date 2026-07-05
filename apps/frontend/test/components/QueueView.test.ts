@@ -30,7 +30,12 @@ vi.mock('~/composables/useApi', () => ({ useApi: () => api }));
 vi.mock('~/stores/connection', () => ({ useConnectionStore: () => mocks.conn }));
 vi.mock('~/composables/useSocket', () => ({ useSocket: () => mocks.socket }));
 
-function step(jobId: string, stepKey: TigerStageId, position: number, status: QueueStep['status'] = 'pending'): QueueStep {
+function step(
+  jobId: string,
+  stepKey: TigerStageId,
+  position: number,
+  status: QueueStep['status'] = 'pending',
+): QueueStep {
   return {
     id: `${jobId}-${stepKey}`,
     jobId,
@@ -74,7 +79,13 @@ function job(id: string, overrides: Partial<QueueJobView> = {}): QueueJobView {
   return { ...base, ...overrides };
 }
 
-function event(id: string, jobId: string | null, type: string, message: string, createdAt = '2026-06-18T08:00:00.000Z'): QueueEvent {
+function event(
+  id: string,
+  jobId: string | null,
+  type: string,
+  message: string,
+  createdAt = '2026-06-18T08:00:00.000Z',
+): QueueEvent {
   return { id, jobId, type, message, payload: null, createdAt };
 }
 
@@ -106,8 +117,12 @@ function state(jobs: QueueJobView[], events: QueueEvent[] = []): QueueState {
 }
 
 function v2State(allJobs: QueueJobView[], liveItems?: QueueJobView[], events: QueueEvent[] = []): QueueState {
-  const terminalJobs = allJobs.filter((item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled');
-  const live = liveItems ?? allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled');
+  const terminalJobs = allJobs.filter(
+    (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'canceled',
+  );
+  const live =
+    liveItems ??
+    allJobs.filter((item) => item.status !== 'completed' && item.status !== 'failed' && item.status !== 'canceled');
   return {
     ...state(allJobs, events),
     queuePipelineV2: true,
@@ -133,8 +148,7 @@ function v2State(allJobs: QueueJobView[], liveItems?: QueueJobView[], events: Qu
 const BaseButtonStub = {
   props: ['disabled', 'loading'],
   emits: ['click'],
-  template:
-    '<button :disabled="disabled || loading" @click="$emit(\'click\', $event)"><slot /></button>',
+  template: '<button :disabled="disabled || loading" @click="$emit(\'click\', $event)"><slot /></button>',
 };
 
 async function mountQueue(initial: QueueState) {
@@ -237,7 +251,15 @@ describe('QueueView', () => {
       completedAt: '2026-06-18T09:00:00.000Z',
     });
     api.getQueueHistory.mockResolvedValue({ items: [historyItem], total: 1, nextCursor: null, hasMore: false });
-    api.reorderQueue.mockResolvedValue(v2State([{ ...second, position: 1 }, { ...first, position: 2 }], [second, first]));
+    api.reorderQueue.mockResolvedValue(
+      v2State(
+        [
+          { ...second, position: 1 },
+          { ...first, position: 2 },
+        ],
+        [second, first],
+      ),
+    );
 
     const wrapper = await mountQueue(v2State([first, second], [first, second]));
 
@@ -367,7 +389,12 @@ describe('QueueView', () => {
     const first = job('first');
     const second = job('second');
     const wrapper = await mountQueue(state([first, second]));
-    api.reorderQueue.mockResolvedValue(state([{ ...second, position: 1 }, { ...first, position: 2 }]));
+    api.reorderQueue.mockResolvedValue(
+      state([
+        { ...second, position: 1 },
+        { ...first, position: 2 },
+      ]),
+    );
     api.pauseQueueJob.mockResolvedValue(job('first', { status: 'paused' }));
     api.cancelQueueJob.mockResolvedValue(job('first', { status: 'canceled' }));
     api.retryQueueJob.mockResolvedValue(job('first', { status: 'retrying' }));
@@ -437,7 +464,12 @@ describe('QueueView', () => {
     const first = job('first');
     const second = job('second');
     const wrapper = await mountQueue(state([first, second]));
-    api.reorderQueue.mockResolvedValue(state([{ ...second, position: 1 }, { ...first, position: 2 }]));
+    api.reorderQueue.mockResolvedValue(
+      state([
+        { ...second, position: 1 },
+        { ...first, position: 2 },
+      ]),
+    );
 
     const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() };
     await wrapper.find('[data-testid="job-row-first"]').trigger('dragstart', { dataTransfer });

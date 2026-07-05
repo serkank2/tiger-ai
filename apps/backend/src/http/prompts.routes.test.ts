@@ -48,7 +48,8 @@ async function listen(app: express.Express): Promise<TestServer> {
 
 function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   const e = err as { status?: number; statusCode?: number; code?: string };
-  const explicit = typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
+  const explicit =
+    typeof e.status === 'number' ? e.status : typeof e.statusCode === 'number' ? e.statusCode : undefined;
   const status = explicit && explicit >= 400 && explicit < 600 ? explicit : 500;
   res.status(status).json({ error: { message: err instanceof Error ? err.message : String(err), code: e.code } });
 }
@@ -77,8 +78,6 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
   const ctx: AppCtx = {
     state: state(),
     manager: {} as AppCtx['manager'],
-    orchestrator: {} as AppCtx['orchestrator'],
-    runTemplates: {} as AppCtx['runTemplates'],
     promptGenerations: {
       listHistory: async (filters: unknown) => {
         seenFilters = filters;
@@ -87,9 +86,8 @@ test('GET /api/prompts/history returns filtered prompt history from the backend 
     } as AppCtx['promptGenerations'],
     queueService: {} as AppCtx['queueService'],
     limits: {} as AppCtx['limits'],
-    teamOrchestrator: {} as AppCtx['teamOrchestrator'],
-    teamTemplates: {} as AppCtx['teamTemplates'],
-    teamTranslations: {} as AppCtx['teamTranslations'],
+    runEngine: {} as AppCtx['runEngine'],
+    providerConfig: {} as AppCtx['providerConfig'],
     save: async () => {},
   };
 

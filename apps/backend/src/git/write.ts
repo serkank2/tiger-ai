@@ -22,6 +22,13 @@ const log = logger.child({ mod: 'git/write' });
 
 const GIT_TIMEOUT_MS = 30_000;
 const GH_TIMEOUT_MS = 60_000;
+const SAFE_STAGE_PATHS = [
+  '.',
+  ':(exclude).tiger',
+  ':(exclude).tiger/**',
+  ':(exclude).kaplan',
+  ':(exclude).kaplan/**',
+] as const;
 
 interface RunResult {
   ok: boolean;
@@ -105,7 +112,10 @@ export async function currentBranch(repoDir: string, run: CommandRunner = defaul
  * Whether the work tree has any staged or unstaged changes (tracked modifications
  * or untracked files). Uses `git status --porcelain` — empty output means clean.
  */
-export async function hasStagedOrUnstagedChanges(repoDir: string, run: CommandRunner = defaultRunner): Promise<boolean> {
+export async function hasStagedOrUnstagedChanges(
+  repoDir: string,
+  run: CommandRunner = defaultRunner,
+): Promise<boolean> {
   const res = await git(run, repoDir, ['status', '--porcelain']);
   if (!res.ok) return false;
   return res.stdout.split('\n').some((line) => line.trim().length > 0);
@@ -114,7 +124,7 @@ export async function hasStagedOrUnstagedChanges(repoDir: string, run: CommandRu
 /** Stage everything (`git add -A`). Throws `HttpError` if not a repo or git fails. */
 export async function stageAll(repoDir: string, run: CommandRunner = defaultRunner): Promise<void> {
   await assertRepo(repoDir);
-  const res = await git(run, repoDir, ['add', '-A']);
+  const res = await git(run, repoDir, ['add', '-A', '--', ...SAFE_STAGE_PATHS]);
   if (!res.ok) {
     throw new HttpError(500, 'internal', 'git add failed', res.stderr.trim() || `exit ${res.code}`);
   }
@@ -135,7 +145,11 @@ export interface CommitResult {
  * Handles "nothing to commit" gracefully: returns `{ committed: false }` rather
  * than throwing a 500. Returns the new commit sha + a one-line summary on success.
  */
-export async function commit(repoDir: string, message: string, run: CommandRunner = defaultRunner): Promise<CommitResult> {
+export async function commit(
+  repoDir: string,
+  message: string,
+  run: CommandRunner = defaultRunner,
+): Promise<CommitResult> {
   await assertRepo(repoDir);
   const trimmed = (message ?? '').trim();
   if (!trimmed) {
@@ -146,10 +160,19 @@ export async function commit(repoDir: string, message: string, run: CommandRunne
   if (!res.ok) {
     // "nothing to commit" is an expected, non-error outcome — surface it as a typed result.
     const out = `${res.stdout}\n${res.stderr}`.toLowerCase();
-    if (out.includes('nothing to commit') || out.includes('no changes added to commit') || out.includes('nothing added to commit')) {
+    if (
+      out.includes('nothing to commit') ||
+      out.includes('no changes added to commit') ||
+      out.includes('nothing added to commit')
+    ) {
       return { committed: false, sha: null, summary: 'Nothing to commit — the working tree is clean.' };
     }
-    throw new HttpError(500, 'internal', 'git commit failed', res.stderr.trim() || res.stdout.trim() || `exit ${res.code}`);
+    throw new HttpError(
+      500,
+      'internal',
+      'git commit failed',
+      res.stderr.trim() || res.stdout.trim() || `exit ${res.code}`,
+    );
   }
 
   const shaRes = await git(run, repoDir, ['rev-parse', 'HEAD']);

@@ -34,7 +34,10 @@ const sending = ref(false);
 const today = () => new Date().toISOString().slice(0, 10); // evaluated at send/preview time, not mount
 
 function parseTags(text: string): string[] {
-  return text.split(',').map((s) => s.trim()).filter(Boolean);
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 function metaFromDraft(): PromptMeta {
   return {
@@ -55,13 +58,16 @@ const selectedTerminals = computed(() => selectedTermIds.value.map((id) => termi
 function isSendableTerminal(t: TerminalDto | undefined): t is TerminalDto {
   return Boolean(t && !t.protected);
 }
-const selectedSendTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(isSendableTerminal));
+const selectedSendTerminals = computed(() =>
+  selectedTermIds.value.map((id) => terminals.byId[id]).filter(isSendableTerminal),
+);
 const targetShellKinds = computed(() => selectedTerminals.value.map((t) => t.shell?.kind));
 const detectedVars = computed(() => detectVariables(draft.body));
 const unresolved = computed(() => detectedVars.value.filter((v) => !values[v]?.trim()));
 
 const canSend = computed(
-  () => conn.status === 'connected' && selectedTerminals.value.length > 0 && draft.body.trim().length > 0 && !sending.value,
+  () =>
+    conn.status === 'connected' && selectedTerminals.value.length > 0 && draft.body.trim().length > 0 && !sending.value,
 );
 
 function setSnapshot() {
@@ -109,7 +115,11 @@ async function doOpenPrompt(path: string) {
 }
 
 function slug(s: string): string {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 // Avoid 409 on Save-as by picking the next free name-N.md.
 function uniquePath(base: string): string {
@@ -218,16 +228,19 @@ const promptLengthWarning = computed(() => {
 // would inject a literal "[200~" — only wrap when every target shell supports it.
 const BRACKET_OK = new Set(['powershell', 'pwsh', 'bash', 'zsh', 'fish']);
 function sanitize(text: string): string {
-  return text
-    .replace(/\r\n?/g, '\n') // normalize newlines
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[20[01]~/g, '') // strip any payload-owned bracketed-paste sentinels
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ''); // drop control chars except \t and \n
+  return (
+    text
+      .replace(/\r\n?/g, '\n') // normalize newlines
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[20[01]~/g, '') // strip any payload-owned bracketed-paste sentinels
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+  ); // drop control chars except \t and \n
 }
 function payloadFor(text: string, ids: string[]): string {
   const safe = sanitize(text);
-  const bracket = safe.includes('\n') && ids.length > 0 && ids.every((id) => BRACKET_OK.has(terminals.byId[id]?.shell?.kind ?? ''));
+  const bracket =
+    safe.includes('\n') && ids.length > 0 && ids.every((id) => BRACKET_OK.has(terminals.byId[id]?.shell?.kind ?? ''));
   return bracket ? `\x1b[200~${safe}\x1b[201~` : safe;
 }
 function broadcastFailureMessage(result: BroadcastOutcome): string | null {
@@ -236,7 +249,9 @@ function broadcastFailureMessage(result: BroadcastOutcome): string | null {
       return null;
     case 'not_sent':
       return result.reason === 'server_error'
-        ? t('prompts.composer.sendFailedServer', { message: result.message ?? t('prompts.composer.sendFailedServerDefault') })
+        ? t('prompts.composer.sendFailedServer', {
+            message: result.message ?? t('prompts.composer.sendFailedServerDefault'),
+          })
         : t('prompts.composer.sendFailedDisconnected');
     case 'timeout':
       return t('prompts.composer.sendStatusTimeout');
@@ -327,7 +342,9 @@ onMounted(() => {
   <BaseModal :title="t('prompts.composer.title')" size="xl" @close="tryClose">
     <template #header-actions>
       <BaseButton variant="ghost" @click="newDraft">{{ t('prompts.composer.new') }}</BaseButton>
-      <BaseButton variant="primary" :disabled="!dirty" @click="save">{{ currentPath ? t('common.save') : t('prompts.composer.saveAs') }}</BaseButton>
+      <BaseButton variant="primary" :disabled="!dirty" @click="save">{{
+        currentPath ? t('common.save') : t('prompts.composer.saveAs')
+      }}</BaseButton>
       <BaseButton icon-only variant="ghost" :aria-label="t('common.close')" @click="tryClose">✕</BaseButton>
     </template>
 
@@ -364,27 +381,45 @@ onMounted(() => {
       <footer class="cfoot">
         <span class="summary">
           <template v-if="selectedTerminals.length">
-            {{ t('prompts.composer.sendingTo') }} <b>{{ selectedTerminals.length }}</b>:
-            {{ selectedTerminals.slice(0, 4).map((term) => term.name).join(', ') }}{{ selectedTerminals.length > 4 ? '…' : '' }}
+            {{ t('prompts.composer.sendingTo') }} <b>{{ selectedTerminals.length }}</b
+            >:
+            {{
+              selectedTerminals
+                .slice(0, 4)
+                .map((term) => term.name)
+                .join(', ')
+            }}{{ selectedTerminals.length > 4 ? '…' : '' }}
           </template>
           <template v-else>{{ t('prompts.composer.noTargets') }}</template>
-          <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? t('prompts.editor.run') : t('prompts.editor.paste') }}</span>
+          <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{
+            draft.run ? t('prompts.editor.run') : t('prompts.editor.paste')
+          }}</span>
         </span>
         <span v-if="promptLengthWarning" class="length-warn">{{ promptLengthWarning }}</span>
-        <BaseButton variant="primary" :disabled="!canSend" @click="requestSend">{{ t('prompts.composer.previewSend') }}</BaseButton>
+        <BaseButton variant="primary" :disabled="!canSend" @click="requestSend">{{
+          t('prompts.composer.previewSend')
+        }}</BaseButton>
       </footer>
-
     </div>
 
     <!-- Preview / confirm dialog — BaseModal gives Escape-to-close, focus-trap,
          focus-restore, and topmost (teleported) overlay behaviour. -->
     <BaseModal v-if="showPreview" :title="t('prompts.composer.previewTitle')" size="lg" @close="showPreview = false">
       <div class="pmeta">
-        <span><b>{{ selectedTerminals.length }}</b> {{ t('prompts.composer.targetsLabel') }}: {{ selectedTerminals.map((term) => term.name).join(', ') }}</span>
-        <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{ draft.run ? t('prompts.composer.runMode') : t('prompts.composer.pasteMode') }}</span>
+        <span
+          ><b>{{ selectedTerminals.length }}</b> {{ t('prompts.composer.targetsLabel') }}:
+          {{ selectedTerminals.map((term) => term.name).join(', ') }}</span
+        >
+        <span class="mode-tag" :class="draft.run ? 'run' : 'paste'">{{
+          draft.run ? t('prompts.composer.runMode') : t('prompts.composer.pasteMode')
+        }}</span>
       </div>
-      <p v-if="perTerminal" class="note">{{ t('prompts.composer.perTerminalNote', { name: selectedTerminals[0]?.name }) }}</p>
-      <p v-if="unresolved.length" class="warn">{{ t('prompts.composer.unfilledVars', { vars: unresolved.join(', ') }) }}</p>
+      <p v-if="perTerminal" class="note">
+        {{ t('prompts.composer.perTerminalNote', { name: selectedTerminals[0]?.name }) }}
+      </p>
+      <p v-if="unresolved.length" class="warn">
+        {{ t('prompts.composer.unfilledVars', { vars: unresolved.join(', ') }) }}
+      </p>
       <p v-if="promptLengthWarning" class="warn">{{ promptLengthWarning }}</p>
       <pre class="ptext">{{ previewText }}</pre>
       <template #footer>
@@ -398,17 +433,91 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.composer { position: relative; display: flex; flex-direction: column; height: min(660px, 74vh); }
-.cols { flex: 1; display: grid; grid-template-columns: 280px 1fr 300px; gap: 14px; min-height: 0; }
-.col { min-height: 0; display: flex; flex-direction: column; }
-.cfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
-.summary { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 10px; }
-.length-warn { flex: 1; min-width: 180px; color: var(--amber); font-size: 12px; line-height: 1.35; }
-.mode-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
-.mode-tag.paste { background: var(--bg-elev-2); color: var(--text-dim); }
-.mode-tag.run { background: var(--accent-soft); color: var(--accent); }
-.pmeta { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); margin-bottom: 8px; flex-wrap: wrap; }
-.note { font-size: 12px; color: var(--text-dim); margin: 4px 0; }
-.warn { font-size: 12px; color: var(--amber); margin: 4px 0; }
-.ptext { overflow: auto; max-height: 50vh; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; }
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: min(660px, 74vh);
+}
+.cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  gap: 14px;
+  min-height: 0;
+}
+.col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cfoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.summary {
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.length-warn {
+  flex: 1;
+  min-width: 180px;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.mode-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.mode-tag.paste {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.mode-tag.run {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pmeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.note {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+.warn {
+  font-size: 12px;
+  color: var(--amber);
+  margin: 4px 0;
+}
+.ptext {
+  overflow: auto;
+  max-height: 50vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 6px 0 0;
+}
 </style>

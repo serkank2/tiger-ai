@@ -1,4 +1,11 @@
-import type { QueueJobConfigSnapshot, QueueJob, QueueLimitSnapshot, QueueProvider, QueueRule, QueueRuleDecision } from './types.js';
+import type {
+  QueueJobConfigSnapshot,
+  QueueJob,
+  QueueLimitSnapshot,
+  QueueProvider,
+  QueueRule,
+  QueueRuleDecision,
+} from './types.js';
 
 type ConcreteProvider = Exclude<QueueProvider, 'mixed'>;
 
@@ -27,7 +34,11 @@ function providersFor(job: QueueJob): ConcreteProvider[] {
   return used.length > 0 ? used : ALL_CONCRETE_PROVIDERS;
 }
 
-function providerMatches(ruleProvider: QueueRule['provider'], jobProvider: QueueProvider, concreteProvider: ConcreteProvider): boolean {
+function providerMatches(
+  ruleProvider: QueueRule['provider'],
+  jobProvider: QueueProvider,
+  concreteProvider: ConcreteProvider,
+): boolean {
   return ruleProvider === 'any' || ruleProvider === concreteProvider || ruleProvider === jobProvider;
 }
 
@@ -66,9 +77,7 @@ function missingSnapshotDecision(rule: QueueRule, provider: ConcreteProvider): Q
  * window-specific rule see its own window's snapshot even when another window was probed more
  * recently — mirroring the limits engine which considers every window.
  */
-export type ProviderSnapshots = Partial<
-  Record<ConcreteProvider, QueueLimitSnapshot | QueueLimitSnapshot[] | null>
->;
+export type ProviderSnapshots = Partial<Record<ConcreteProvider, QueueLimitSnapshot | QueueLimitSnapshot[] | null>>;
 
 function snapshotsArray(value: QueueLimitSnapshot | QueueLimitSnapshot[] | null | undefined): QueueLimitSnapshot[] {
   if (value == null) return [];
@@ -85,12 +94,7 @@ function snapshotForRule(rule: QueueRule, snapshots: QueueLimitSnapshot[]): Queu
 }
 
 export class RuleEngine {
-  evaluate(
-    job: QueueJob,
-    rules: QueueRule[],
-    snapshots: ProviderSnapshots,
-    now = new Date(),
-  ): QueueRuleDecision {
+  evaluate(job: QueueJob, rules: QueueRule[], snapshots: ProviderSnapshots, now = new Date()): QueueRuleDecision {
     for (const provider of providersFor(job)) {
       const providerSnapshots = snapshotsArray(snapshots[provider]);
       for (const rule of rules) {

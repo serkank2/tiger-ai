@@ -121,8 +121,16 @@ export interface TigerConfig {
   execution: {
     parallel: boolean;
     locking: boolean;
+    /** Max agents running at once per stage. 0 means UNLIMITED (launch every selected agent). */
     maxConcurrent: number;
     lockTtlMs: number;
+    /** Total attempts per agent run (1 = no retry, 2 = one automatic retry on failure). */
+    maxAttempts: number;
+    /**
+     * Auto-advance past a stage that FAILED (after retries) as long as it produced some output,
+     * instead of halting the auto-run. A user stop/interrupt always halts regardless.
+     */
+    continueOnFailure: boolean;
     /** Maximum number of correction cycles (routing Stage 6B issues back) before routing stops. */
     maxCorrectionCycles: number;
     /** Delete the whole .tiger workspace after an auto-run (Run All) completes the final stage. */

@@ -1,13 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type {
-  CueChangeType,
-  CueConfigFile,
-  CueEventType,
-  CueSubscription,
-  CueTarget,
-  CueTargetKind,
-} from './types.js';
+import type { CueChangeType, CueConfigFile, CueEventType, CueSubscription, CueTarget, CueTargetKind } from './types.js';
 
 /** The on-disk location of a project's cue config, relative to the workspace. */
 export const CUE_CONFIG_RELPATH = path.join('.kaplan', 'cue.json');
@@ -116,7 +109,9 @@ function requiredFieldWarnings(sub: CueSubscription): string[] {
     warnings.push(`subscription "${sub.id}": time.once requires an "at" timestamp — it will not fire`);
   }
   if (sub.event === 'time.scheduled' && sub.intervalMs === undefined && !sub.watch) {
-    warnings.push(`subscription "${sub.id}": time.scheduled requires "intervalMs" (or an interval spec in "watch") — it will not fire`);
+    warnings.push(
+      `subscription "${sub.id}": time.scheduled requires "intervalMs" (or an interval spec in "watch") — it will not fire`,
+    );
   }
   return warnings;
 }

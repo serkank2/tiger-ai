@@ -16,9 +16,7 @@ const emit = defineEmits<{
   remove: [];
 }>();
 
-const running = computed(
-  () => props.terminal.status.state === 'running' || props.terminal.status.state === 'starting',
-);
+const running = computed(() => props.terminal.status.state === 'running' || props.terminal.status.state === 'starting');
 
 // two-step delete confirm (no native dialog)
 const confirming = ref(false);
@@ -54,22 +52,76 @@ onBeforeUnmount(() => {
       :checked="selected"
       :disabled="terminal.protected"
       :title="terminal.protected ? t('terminals.listItem.protectedCheckbox') : ''"
-      :aria-label="terminal.protected ? t('terminals.listItem.protectedAria', { name: terminal.name }) : t('terminals.listItem.selectAria', { name: terminal.name })"
+      :aria-label="
+        terminal.protected
+          ? t('terminals.listItem.protectedAria', { name: terminal.name })
+          : t('terminals.listItem.selectAria', { name: terminal.name })
+      "
       @click.stop
       @change="emit('toggle')"
     />
     <StatusDot :state="terminal.status.state" />
     <div class="meta">
-      <div class="name"><span v-if="terminal.protected" class="lock" :title="t('terminals.listItem.protectedLock')">🔒</span>{{ terminal.name }}</div>
+      <div class="name">
+        <span v-if="terminal.protected" class="lock" :title="t('terminals.listItem.protectedLock')">🔒</span
+        >{{ terminal.name }}
+      </div>
       <div class="cwd" :title="terminal.cwd">{{ terminal.cwd }}</div>
       <div v-if="terminal.lastOutput" class="out">{{ terminal.lastOutput }}</div>
     </div>
     <div class="actions" @click.stop>
-      <BaseButton v-if="!running" class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.startTerminal')" :title="t('terminals.actions.start')" @click="emit('start')">▶</BaseButton>
-      <BaseButton v-else class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.stopTerminal')" :title="t('terminals.actions.stop')" @click="emit('stop')">■</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.restartTerminal')" :title="t('terminals.actions.restart')" @click="emit('restart')">⟳</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.duplicateTerminal')" :title="t('terminals.actions.duplicate')" @click="emit('duplicate')">⧉</BaseButton>
-      <BaseButton class="ic" size="sm" variant="ghost" icon-only :aria-label="t('terminals.actions.editTerminal')" :title="t('terminals.actions.edit')" @click="emit('edit')">✎</BaseButton>
+      <BaseButton
+        v-if="!running"
+        class="ic"
+        size="sm"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.actions.startTerminal')"
+        :title="t('terminals.actions.start')"
+        @click="emit('start')"
+        >▶</BaseButton
+      >
+      <BaseButton
+        v-else
+        class="ic"
+        size="sm"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.actions.stopTerminal')"
+        :title="t('terminals.actions.stop')"
+        @click="emit('stop')"
+        >■</BaseButton
+      >
+      <BaseButton
+        class="ic"
+        size="sm"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.actions.restartTerminal')"
+        :title="t('terminals.actions.restart')"
+        @click="emit('restart')"
+        >⟳</BaseButton
+      >
+      <BaseButton
+        class="ic"
+        size="sm"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.actions.duplicateTerminal')"
+        :title="t('terminals.actions.duplicate')"
+        @click="emit('duplicate')"
+        >⧉</BaseButton
+      >
+      <BaseButton
+        class="ic"
+        size="sm"
+        variant="ghost"
+        icon-only
+        :aria-label="t('terminals.actions.editTerminal')"
+        :title="t('terminals.actions.edit')"
+        @click="emit('edit')"
+        >✎</BaseButton
+      >
       <BaseButton
         class="ic danger"
         :class="{ confirm: confirming }"

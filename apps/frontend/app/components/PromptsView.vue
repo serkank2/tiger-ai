@@ -32,7 +32,6 @@ const history = usePromptHistoryStore();
 const generation = usePromptGenerationStore();
 const terminals = useTerminalsStore();
 const groups = useGroupsStore();
-const tiger = useTigerStore();
 const conn = useConnectionStore();
 const notices = useNoticesStore();
 const socket = useSocket();
@@ -54,7 +53,6 @@ const runOnSend = ref(false);
 const sending = ref(false);
 const saving = ref(false);
 const enqueuing = ref(false);
-const usingProject = ref(false);
 const actionError = ref<string | null>(null);
 
 const tabs = computed<{ id: Tab; label: string }[]>(() => [
@@ -65,7 +63,9 @@ const tabs = computed<{ id: Tab; label: string }[]>(() => [
 
 const content = computed(() => serializePrompt(metaFromDraft(), draft.body));
 const dirty = computed(() => content.value !== loadedSnapshot.value);
-const selectedTerminals = computed(() => selectedTermIds.value.map((id) => terminals.byId[id]).filter(Boolean) as TerminalDto[]);
+const selectedTerminals = computed(
+  () => selectedTermIds.value.map((id) => terminals.byId[id]).filter(Boolean) as TerminalDto[],
+);
 const targetShellKinds = computed(() => selectedTerminals.value.map((t) => t.shell?.kind));
 const selectedHistory = computed(() => history.items.find((item) => item.id === historySelectedId.value) ?? null);
 const generationText = computed(() => generation.current?.generation.outputText?.trim() ?? '');
@@ -101,7 +101,6 @@ const hasReusableText = computed(() => currentSource.value.text.trim().length > 
 const canSend = computed(
   () => conn.status === 'connected' && hasReusableText.value && selectedTermIds.value.length > 0 && !sending.value,
 );
-const canUseAsProjectPrompt = computed(() => tiger.initialized && hasReusableText.value && !usingProject.value);
 
 watch(
   () => `${currentSource.value.kind}:${currentSource.value.title}:${currentSource.value.generationId ?? ''}`,
@@ -174,7 +173,8 @@ function applyTargetHint(target?: string): void {
   if (target.startsWith('group:')) {
     const name = target.slice(6);
     const group = groups.groups.find((item) => item.name === name);
-    if (group) selectedTermIds.value = terminals.items.filter((t) => t.groupId === group.id && !t.protected).map((t) => t.id);
+    if (group)
+      selectedTermIds.value = terminals.items.filter((t) => t.groupId === group.id && !t.protected).map((t) => t.id);
   }
 }
 
@@ -239,7 +239,10 @@ async function saveReusableText(): Promise<void> {
       await prompts.fetchAll().catch(() => {});
       await history.fetchAll({}, { silent: true }).catch(() => {});
     } else {
-      const file = await prompts.create(path, serializePrompt({ title: currentSource.value.title }, currentSource.value.text));
+      const file = await prompts.create(
+        path,
+        serializePrompt({ title: currentSource.value.title }, currentSource.value.text),
+      );
       if (!file) return;
       savedPath.value = file.path;
     }
@@ -283,26 +286,6 @@ function editReusableText(): void {
   notices.push(t('prompts.notices.loadedIntoEditor'), 'info');
 }
 
-async function useAsProjectPrompt(): Promise<void> {
-  if (!canUseAsProjectPrompt.value) return;
-  usingProject.value = true;
-  actionError.value = null;
-  try {
-    if (currentSource.value.kind === 'generation' && currentSource.value.generationId) {
-      await generation.reuse(currentSource.value.generationId, 'use-as-project-prompt');
-      await tiger.load();
-      notices.push(t('prompts.notices.projectPromptUpdated'), 'info');
-    } else {
-      await tiger.replaceProjectPrompt(currentSource.value.text);
-    }
-    await history.fetchAll({}, { silent: true }).catch(() => {});
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    usingProject.value = false;
-  }
-}
-
 async function enqueueReusableText(): Promise<void> {
   if (!hasReusableText.value || enqueuing.value) return;
   enqueuing.value = true;
@@ -310,13 +293,11 @@ async function enqueueReusableText(): Promise<void> {
   try {
     if (currentSource.value.kind === 'generation' && currentSource.value.generationId) {
       await generation.reuse(currentSource.value.generationId, 'enqueue', {
-        workspacePath: tiger.workspace ?? undefined,
         provider: enqueueProvider.value,
       });
     } else {
       await api.enqueueQueueJob({
         prompt: currentSource.value.text,
-        workspacePath: tiger.workspace ?? undefined,
         projectName: currentSource.value.title,
         provider: enqueueProvider.value,
       });
@@ -331,18 +312,21 @@ async function enqueueReusableText(): Promise<void> {
 }
 
 function sanitize(text: string): string {
-  return text
-    .replace(/\r\n?/g, '\n')
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[20[01]~/g, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  return (
+    text
+      .replace(/\r\n?/g, '\n')
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[20[01]~/g, '')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+  );
 }
 
 const BRACKET_OK = new Set(['powershell', 'pwsh', 'bash', 'zsh', 'fish']);
 function payloadFor(text: string, ids: string[]): string {
   const safe = sanitize(text);
-  const bracket = safe.includes('\n') && ids.length > 0 && ids.every((id) => BRACKET_OK.has(terminals.byId[id]?.shell?.kind ?? ''));
+  const bracket =
+    safe.includes('\n') && ids.length > 0 && ids.every((id) => BRACKET_OK.has(terminals.byId[id]?.shell?.kind ?? ''));
   return bracket ? `\x1b[200~${safe}\x1b[201~` : safe;
 }
 
@@ -379,7 +363,11 @@ async function sendReusableText(): Promise<void> {
           terminal: { name: terminal.name, cwd: terminal.cwd },
           date,
         });
-        const result = await socket.broadcast({ mode: 'selected', termIds: [id] }, payloadFor(text, [id]), runOnSend.value);
+        const result = await socket.broadcast(
+          { mode: 'selected', termIds: [id] },
+          payloadFor(text, [id]),
+          runOnSend.value,
+        );
         if (result.kind === 'ok' && result.written > 0) delivered = true;
         else failure = broadcastFailureMessage(result);
       }
@@ -415,12 +403,14 @@ function onHistorySelect(item: PromptHistoryEvent): void {
   activeTab.value = 'history';
 }
 
-async function submitGeneration(input: { inputText: string; agentType: TigerAgentType; model?: string; effort?: string }): Promise<void> {
+async function submitGeneration(input: {
+  inputText: string;
+  agentType: TigerAgentType;
+  model?: string;
+  effort?: string;
+}): Promise<void> {
   activeTab.value = 'generation';
-  await generation.start({
-    ...input,
-    projectId: tiger.workspace ?? undefined,
-  });
+  await generation.start(input);
 }
 
 let unbindHistory: (() => void) | null = null;
@@ -432,7 +422,6 @@ onMounted(() => {
   void history.fetchAll().catch(() => {});
   if (!terminals.loaded) void terminals.fetchAll().catch(() => {});
   if (!groups.loaded) void groups.load().catch(() => {});
-  if (!tiger.loaded) void tiger.load().catch(() => {});
   unbindHistory = history.bindSocket();
   unbindGeneration = generation.bindSocket();
 });
@@ -561,14 +550,6 @@ onBeforeUnmount(() => {
 
           <div class="actions">
             <BaseButton variant="secondary" @click="editReusableText">{{ t('prompts.reuse.edit') }}</BaseButton>
-            <BaseButton
-              variant="secondary"
-              :loading="usingProject"
-              :disabled="!canUseAsProjectPrompt"
-              @click="useAsProjectPrompt"
-            >
-              {{ t('prompts.reuse.useAsProjectPrompt') }}
-            </BaseButton>
             <select v-model="enqueueProvider" :aria-label="t('prompts.reuse.queueProvider')">
               <option value="mixed">{{ t('prompts.reuse.mixedQueue') }}</option>
               <option value="claude">{{ t('prompts.reuse.claudeQueue') }}</option>
@@ -586,18 +567,10 @@ onBeforeUnmount(() => {
               <label><input v-model="runOnSend" type="checkbox" /> {{ t('prompts.reuse.appendEnter') }}</label>
             </div>
             <PromptTargetPicker v-model="selectedTermIds" />
-            <BaseButton
-              variant="primary"
-              block
-              :loading="sending"
-              :disabled="!canSend"
-              @click="sendReusableText"
-            >
+            <BaseButton variant="primary" block :loading="sending" :disabled="!canSend" @click="sendReusableText">
               {{ t('prompts.reuse.sendToCount', { n: selectedTermIds.length }) }}
             </BaseButton>
           </div>
-
-          <p v-if="!tiger.initialized" class="hint">{{ t('prompts.reuse.openTigerHint') }}</p>
           <p v-if="actionError" class="error">{{ actionError }}</p>
         </template>
       </aside>

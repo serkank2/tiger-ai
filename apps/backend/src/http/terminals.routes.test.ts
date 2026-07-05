@@ -36,11 +36,17 @@ async function listen(router: express.Router): Promise<TestServer> {
     req: (method, p, body) =>
       new Promise<Res>((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
-        const r = http.request(new URL(p, base), { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} }, (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }));
-        });
+        const r = http.request(
+          new URL(p, base),
+          { method, agent: false, headers: payload ? { 'content-type': 'application/json' } : {} },
+          (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () =>
+              resolve({ status: res.statusCode ?? 0, json: () => (data ? JSON.parse(data) : undefined) }),
+            );
+          },
+        );
         r.on('error', reject);
         if (payload) r.write(payload);
         r.end();
@@ -108,8 +114,15 @@ function ctxWith(state: PersistedState, manager: ReturnType<typeof fakeManager>)
 
 function existingDef(id = 't1'): TerminalDefinition {
   return {
-    id, name: 'orig', cwd: os.tmpdir(), groupId: null, shell: { kind: 'system-default' },
-    autostart: false, protected: false, createdAt: 'x', updatedAt: 'x',
+    id,
+    name: 'orig',
+    cwd: os.tmpdir(),
+    groupId: null,
+    shell: { kind: 'system-default' },
+    autostart: false,
+    protected: false,
+    createdAt: 'x',
+    updatedAt: 'x',
   };
 }
 
@@ -151,7 +164,10 @@ test('POST /api/terminals rejects a non-existent working directory', async () =>
   const { ctx } = ctxWith(baseState(), fakeManager());
   const srv = await listen(createTerminalsRouter(ctx));
   try {
-    const res = await srv.req('POST', '/api/terminals', { name: 'T', cwd: path.join(os.tmpdir(), 'definitely-not-here-xyz-123') });
+    const res = await srv.req('POST', '/api/terminals', {
+      name: 'T',
+      cwd: path.join(os.tmpdir(), 'definitely-not-here-xyz-123'),
+    });
     assert.equal(res.status, 400);
     assert.match(res.json<{ error: { message: string } }>().error.message, /invalid working directory/);
   } finally {

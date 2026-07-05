@@ -56,13 +56,59 @@ const MONTH_PATTERN = Object.keys(MONTHS)
 // "décembre"/"decembre" both match. Values are 0-based month indices.
 const LOCALE_MONTHS: Record<string, number> = {
   // German
-  januar: 0, februar: 1, marz: 2, mai: 4, juni: 5, juli: 6, oktober: 9, dezember: 11,
+  januar: 0,
+  februar: 1,
+  marz: 2,
+  mai: 4,
+  juni: 5,
+  juli: 6,
+  oktober: 9,
+  dezember: 11,
   // French
-  janvier: 0, fevrier: 1, mars: 2, avril: 3, juin: 5, juillet: 6, aout: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11,
+  janvier: 0,
+  fevrier: 1,
+  mars: 2,
+  avril: 3,
+  juin: 5,
+  juillet: 6,
+  aout: 7,
+  septembre: 8,
+  octobre: 9,
+  novembre: 10,
+  decembre: 11,
   // Spanish / Portuguese / Italian
-  enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5, julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9, noviembre: 10, diciembre: 11,
-  janeiro: 0, fevereiro: 1, marco: 2, maio: 4, junho: 5, julho: 6, setembro: 8, outubro: 9, novembro: 10, dezembro: 11,
-  gennaio: 0, febbraio: 1, aprile: 3, maggio: 4, giugno: 5, luglio: 6, settembre: 8, ottobre: 9, dicembre: 11,
+  enero: 0,
+  febrero: 1,
+  marzo: 2,
+  abril: 3,
+  mayo: 4,
+  junio: 5,
+  julio: 6,
+  agosto: 7,
+  septiembre: 8,
+  setiembre: 8,
+  octubre: 9,
+  noviembre: 10,
+  diciembre: 11,
+  janeiro: 0,
+  fevereiro: 1,
+  marco: 2,
+  maio: 4,
+  junho: 5,
+  julho: 6,
+  setembro: 8,
+  outubro: 9,
+  novembro: 10,
+  dezembro: 11,
+  gennaio: 0,
+  febbraio: 1,
+  aprile: 3,
+  maggio: 4,
+  giugno: 5,
+  luglio: 6,
+  settembre: 8,
+  ottobre: 9,
+  dicembre: 11,
 };
 
 const LOCALE_MONTH_PATTERN = Object.keys(LOCALE_MONTHS)
@@ -182,7 +228,11 @@ function zonedTimeToUtc(parts: ZonedParts, timeZone: string): Date {
   return new Date(utc);
 }
 
-function parseTime(hourText: string | undefined, minuteText: string | undefined, meridiem: string | undefined): { hour: number; minute: number } | null {
+function parseTime(
+  hourText: string | undefined,
+  minuteText: string | undefined,
+  meridiem: string | undefined,
+): { hour: number; minute: number } | null {
   if (!hourText) return null;
   let hour = Number(hourText);
   const minute = minuteText === undefined || minuteText === '' ? 0 : Number(minuteText);
@@ -207,11 +257,14 @@ const EN_UNIT = '(?:days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?
 function parseRelativeMs(text: string): number | null {
   const candidate =
     text.match(new RegExp(`\\bin\\s+((?:\\d+\\s*${EN_UNIT}\\s*)+)`, 'i'))?.[1] ??
-    (text.match(new RegExp(`^\\s*((?:\\d+\\s*${EN_UNIT}\\s*)+)\\s*$`, 'i'))?.[1] ?? null);
+    text.match(new RegExp(`^\\s*((?:\\d+\\s*${EN_UNIT}\\s*)+)\\s*$`, 'i'))?.[1] ??
+    null;
   if (!candidate) return null;
   let total = 0;
   // Capturing variant of EN_UNIT (group 2 = the matched unit token).
-  const units = candidate.matchAll(/(\d+)\s*(days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)(?![a-z])/gi);
+  const units = candidate.matchAll(
+    /(\d+)\s*(days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)(?![a-z])/gi,
+  );
   for (const match of units) {
     const amount = Number(match[1]);
     const unit = (match[2] ?? '').toLowerCase();
@@ -250,7 +303,10 @@ function parseIsoDate(text: string, timeZone: string, now: Date): Date | null {
 
 function parseMonthFirstDate(text: string, timeZone: string, now: Date): Date | null {
   const match = text.match(
-    new RegExp(`\\b(${MONTH_PATTERN})\\.?\\s+(\\d{1,2})(?:,?\\s+(\\d{4}))?(?:,?\\s*(?:at\\s*)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?)?`, 'i'),
+    new RegExp(
+      `\\b(${MONTH_PATTERN})\\.?\\s+(\\d{1,2})(?:,?\\s+(\\d{4}))?(?:,?\\s*(?:at\\s*)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?)?`,
+      'i',
+    ),
   );
   if (!match?.[1] || !match[2]) return null;
   const month = MONTHS[match[1].toLowerCase()];
@@ -265,7 +321,12 @@ function parseMonthFirstDate(text: string, timeZone: string, now: Date): Date | 
 }
 
 function parseTimeOnDayMonth(text: string, timeZone: string, now: Date): Date | null {
-  const match = text.match(new RegExp(`\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s+on\\s+(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`, 'i'));
+  const match = text.match(
+    new RegExp(
+      `\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s+on\\s+(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?\\b`,
+      'i',
+    ),
+  );
   if (!match?.[4] || !match[5]) return null;
   const month = MONTHS[match[5].toLowerCase()];
   const time = parseTime(match[1], match[2], match[3]);
@@ -278,7 +339,12 @@ function parseTimeOnDayMonth(text: string, timeZone: string, now: Date): Date | 
 }
 
 function parseDayMonthAtTime(text: string, timeZone: string, now: Date): Date | null {
-  const match = text.match(new RegExp(`\\bon\\s+(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?(?:\\s+at\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?)?`, 'i'));
+  const match = text.match(
+    new RegExp(
+      `\\bon\\s+(\\d{1,2})\\s+(${MONTH_PATTERN})(?:\\s+(\\d{4}))?(?:\\s+at\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?)?`,
+      'i',
+    ),
+  );
   if (!match?.[1] || !match[2]) return null;
   const month = MONTHS[match[2].toLowerCase()];
   if (month === undefined) return null;
@@ -348,7 +414,9 @@ function parseLocaleRelativeMs(text: string): number | null {
 
 /** Numeric day/month/year date in EU order: DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY (year optional). */
 function parseNumericDmyDate(text: string, timeZone: string, now: Date): Date | null {
-  const match = text.match(/\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?:[ ,]+(?:\D{0,4})?(\d{1,2}):(\d{2}))?/);
+  // Separator class includes '-' so hyphenated EU dates (DD-MM-YYYY) parse too,
+  // matching this function's doc contract (they previously fell through to null).
+  const match = text.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?:[ ,]+(?:\D{0,4})?(\d{1,2}):(\d{2}))?/);
   if (!match?.[1] || !match[2]) return null;
   const day = Number(match[1]);
   const month = Number(match[2]);
@@ -423,7 +491,8 @@ export function parseResetText(text: string | null | undefined, options: ResetPa
   // localized duration units so a non-English provider panel ("in 3 Stunden") still
   // resolves a reset time instead of degrading to `unknown`.
   const localeRelativeMs = parseLocaleRelativeMs(clean);
-  if (localeRelativeMs !== null) return trusted(new Date(now.getTime() + localeRelativeMs), 'relative', timeZone, source);
+  if (localeRelativeMs !== null)
+    return trusted(new Date(now.getTime() + localeRelativeMs), 'relative', timeZone, source);
 
   return { resetAt: null, parseConfidence: 'unknown', kind: 'unknown', timeZone, source };
 }

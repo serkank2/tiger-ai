@@ -120,7 +120,10 @@ test('GET /api/fs/list returns child directories sorted by name with a parent po
     const res = await srv.req('GET', `/api/fs/list?path=${encodeURIComponent(dir)}`);
     assert.equal(res.status, 200);
     const body = res.json<{ directories: { name: string }[]; parent: string }>();
-    assert.deepEqual(body.directories.map((d) => d.name), ['alpha', 'zeta']);
+    assert.deepEqual(
+      body.directories.map((d) => d.name),
+      ['alpha', 'zeta'],
+    );
     assert.equal(body.parent, path.dirname(path.resolve(dir)));
   } finally {
     await srv.close();

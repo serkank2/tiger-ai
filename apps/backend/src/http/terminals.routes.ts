@@ -33,7 +33,10 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-Z\\-_]|[\r\b]/g;
 function tail(buffer: string, max = 160): string {
   if (!buffer) return '';
   const clean = buffer.replace(ANSI, '\n');
-  const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = clean
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const last = lines.length ? lines[lines.length - 1]! : '';
   return last.length > max ? last.slice(last.length - max) : last;
 }
@@ -48,7 +51,7 @@ export function createTerminalsRouter(ctx: AppCtx): Router {
 
   // List definitions merged with live runtime status.
   router.get('/', (_req, res) => {
-    res.json(ctx.state.terminals.map((def) => (present(ctx, def))));
+    res.json(ctx.state.terminals.map((def) => present(ctx, def)));
   });
 
   router.get('/:id', (req, res) => {

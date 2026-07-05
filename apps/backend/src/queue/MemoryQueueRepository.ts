@@ -159,7 +159,9 @@ export class MemoryQueueRepository implements QueueRepository {
     return [...this.rules.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(cloneQueueRule);
   }
 
-  async getLatestLimitSnapshot(provider: Exclude<QueueLimitSnapshot['provider'], never>): Promise<QueueLimitSnapshot | null> {
+  async getLatestLimitSnapshot(
+    provider: Exclude<QueueLimitSnapshot['provider'], never>,
+  ): Promise<QueueLimitSnapshot | null> {
     const snapshots = this.limitSnapshots
       .filter((snapshot) => snapshot.provider === provider)
       .sort((a, b) => b.checkedAt.localeCompare(a.checkedAt));

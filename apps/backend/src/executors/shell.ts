@@ -36,11 +36,7 @@ export function isDangerousPermissionArgv(perm: string[] | undefined): boolean {
  * When the mode is dangerous and `allowDangerous` is false, returns `[]` (the CLI's own safe
  * default) instead of the blanket flag. Safe/fine-grained modes pass through untouched.
  */
-export function resolvePermissionArgs(
-  tool: CliToolConfig,
-  permission: string,
-  allowDangerous: boolean,
-): string[] {
+export function resolvePermissionArgs(tool: CliToolConfig, permission: string, allowDangerous: boolean): string[] {
   const perm = tool.permissionModes[permission];
   if (!perm || !perm.length) return [];
   if (!allowDangerous && isDangerousPermissionArgv(perm)) return [];

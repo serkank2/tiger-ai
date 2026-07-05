@@ -69,9 +69,7 @@ export class TerminalManager extends EventEmitter {
     let s = this.sessions.get(def.id);
     if (!s) {
       s = this.createSession(def);
-      s.on('output', (data: string) =>
-        this.emit('output', { termId: def.id, data } satisfies ManagerOutputEvent),
-      );
+      s.on('output', (data: string) => this.emit('output', { termId: def.id, data } satisfies ManagerOutputEvent));
       s.on('status', (status: TerminalRuntimeStatus) => this.emit('status', status));
       s.on('exit', (status: TerminalRuntimeStatus) => this.emit('exit', status));
       this.sessions.set(def.id, s);
@@ -114,8 +112,13 @@ export class TerminalManager extends EventEmitter {
     return this.sessions.get(id)?.write(data) ?? false;
   }
   resize(id: TerminalId, cols: number, rows: number): void {
-    this.sizes.set(id, { cols, rows }); // remembered even with no live session, used on next start
-    this.sessions.get(id)?.resize(cols, rows);
+    // Guard here too, not just in TerminalSession.resize: a bad size (0/NaN from
+    // a momentarily-hidden xterm tile) is REMEMBERED and later fed to pty.spawn
+    // on the next start/restart, which node-pty rejects. Drop invalid sizes.
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return;
+    const size = { cols: Math.floor(cols), rows: Math.floor(rows) };
+    this.sizes.set(id, size); // remembered even with no live session, used on next start
+    this.sessions.get(id)?.resize(size.cols, size.rows);
   }
 
   /** Drain a session's coalesced output (used before an attach snapshot). */

@@ -62,7 +62,9 @@ function latestSnapshots(snapshots: LimitSnapshot[]): LimitSnapshot[] {
     const current = byKey.get(key);
     if (!current || toTime(snapshot.checkedAt) >= toTime(current.checkedAt)) byKey.set(key, snapshot);
   }
-  return [...byKey.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.windowKey.localeCompare(b.windowKey));
+  return [...byKey.values()].sort(
+    (a, b) => a.provider.localeCompare(b.provider) || a.windowKey.localeCompare(b.windowKey),
+  );
 }
 
 function ensureLimitsState(state: PersistedState): LimitsPersistedState {
@@ -181,7 +183,11 @@ export class LimitService extends EventEmitter {
             conservative: false,
             checkedAt: now.toISOString(),
           }
-        : evaluateLimitRules(limits.snapshots, limits.rules, { now, staleAfterMs: this.staleAfterMs, failOpen: config.limitFailOpen }),
+        : evaluateLimitRules(limits.snapshots, limits.rules, {
+            now,
+            staleAfterMs: this.staleAfterMs,
+            failOpen: config.limitFailOpen,
+          }),
       staleAfterMs: this.staleAfterMs,
       updatedAt: limits.updatedAt,
     };
@@ -303,7 +309,10 @@ export class LimitService extends EventEmitter {
       if (limits.snapshots.length > this.maxSnapshots) {
         limits.snapshots.splice(0, limits.snapshots.length - this.maxSnapshots);
       }
-      limits.lastDecision = evaluateLimitRules(limits.snapshots, limits.rules, { staleAfterMs: this.staleAfterMs, failOpen: config.limitFailOpen });
+      limits.lastDecision = evaluateLimitRules(limits.snapshots, limits.rules, {
+        staleAfterMs: this.staleAfterMs,
+        failOpen: config.limitFailOpen,
+      });
       limits.updatedAt = new Date().toISOString();
       await this.save();
     }

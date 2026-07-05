@@ -3,7 +3,7 @@ import { useApi } from '~/composables/useApi';
 
 const AUTH_TOKEN_KEY = 'kaplan.authToken';
 
-describe('useApi auth token + git-write routes', () => {
+describe('useApi auth token + run routes', () => {
   const fetchMock = vi.fn();
   let store: Record<string, string> = {};
 
@@ -31,49 +31,59 @@ describe('useApi auth token + git-write routes', () => {
 
   it('omits the Authorization header when no token is set (second arg stays untouched)', async () => {
     const api = useApi();
-    await api.getTeamState();
-    expect(fetchMock).toHaveBeenCalledWith('http://api.test/api/team/state', undefined);
+    await api.getCurrentRun();
+    expect(fetchMock).toHaveBeenCalledWith('http://api.test/api/runs/current', undefined);
   });
 
   it('attaches Authorization: Bearer <token> to every request when a token is set', async () => {
     localStorage.setItem(AUTH_TOKEN_KEY, 'sekret');
     const api = useApi();
 
-    await api.getTeamState();
-    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/state', {
+    await api.getCurrentRun();
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current', {
       headers: { Authorization: 'Bearer sekret' },
     });
 
-    await api.stopTeamRun('run/1');
-    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/runs/run%2F1/stop', {
+    await api.stopRun();
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/stop', {
       method: 'POST',
+      body: {},
       headers: { Authorization: 'Bearer sekret' },
     });
   });
 
-  it('wires the git stage/commit/pr routes', async () => {
+  it('wires the run control routes', async () => {
     const api = useApi();
 
-    await api.stageTeamChanges('run/1');
-    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/runs/run%2F1/git/stage', { method: 'POST' });
-
-    await api.commitTeamChanges('run/1', 'do the thing');
-    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/runs/run%2F1/git/commit', {
+    await api.createRun({ workspace: '/w', goal: 'Do it' });
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs', {
       method: 'POST',
-      body: { message: 'do the thing' },
+      body: { workspace: '/w', goal: 'Do it' },
     });
 
-    await api.createTeamPr('run/1', { title: 'My PR', body: 'desc', base: 'main' });
-    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/team/runs/run%2F1/git/pr', {
+    await api.steerRun('focus');
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/steer', {
       method: 'POST',
-      body: { title: 'My PR', body: 'desc', base: 'main' },
+      body: { body: 'focus', interrupt: false },
     });
+
+    await api.steerRun('focus now', true);
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/steer', {
+      method: 'POST',
+      body: { body: 'focus now', interrupt: true },
+    });
+
+    await api.listRunEvents(7);
+    expect(fetchMock).toHaveBeenLastCalledWith('http://api.test/api/runs/current/events?afterSeq=7', undefined);
   });
 
   it('rethrows backend errors so callers can read the error code', async () => {
-    fetchMock.mockRejectedValueOnce({ status: 422, data: { error: { code: 'validation_failed', message: 'message required' } } });
+    fetchMock.mockRejectedValueOnce({
+      status: 422,
+      data: { error: { code: 'validation_failed', message: 'message required' } },
+    });
     const api = useApi();
-    await expect(api.commitTeamChanges('run/1', '')).rejects.toMatchObject({
+    await expect(api.steerRun('')).rejects.toMatchObject({
       data: { error: { code: 'validation_failed' } },
     });
   });

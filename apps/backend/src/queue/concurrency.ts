@@ -39,7 +39,9 @@ export function resolveProviderConcurrency(): QueueProviderConcurrency {
 }
 
 /** Count jobs currently occupying a provider lane (running, by provider). */
-export function countRunningByProvider(jobs: ReadonlyArray<{ status: string; provider: QueueProvider }>): QueueProviderConcurrency {
+export function countRunningByProvider(
+  jobs: ReadonlyArray<{ status: string; provider: QueueProvider }>,
+): QueueProviderConcurrency {
   const counts: QueueProviderConcurrency = { claude: 0, codex: 0, antigravity: 0, mixed: 0 };
   for (const job of jobs) {
     if (job.status === 'running') counts[job.provider] += 1;

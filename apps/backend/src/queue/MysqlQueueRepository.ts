@@ -223,7 +223,13 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
   constructor(private readonly conn: Queryable) {}
 
   async nextPosition(): Promise<number> {
-    const rows = await this.select<RowDataPacket[]>('SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM queue_jobs');
+    // FOR UPDATE so two concurrent enqueue transactions don't read the same MAX
+    // and insert duplicate positions (the row lock serializes them). Inside an
+    // enqueue transaction (this.conn is the tx connection) this holds the lock
+    // until commit; outside a tx it degrades to a plain read (still correct).
+    const rows = await this.select<RowDataPacket[]>(
+      'SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM queue_jobs FOR UPDATE',
+    );
     return Number((rows[0] as { next_position?: unknown } | undefined)?.next_position ?? 1);
   }
 
@@ -352,7 +358,9 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
   }
 
   async listSteps(jobId: string): Promise<QueueStep[]> {
-    const rows = await this.select<QueueStepRow[]>('SELECT * FROM queue_steps WHERE job_id = ? ORDER BY position ASC', [jobId]);
+    const rows = await this.select<QueueStepRow[]>('SELECT * FROM queue_steps WHERE job_id = ? ORDER BY position ASC', [
+      jobId,
+    ]);
     return rows.map(mapStep);
   }
 
@@ -369,7 +377,10 @@ class MysqlQueueRepositoryTx implements QueueRepositoryTx {
   async listEvents(limit = 120): Promise<QueueEvent[]> {
     const requested = Number.isFinite(limit) ? Math.trunc(limit) : 120;
     const bounded = Math.max(1, Math.min(500, requested));
-    const rows = await this.select<QueueEventRow[]>('SELECT * FROM queue_events ORDER BY created_at DESC, id DESC LIMIT ?', [bounded]);
+    const rows = await this.select<QueueEventRow[]>(
+      'SELECT * FROM queue_events ORDER BY created_at DESC, id DESC LIMIT ?',
+      [bounded],
+    );
     return rows.map(mapEvent);
   }
 

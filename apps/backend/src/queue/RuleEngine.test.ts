@@ -162,8 +162,20 @@ test('RuleEngine does not block a Claude+Codex mixed job on a missing Antigravit
     mixedJob,
     [{ ...rule(), provider: 'any' }],
     {
-      claude: { provider: 'claude', windowKey: '5h', percentUsed: 20, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: now.toISOString() },
-      codex: { provider: 'codex', windowKey: '5h', percentUsed: 30, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: now.toISOString() },
+      claude: {
+        provider: 'claude',
+        windowKey: '5h',
+        percentUsed: 20,
+        resetAt: '2026-06-18T10:00:00.000Z',
+        checkedAt: now.toISOString(),
+      },
+      codex: {
+        provider: 'codex',
+        windowKey: '5h',
+        percentUsed: 30,
+        resetAt: '2026-06-18T10:00:00.000Z',
+        checkedAt: now.toISOString(),
+      },
       // No Antigravity snapshot at all — it must be irrelevant because the job does not use it.
     },
     now,
@@ -179,8 +191,20 @@ test('RuleEngine still gates a mixed job that actually uses Antigravity', () => 
     mixedJob,
     [{ ...rule(), provider: 'any' }],
     {
-      claude: { provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: now.toISOString() },
-      antigravity: { provider: 'antigravity', windowKey: '5h', percentUsed: 95, resetAt: '2026-06-18T11:00:00.000Z', checkedAt: now.toISOString() },
+      claude: {
+        provider: 'claude',
+        windowKey: '5h',
+        percentUsed: 10,
+        resetAt: '2026-06-18T10:00:00.000Z',
+        checkedAt: now.toISOString(),
+      },
+      antigravity: {
+        provider: 'antigravity',
+        windowKey: '5h',
+        percentUsed: 95,
+        resetAt: '2026-06-18T11:00:00.000Z',
+        checkedAt: now.toISOString(),
+      },
     },
     now,
   );
@@ -200,9 +224,21 @@ test('RuleEngine evaluates a window-specific rule against its OWN window snapsho
     {
       claude: [
         // 5h is the most-recently-checked window but is under threshold and irrelevant to the rule.
-        { provider: 'claude', windowKey: '5h', percentUsed: 10, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: '2026-06-18T08:59:00.000Z' },
+        {
+          provider: 'claude',
+          windowKey: '5h',
+          percentUsed: 10,
+          resetAt: '2026-06-18T10:00:00.000Z',
+          checkedAt: '2026-06-18T08:59:00.000Z',
+        },
         // 7d window is over the rule's threshold; it must be the one evaluated.
-        { provider: 'claude', windowKey: '7d', percentUsed: 85, resetAt: '2026-06-25T00:00:00.000Z', checkedAt: '2026-06-18T08:00:00.000Z' },
+        {
+          provider: 'claude',
+          windowKey: '7d',
+          percentUsed: 85,
+          resetAt: '2026-06-25T00:00:00.000Z',
+          checkedAt: '2026-06-18T08:00:00.000Z',
+        },
       ],
     },
     now,
@@ -232,7 +268,15 @@ test('RuleEngine still accepts a single snapshot (back-compat) and evaluates its
   const decision = new RuleEngine().evaluate(
     job('claude'),
     [rule()],
-    { claude: { provider: 'claude', windowKey: '5h', percentUsed: 95, resetAt: '2026-06-18T10:00:00.000Z', checkedAt: now.toISOString() } },
+    {
+      claude: {
+        provider: 'claude',
+        windowKey: '5h',
+        percentUsed: 95,
+        resetAt: '2026-06-18T10:00:00.000Z',
+        checkedAt: now.toISOString(),
+      },
+    },
     now,
   );
   assert.equal(decision.allowed, false);

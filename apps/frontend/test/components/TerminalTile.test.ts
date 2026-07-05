@@ -10,7 +10,14 @@ import type { TerminalDto } from '~/types';
 // app-level dependencies. We capture the id ref handed to useTerminalView so we
 // can assert the virtualization gate (real id when on-screen, null when suspended).
 const captured = vi.hoisted(() => ({ liveId: null as Ref<string | null> | null }));
-const store = vi.hoisted(() => ({ activeId: null as string | null, setActive: vi.fn(), start: vi.fn(), stop: vi.fn(), restart: vi.fn(), layoutMode: 'grid' }));
+const store = vi.hoisted(() => ({
+  activeId: null as string | null,
+  setActive: vi.fn(),
+  start: vi.fn(),
+  stop: vi.fn(),
+  restart: vi.fn(),
+  layoutMode: 'grid',
+}));
 
 vi.mock('~/composables/useTerminalView', () => ({
   useTerminalView: (_host: unknown, id: Ref<string | null>) => {

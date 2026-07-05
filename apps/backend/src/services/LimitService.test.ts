@@ -244,12 +244,19 @@ test('LimitService.deleteRule removes the rule everywhere', async () => {
   const repo = new InMemoryLimitRepository();
   const service = serviceWithRepo(repo);
   // Create an extra rule so deleting it doesn't trip the "re-seed defaults when empty" guard.
-  const created = (await service.createRule({ provider: 'codex', windowKey: '5h', thresholdPercent: 70, enabled: true }))
-    .rules.find((rule) => rule.provider === 'codex')!;
+  const created = (
+    await service.createRule({ provider: 'codex', windowKey: '5h', thresholdPercent: 70, enabled: true })
+  ).rules.find((rule) => rule.provider === 'codex')!;
 
   const status = await service.deleteRule(created.id);
-  assert.equal(status.rules.some((rule) => rule.id === created.id), false);
-  assert.equal(repo.rules.some((rule) => rule.id === created.id), false);
+  assert.equal(
+    status.rules.some((rule) => rule.id === created.id),
+    false,
+  );
+  assert.equal(
+    repo.rules.some((rule) => rule.id === created.id),
+    false,
+  );
 });
 
 test('LimitService fails open in getState when snapshots are unavailable', async () => {

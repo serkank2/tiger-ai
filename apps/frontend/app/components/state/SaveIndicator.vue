@@ -24,7 +24,13 @@ const visible = computed(() => props.state !== 'idle');
 </script>
 
 <template>
-  <span v-if="visible" class="save-indicator" :class="state" role="status" :aria-live="state === 'error' ? 'assertive' : 'polite'">
+  <span
+    v-if="visible"
+    class="save-indicator"
+    :class="state"
+    role="status"
+    :aria-live="state === 'error' ? 'assertive' : 'polite'"
+  >
     <span v-if="state === 'saving'" class="spinner" aria-hidden="true" />
     <span v-else-if="state === 'saved'" class="glyph" aria-hidden="true">✓</span>
     <span v-else-if="state === 'error'" class="glyph" aria-hidden="true">⚠</span>

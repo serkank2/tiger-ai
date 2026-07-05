@@ -75,7 +75,10 @@ function normalize(parsed: unknown): PersistedState {
       : undefined;
   const tiger =
     tigerWorkspace || (tigerProjects && tigerProjects.length)
-      ? { ...(tigerWorkspace ? { lastWorkspace: tigerWorkspace } : {}), ...(tigerProjects ? { projects: tigerProjects } : {}) }
+      ? {
+          ...(tigerWorkspace ? { lastWorkspace: tigerWorkspace } : {}),
+          ...(tigerProjects ? { projects: tigerProjects } : {}),
+        }
       : undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -114,9 +117,7 @@ function isValidMetricRaw(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const raw = value as Record<string, unknown>;
   return (
-    typeof raw.percent === 'number' &&
-    Number.isFinite(raw.percent) &&
-    (raw.metric === 'used' || raw.metric === 'left')
+    typeof raw.percent === 'number' && Number.isFinite(raw.percent) && (raw.metric === 'used' || raw.metric === 'left')
   );
 }
 

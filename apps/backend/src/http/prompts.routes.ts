@@ -72,15 +72,6 @@ export function createPromptsRouter(ctx: AppCtx): Router {
       return;
     }
 
-    if (action === 'use-as-project-prompt') {
-      const state = await ctx.orchestrator.replaceProjectPrompt(generation.outputText ?? '');
-      await ctx.promptGenerations.recordReuseAction(generation.id, 'use-as-project-prompt', {
-        projectId: generation.projectId,
-      });
-      res.json({ action, generation: await ctx.promptGenerations.get(generation.id), tiger: state });
-      return;
-    }
-
     if (action === 'enqueue') {
       const job = await ctx.queueService.enqueue({
         prompt: generation.outputText ?? '',
@@ -89,7 +80,8 @@ export function createPromptsRouter(ctx: AppCtx): Router {
         provider: asQueueProvider(body.provider),
         priority: optionalInteger(body.priority),
         maxAttempts: optionalInteger(body.maxAttempts),
-        configSnapshot: body.configSnapshot && typeof body.configSnapshot === 'object' ? body.configSnapshot : undefined,
+        configSnapshot:
+          body.configSnapshot && typeof body.configSnapshot === 'object' ? body.configSnapshot : undefined,
       });
       await ctx.promptGenerations.recordReuseAction(generation.id, 'enqueue', {
         jobId: job.id,
@@ -191,7 +183,8 @@ function asQueueProvider(value: unknown): QueueProvider | undefined {
 
 function optionalInteger(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value !== 'number' || !Number.isInteger(value)) throw httpErr(400, 'numeric queue fields must be integers');
+  if (typeof value !== 'number' || !Number.isInteger(value))
+    throw httpErr(400, 'numeric queue fields must be integers');
   return value;
 }
 
@@ -205,7 +198,9 @@ async function requireDoneGeneration(ctx: AppCtx, id: string): Promise<PromptGen
 function isDoneWithOutput(
   generation: PromptGenerationRecord,
 ): generation is PromptGenerationRecord & { status: Extract<PromptGenerationStatus, 'done'>; outputText: string } {
-  return generation.status === 'done' && typeof generation.outputText === 'string' && generation.outputText.trim().length > 0;
+  return (
+    generation.status === 'done' && typeof generation.outputText === 'string' && generation.outputText.trim().length > 0
+  );
 }
 
 /** Map the legacy (status, message) shape to the shared HttpError so responses carry a stable code. */

@@ -4,7 +4,10 @@ import PromptGenerationPanel from '~/components/prompt/PromptGenerationPanel.vue
 import type { PromptGenerationState } from '~/types';
 import { createTestI18n } from '../support/i18n';
 
-function state(status: PromptGenerationState['generation']['status'], outputText: string | null = null): PromptGenerationState {
+function state(
+  status: PromptGenerationState['generation']['status'],
+  outputText: string | null = null,
+): PromptGenerationState {
   return {
     generation: {
       id: 'g1',

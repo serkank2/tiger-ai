@@ -1,7 +1,12 @@
 import type { Pool } from 'mysql2/promise';
 import { getDbPool } from './pool.js';
-import { EXECUTION_CHECKPOINT_MIGRATION, EXECUTION_WORKSPACE_LEASE_MIGRATION } from '../orchestrator/persistence.js';
-import { TEAM_MIGRATION, TEAM_TEMPLATES_MIGRATION, TEAM_ATTEMPTS_MIGRATION } from '../team/persistence.js';
+import {
+  TEAM_MIGRATION,
+  TEAM_TEMPLATES_MIGRATION,
+  TEAM_ATTEMPTS_MIGRATION,
+  EXECUTION_CHECKPOINT_MIGRATION,
+  EXECUTION_WORKSPACE_LEASE_MIGRATION,
+} from './legacy-migrations.js';
 
 interface Migration {
   id: string;
@@ -360,9 +365,7 @@ export async function rollbackLast(pool?: Pool): Promise<RollbackResult> {
       applied_at DATETIME(3) NOT NULL
     )
   `);
-  const [rows] = await db.query(
-    'SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1',
-  );
+  const [rows] = await db.query('SELECT id FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1');
   const latestId = Array.isArray(rows) && rows.length > 0 ? (rows[0] as { id: string }).id : null;
   if (!latestId) return { rolledBack: null, reason: 'no applied migrations' };
 

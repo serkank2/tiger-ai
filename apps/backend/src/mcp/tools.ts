@@ -11,7 +11,7 @@ import { isWorkspaceAllowed } from '../security/workspace.js';
  * actual board logic is testable without spinning up a transport or a real DB.
  *
  * The toolset is deliberately READ-heavy with a few SAFE additive writes
- * (`enqueue_prompt`, `post_team_steering`). Destructive board operations
+ * (`enqueue_prompt`, `steer_run`). Destructive board operations
  * (cancel/pause/delete) are intentionally excluded from the initial surface.
  */
 
@@ -154,64 +154,60 @@ export function buildTools(): McpToolDef[] {
           priority: args.priority,
           maxAttempts: args.maxAttempts,
         });
-        return { id: job.id, status: job.status, position: job.position, provider: job.provider, projectName: job.projectName };
+        return {
+          id: job.id,
+          status: job.status,
+          position: job.position,
+          provider: job.provider,
+          projectName: job.projectName,
+        };
       },
     }),
-    // ----------------------------------------------------------------- tiger (read)
+    // ------------------------------------------------------------- v2 runs (read)
     defineTool({
-      name: 'get_tiger_state',
-      title: 'Get Tiger orchestrator state',
+      name: 'get_run',
+      title: 'Get the active v2 run',
       description:
-        'Snapshot of the Tiger multi-agent orchestrator: active workspace, current stage, busy flag, stage list, task/findings summaries.',
+        'Snapshot of the active v2 run: status, work-graph items with statuses, usage totals, latest verification records, steering.',
       inputShape: {},
       readOnly: true,
       async run(ctx) {
-        return ctx.orchestrator.getState();
-      },
-    }),
-    // ------------------------------------------------------------------ team (read)
-    defineTool({
-      name: 'get_team_run',
-      title: 'Get active team run',
-      description:
-        'Snapshot of the AI-team run currently held in memory (status, roles, directives, sign-offs). Returns active=false when no run is loaded.',
-      inputShape: {},
-      readOnly: true,
-      async run(ctx) {
-        const state = ctx.teamOrchestrator.tryGetState();
-        if (!state) return { active: false };
-        return { active: true, run: state };
+        const snapshot = ctx.runEngine.getSnapshot();
+        return snapshot ? { active: true, run: snapshot } : { active: false };
       },
     }),
     defineTool({
-      name: 'list_team_messages',
-      title: 'List team messages',
+      name: 'list_run_events',
+      title: 'List v2 run events',
       description:
-        'List messages from the active team run conversation, optionally only those after a given sequence number (for polling).',
+        'List the active v2 run’s event log (item/agent/verification/steering/note), optionally only events after a sequence number — the delta, so callers never re-read history.',
       inputShape: {
-        afterSeq: z.number().int().nonnegative().optional().describe('Return only messages with seq greater than this value.'),
+        afterSeq: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe('Return only events with seq greater than this value.'),
       },
       readOnly: true,
       async run(ctx, args) {
-        if (!ctx.teamOrchestrator.tryGetState()) return { active: false, messages: [] };
-        const messages = await ctx.teamOrchestrator.listMessages(args.afterSeq ?? 0);
-        return { active: true, count: messages.length, messages };
+        if (!ctx.runEngine.getSnapshot()) return { active: false, events: [] };
+        const events = await ctx.runEngine.listEvents(args.afterSeq ?? 0);
+        return { active: true, count: events.length, events };
       },
     }),
-    // ------------------------------------------------------------------ team (write)
+    // ------------------------------------------------------------ v2 runs (write)
     defineTool({
-      name: 'post_team_steering',
-      title: 'Post a team steering directive',
+      name: 'steer_run',
+      title: 'Steer the active v2 run',
       description:
-        'Send a steering directive to the Lead of the active team run. Queued FIFO and picked up on the Lead\'s next turn. Fails if no steerable run is active.',
-      inputShape: { body: z.string().min(1).describe('The steering directive text.') },
+        'Send steering to the active v2 run. Applied at the next graph boundary as a re-plan (code inserts the plan item — no Lead chat turn). Fails when no run is active.',
+      inputShape: { body: z.string().min(1).describe('The steering text.') },
       readOnly: false,
       async run(ctx, args) {
-        if (!ctx.teamOrchestrator.tryGetState()) {
-          return { ok: false, error: 'no_active_team_run' };
-        }
-        const message = await ctx.teamOrchestrator.steer(args.body);
-        return { ok: true, messageId: message.id, createdAt: message.createdAt };
+        if (!ctx.runEngine.getSnapshot()) return { ok: false, error: 'no_active_run' };
+        const run = await ctx.runEngine.steer(args.body);
+        return { ok: true, runId: run.runId, seq: run.seq };
       },
     }),
   ];

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { config } from '../config.js';
-import { STAGE_ORDER, type StageId, type StageRunConfig } from '../orchestrator/types.js';
+import { STAGE_ORDER, type StageId } from '../orchestrator/types.js';
 import { RuleEngine } from '../queue/RuleEngine.js';
 import { planRetry } from '../queue/retry.js';
 import {
@@ -79,13 +79,15 @@ function cleanPrompt(prompt: string): string {
 }
 
 function sanitizeProjectName(name: string): string {
-  return name
-    .trim()
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 80)
-    .replace(/^-|-$/g, '') || 'queue-project';
+  return (
+    name
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 80)
+      .replace(/^-|-$/g, '') || 'queue-project'
+  );
 }
 
 function inferProvider(input: EnqueueQueueJobInput): QueueProvider {
@@ -104,7 +106,12 @@ function inferProvider(input: EnqueueQueueJobInput): QueueProvider {
   return only ?? 'claude';
 }
 
-function event(jobId: string | null, type: string, message: string, payload: Record<string, unknown> | null = null): QueueEvent {
+function event(
+  jobId: string | null,
+  type: string,
+  message: string,
+  payload: Record<string, unknown> | null = null,
+): QueueEvent {
   return { id: nanoid(), jobId, type, message, payload, createdAt: nowIso() };
 }
 
@@ -459,7 +466,9 @@ export class QueueService extends EventEmitter {
     return this.repo.listRules();
   }
 
-  async upsertRule(rule: Omit<QueueRule, 'createdAt' | 'updatedAt'> & { createdAt?: string; updatedAt?: string }): Promise<QueueRule> {
+  async upsertRule(
+    rule: Omit<QueueRule, 'createdAt' | 'updatedAt'> & { createdAt?: string; updatedAt?: string },
+  ): Promise<QueueRule> {
     const now = nowIso();
     const next: QueueRule = {
       ...rule,
@@ -519,7 +528,9 @@ export class QueueService extends EventEmitter {
           updatedAt: now,
         };
         await tx.updateJob(candidate.id, patch);
-        await tx.insertEvent(event(candidate.id, 'queue.blocked_by_limit', decision.reason, { resumeAfter: decision.resumeAfter }));
+        await tx.insertEvent(
+          event(candidate.id, 'queue.blocked_by_limit', decision.reason, { resumeAfter: decision.resumeAfter }),
+        );
         return { kind: 'blocked', job: { ...candidate, ...patch }, decision };
       }
 
@@ -640,6 +651,10 @@ export class QueueService extends EventEmitter {
     await this.repo.transaction(async (tx) => {
       const now = nowIso();
       const job = await requireJob(tx, id);
+      // Respect a user-issued terminal state: if the job was canceled/paused
+      // while running, the drive-to-end failure must NOT resurrect it to
+      // retrying/failed (which would re-dispatch a canceled job).
+      if (job.status === 'canceled' || job.status === 'paused') return;
       // Exponential backoff so a deterministically-failing job defers via resumeAfter
       // instead of hot-looping; terminal `failed` once the attempts cap is reached.
       const plan = planRetry(job.attempts, job.maxAttempts, now);
@@ -723,7 +738,9 @@ export class QueueService extends EventEmitter {
             });
           }
         }
-        await tx.insertEvent(event(job.id, 'queue.lease.reclaimed', 'Stale queue lease reclaimed.', { owner: job.leaseOwner }));
+        await tx.insertEvent(
+          event(job.id, 'queue.lease.reclaimed', 'Stale queue lease reclaimed.', { owner: job.leaseOwner }),
+        );
       }
     });
     if (count > 0) await this.emitState();
@@ -754,7 +771,11 @@ export class QueueService extends EventEmitter {
           updatedAt: now,
         });
         await tx.insertEvent(
-          event(job.id, 'queue.limit_resumed', dueByTime ? 'Limit reset time reached; queue job resumed.' : 'Fresh limit snapshot allows dispatch.'),
+          event(
+            job.id,
+            'queue.limit_resumed',
+            dueByTime ? 'Limit reset time reached; queue job resumed.' : 'Fresh limit snapshot allows dispatch.',
+          ),
         );
       }
     });
@@ -764,10 +785,12 @@ export class QueueService extends EventEmitter {
 
   async nextResumeAfter(): Promise<string | null> {
     const jobs = await this.repo.listJobs();
-    return jobs
-      .filter((job) => job.status === 'blocked_by_limit' && !!job.resumeAfter)
-      .map((job) => job.resumeAfter!)
-      .sort()[0] ?? null;
+    return (
+      jobs
+        .filter((job) => job.status === 'blocked_by_limit' && !!job.resumeAfter)
+        .map((job) => job.resumeAfter!)
+        .sort()[0] ?? null
+    );
   }
 
   private async evaluateRules(tx: QueueRepositoryTx, job: QueueJob, now: string): Promise<QueueRuleDecision> {
@@ -847,7 +870,10 @@ function normalizeTarget(
 
   if (!pipelineEnabled) {
     if (type !== 'project') {
-      throw httpError(400, 'queuePipelineV2 is disabled; terminal and team queue targets require KAPLAN_QUEUE_PIPELINE_V2=on');
+      throw httpError(
+        400,
+        'queuePipelineV2 is disabled; terminal and team queue targets require KAPLAN_QUEUE_PIPELINE_V2=on',
+      );
     }
     return { type: 'project', payload: {} };
   }
@@ -878,7 +904,8 @@ function normalizeTerminalPayload(raw: Record<string, unknown>): QueueTargetPayl
   if (env != null && !isStringRecord(env)) throw httpError(400, 'terminal target payload.env must be a string map');
   const shell = shellSpecValue(raw.shell);
   const initialCommand = stringValue(raw.initialCommand ?? raw.command);
-  if (initialCommand && initialCommand.length > 8192) throw httpError(400, 'terminal target initialCommand too long (max 8192 chars)');
+  if (initialCommand && initialCommand.length > 8192)
+    throw httpError(400, 'terminal target initialCommand too long (max 8192 chars)');
   return {
     name,
     cwd: stringValue(raw.cwd ?? raw.workspacePath ?? raw.workspace),
@@ -894,7 +921,12 @@ function normalizeTerminalPayload(raw: Record<string, unknown>): QueueTargetPayl
 }
 
 function normalizeTeamPayload(raw: Record<string, unknown>): QueueTargetPayload {
-  const mode = raw.mode === 'create' || raw.action === 'create' ? 'create' : raw.mode === 'append' || raw.action === 'append' ? 'append' : null;
+  const mode =
+    raw.mode === 'create' || raw.action === 'create'
+      ? 'create'
+      : raw.mode === 'append' || raw.action === 'append'
+        ? 'append'
+        : null;
   if (!mode) throw httpError(400, 'team target payload.mode must be create or append');
   const runId = stringValue(raw.runId);
   if (mode === 'append' && !runId) throw httpError(400, 'team append target payload.runId is required');
@@ -909,7 +941,8 @@ function normalizeTeamPayload(raw: Record<string, unknown>): QueueTargetPayload 
     workspace: stringValue(raw.workspace),
     templateId: stringValue(raw.templateId),
     roles: Array.isArray(roles) ? roles.map((role) => ({ ...role })) : undefined,
-    orchestrationMode: raw.orchestrationMode === 'company' ? 'company' : raw.orchestrationMode === 'legacy' ? 'legacy' : undefined,
+    orchestrationMode:
+      raw.orchestrationMode === 'company' ? 'company' : raw.orchestrationMode === 'legacy' ? 'legacy' : undefined,
   };
 }
 
@@ -960,7 +993,8 @@ function shellSpecValue(value: unknown): Record<string, unknown> | undefined {
   const kind = stringValue(value.kind);
   if (!kind || !SHELL_KINDS.has(kind)) throw httpError(400, 'terminal target payload.shell.kind is invalid');
   const path = value.path;
-  if (path != null && typeof path !== 'string') throw httpError(400, 'terminal target payload.shell.path must be a string');
+  if (path != null && typeof path !== 'string')
+    throw httpError(400, 'terminal target payload.shell.path must be a string');
   const args = value.args;
   if (args != null && (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string'))) {
     throw httpError(400, 'terminal target payload.shell.args must be a string array');

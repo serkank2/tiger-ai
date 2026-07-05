@@ -1,0 +1,11 @@
+node_modules
+apps/*/node_modules
+apps/frontend/.nuxt
+apps/frontend/.output
+.git
+.tiger
+.data
+*.log
+.env
+.env.*
+!.env.example

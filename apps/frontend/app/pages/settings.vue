@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProvidersCard from '~/components/ProvidersCard.vue';
 // Settings home. Surfaces system status — MySQL readiness (the durable system of
 // record) and legacy-import status — and hosts app preferences via the retained
 // SettingsModal, reachable from the shell instead of a hidden command-bar icon.
@@ -12,10 +13,8 @@ const { t } = useT();
 const api = useApi();
 const settings = useSettingsStore();
 const theme = useThemeStore();
-const tiger = useTigerStore();
 
 const health = ref<HealthStatus | null>(null);
-const templateCount = ref<number | null>(null);
 const loading = ref(false);
 const error = ref('');
 const showPreferences = ref(false);
@@ -24,15 +23,7 @@ async function loadStatus() {
   loading.value = true;
   error.value = '';
   try {
-    // Health is the DB-readiness probe; projects + templates evidence that legacy
-    // file-state was imported into MySQL on startup.
-    const [h, templates] = await Promise.all([
-      api.getHealth(),
-      api.listTigerTemplates().catch(() => []),
-    ]);
-    health.value = h;
-    templateCount.value = templates.length;
-    await tiger.loadProjects().catch(() => {});
+    health.value = await api.getHealth();
   } catch (e) {
     error.value = errText(e);
   } finally {
@@ -41,7 +32,6 @@ async function loadStatus() {
 }
 
 const dbReady = computed(() => health.value?.db.ready ?? false);
-const projectCount = computed(() => tiger.projects.length);
 
 onMounted(loadStatus);
 </script>
@@ -54,12 +44,7 @@ onMounted(loadStatus);
     </header>
 
     <StateView v-if="loading && !health" kind="loading" :title="t('settings.page.checking')" />
-    <StateView
-      v-else-if="error && !health"
-      kind="error"
-      :title="t('settings.page.loadError')"
-      :description="error"
-    >
+    <StateView v-else-if="error && !health" kind="error" :title="t('settings.page.loadError')" :description="error">
       <BaseButton @click="loadStatus">{{ t('common.retry') }}</BaseButton>
     </StateView>
 
@@ -77,7 +62,9 @@ onMounted(loadStatus);
             <dt>{{ t('settings.page.database') }}</dt>
             <dd>
               <span class="pill" :class="dbReady ? 'ok' : 'bad'" role="status">
-                <span class="dot" aria-hidden="true" />{{ dbReady ? t('common.status.ready') : t('settings.page.unavailable') }}
+                <span class="dot" aria-hidden="true" />{{
+                  dbReady ? t('common.status.ready') : t('settings.page.unavailable')
+                }}
               </span>
               <span v-if="health?.db.name" class="muted">{{ health.db.name }}</span>
             </dd>
@@ -102,23 +89,7 @@ onMounted(loadStatus);
         <p v-if="!dbReady" class="warn">{{ t('settings.page.dbWarn') }}</p>
       </section>
 
-      <!-- Legacy import -->
-      <section class="card">
-        <header class="card-head">
-          <h3>{{ t('settings.page.legacyImport') }}</h3>
-        </header>
-        <p class="card-lead">{{ t('settings.page.legacyLead') }}</p>
-        <dl class="grid">
-          <div class="row">
-            <dt>{{ t('settings.page.projectsAvailable') }}</dt>
-            <dd>{{ projectCount }}</dd>
-          </div>
-          <div class="row">
-            <dt>{{ t('settings.page.runTemplates') }}</dt>
-            <dd>{{ templateCount ?? '—' }}</dd>
-          </div>
-        </dl>
-      </section>
+      <ProvidersCard />
 
       <!-- Preferences -->
       <section class="card">

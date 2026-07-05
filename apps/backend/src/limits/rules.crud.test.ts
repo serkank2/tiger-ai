@@ -66,6 +66,10 @@ test('normalizeRuleInput rejects an unknown window key', () => {
 });
 
 test('normalizeRuleInput accepts custom: window keys', () => {
-  const rule = normalizeRuleInput({ provider: 'claude', windowKey: 'custom:opus', thresholdPercent: 90 }, undefined, NOW);
+  const rule = normalizeRuleInput(
+    { provider: 'claude', windowKey: 'custom:opus', thresholdPercent: 90 },
+    undefined,
+    NOW,
+  );
   assert.equal(rule.windowKey, 'custom:opus');
 });

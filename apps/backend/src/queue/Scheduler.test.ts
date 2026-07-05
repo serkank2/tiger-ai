@@ -5,87 +5,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MemoryQueueRepository } from './MemoryQueueRepository.js';
-import { Scheduler, type QueueOrchestrator, type QueueTeamTargetRuntime, type QueueTerminalTargetRuntime } from './Scheduler.js';
+import { Scheduler, type QueueRunTargetRuntime, type QueueTerminalTargetRuntime } from './Scheduler.js';
 import { QueueService } from '../services/QueueService.js';
-import { defaultTigerConfig } from '../orchestrator/config.js';
-import type { ExecutionOwner } from '../orchestrator/persistence.js';
-import { STAGE_ORDER, type OrchestratorState, type StageId, type StageRunConfig, type TigerConfig } from '../orchestrator/types.js';
 import type { TerminalDefinition, TerminalRuntimeStatus } from '../store/types.js';
 import type { QueueJob } from './types.js';
-
-function blankState(): OrchestratorState {
-  const stages = {} as OrchestratorState['stages'];
-  for (const stage of STAGE_ORDER) stages[stage] = { id: stage, status: 'not_started', runs: [] };
-  return {
-    workspace: null,
-    tigerRoot: null,
-    initialized: false,
-    projectPromptPreview: '',
-    currentStage: null,
-    busy: false,
-    stages,
-    tasks: null,
-    findings: null,
-    correctionCycles: 0,
-    maxCorrectionCycles: 2,
-    autoAdvance: false,
-  };
-}
-
-class FakeOrchestrator extends EventEmitter implements QueueOrchestrator {
-  readonly config: TigerConfig = defaultTigerConfig();
-  readonly prompts: string[] = [];
-  readonly startedStages: StageId[] = [];
-  /** Owner active when each stage started — used to assert queue-dispatched runs are queue-owned. */
-  readonly stageOwners: (ExecutionOwner | null)[] = [];
-  private activeOwner: ExecutionOwner | null = null;
-  private state = blankState();
-
-  setExecutionOwner(owner: ExecutionOwner | null): void {
-    this.activeOwner = owner;
-  }
-
-  async initialize(workspace: string, projectPrompt: string): Promise<void> {
-    this.prompts.push(projectPrompt);
-    this.state = blankState();
-    this.state.workspace = workspace;
-    this.state.tigerRoot = path.join(workspace, '.tiger');
-    this.state.initialized = true;
-    this.state.projectPromptPreview = projectPrompt.slice(0, 400);
-    this.emit('state', this.getState());
-  }
-
-  getConfig(): TigerConfig {
-    return this.config;
-  }
-
-  getState(): OrchestratorState {
-    return structuredClone(this.state);
-  }
-
-  startStage(stageId: StageId, _cfg: StageRunConfig): void {
-    if (this.state.busy) throw new Error('already running');
-    this.startedStages.push(stageId);
-    this.stageOwners.push(this.activeOwner);
-    this.state.busy = true;
-    this.state.currentStage = stageId;
-    this.state.stages[stageId] = { id: stageId, status: 'running', runs: [] };
-    this.emit('state', this.getState());
-    setTimeout(() => {
-      this.state.busy = false;
-      this.state.stages[stageId] = { id: stageId, status: 'completed', runs: [] };
-      this.emit('state', this.getState());
-    }, 2).unref();
-  }
-
-  stopStage(): void {
-    const stage = this.state.currentStage;
-    if (!stage) return;
-    this.state.busy = false;
-    this.state.stages[stage] = { id: stage, status: 'stopped', runs: [], message: 'Stopped.' };
-    this.emit('state', this.getState());
-  }
-}
 
 class FakeTerminalTarget implements QueueTerminalTargetRuntime {
   readonly state: QueueTerminalTargetRuntime['state'];
@@ -121,33 +44,51 @@ class FakeTerminalTarget implements QueueTerminalTargetRuntime {
   }
 }
 
-class FakeTeamTarget implements QueueTeamTargetRuntime {
+/** Fake v2 run engine: createRun + start resolve to `finalStatus` on the next tick. */
+class FakeRunTarget extends EventEmitter implements QueueRunTargetRuntime {
+  readonly goals: string[] = [];
+  readonly workspaces: string[] = [];
   readonly steered: string[] = [];
-  readonly createdInputs: Parameters<QueueTeamTargetRuntime['createTeamRun']>[0][] = [];
-  started = 0;
-  private active: { runId: string } | null;
+  private active: { runId: string; status: string } | null;
+  private counter = 0;
 
-  constructor(activeRunId?: string) {
-    this.active = activeRunId ? { runId: activeRunId } : null;
+  constructor(
+    private readonly finalStatus: 'completed' | 'blocked' | 'failed' = 'completed',
+    activeRunId?: string,
+  ) {
+    super();
+    this.active = activeRunId ? { runId: activeRunId, status: 'running' } : null;
   }
 
-  tryGetState(): { runId: string } | null {
+  getSnapshot(): { runId: string; status: string } | null {
     return this.active;
+  }
+
+  async createRun(input: { workspace: string; goal: string }): Promise<{ runId: string }> {
+    this.goals.push(input.goal);
+    this.workspaces.push(input.workspace);
+    this.counter += 1;
+    this.active = { runId: `fake-run-${this.counter}`, status: 'created' };
+    return { runId: this.active.runId };
+  }
+
+  start(): { runId: string; status: string } {
+    const run = this.active;
+    if (!run) throw new Error('no run created');
+    run.status = 'running';
+    setTimeout(() => {
+      run.status = this.finalStatus;
+      this.emit('engine-event', { kind: 'state', state: { runId: run.runId, status: this.finalStatus } });
+    }, 2).unref();
+    return { runId: run.runId, status: 'running' };
+  }
+
+  async stop(): Promise<unknown> {
+    return {};
   }
 
   async steer(body: string): Promise<unknown> {
     this.steered.push(body);
-    return {};
-  }
-
-  async createTeamRun(input: Parameters<QueueTeamTargetRuntime['createTeamRun']>[0]): Promise<{ runId: string }> {
-    this.createdInputs.push(input);
-    this.active = { runId: 'created-team-run' };
-    return this.active;
-  }
-
-  async start(): Promise<unknown> {
-    this.started++;
     return {};
   }
 }
@@ -164,12 +105,12 @@ async function runLeasedJobOnce(scheduler: Scheduler, job: QueueJob): Promise<vo
   await (scheduler as unknown as { runJob(job: QueueJob): Promise<void> }).runJob(job);
 }
 
-test('Scheduler runs queued prompts strictly one at a time in queue order', async () => {
+test('Scheduler runs queued prompts one at a time as v2 runs, in queue order', async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-queue-scheduler-'));
   const repo = new MemoryQueueRepository();
   const service = new QueueService(repo, undefined, { queuePipelineV2: 'off' });
-  const orchestrator = new FakeOrchestrator();
-  const scheduler = new Scheduler(service, orchestrator, { owner: 'test-scheduler', leaseMs: 1000, idlePollMs: 1000 });
+  const runTarget = new FakeRunTarget();
+  const scheduler = new Scheduler(service, { owner: 'test-scheduler', leaseMs: 1000, idlePollMs: 1000, runTarget });
   try {
     const first = await service.enqueue({
       prompt: 'First autonomous prompt',
@@ -177,33 +118,53 @@ test('Scheduler runs queued prompts strictly one at a time in queue order', asyn
       workspacePath: path.join(temp, 'first'),
     });
     assert.equal(first.targetType, 'project');
-    assert.equal((await service.listSteps(first.id)).length, STAGE_ORDER.length);
-    await service.enqueue({ prompt: 'Second autonomous prompt', provider: 'codex', workspacePath: path.join(temp, 'second') });
+    await service.enqueue({
+      prompt: 'Second autonomous prompt',
+      provider: 'codex',
+      workspacePath: path.join(temp, 'second'),
+    });
     await scheduler.start();
-    await waitFor(async () => (await service.getState()).jobs.every((job) => job.status === 'completed'), 'queue completion');
-
-    assert.deepEqual(orchestrator.prompts, ['First autonomous prompt', 'Second autonomous prompt']);
-    assert.equal(orchestrator.startedStages.length, STAGE_ORDER.length * 2);
-    assert.deepEqual(orchestrator.startedStages.slice(0, STAGE_ORDER.length), STAGE_ORDER);
-    assert.deepEqual(orchestrator.startedStages.slice(STAGE_ORDER.length), STAGE_ORDER);
-    // Every queue-dispatched stage must run under a queue owner so persisted runs are not recorded as manual.
-    assert.equal(orchestrator.stageOwners.length, STAGE_ORDER.length * 2);
-    assert.ok(
-      orchestrator.stageOwners.every((owner) => owner?.type === 'queue'),
-      'queue-dispatched stages should run under a queue execution owner',
+    await waitFor(
+      async () => (await service.getState()).jobs.every((job) => job.status === 'completed'),
+      'queue completion',
     );
+
+    assert.deepEqual(runTarget.goals, ['First autonomous prompt', 'Second autonomous prompt']);
+    assert.equal(runTarget.workspaces.length, 2);
+    const firstJob = await service.getJob(first.id);
+    assert.deepEqual(firstJob?.targetRef, { runId: 'fake-run-1' });
   } finally {
     scheduler.stop();
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
 
+test('Scheduler fails a project job whose run ends blocked', async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-queue-blocked-'));
+  const service = new QueueService(new MemoryQueueRepository(), undefined, { queuePipelineV2: 'off' });
+  const runTarget = new FakeRunTarget('blocked');
+  const scheduler = new Scheduler(service, { owner: 'blocked-scheduler', leaseMs: 1000, idlePollMs: 1000, runTarget });
+  const job = await service.enqueue({
+    prompt: 'Doomed prompt',
+    provider: 'codex',
+    workspacePath: path.join(temp, 'ws'),
+    maxAttempts: 1,
+  });
+  const leased = await service.leaseNext('blocked-scheduler', 1000);
+  assert.equal(leased.kind, 'leased');
+  if (leased.kind !== 'leased') return;
+  await runLeasedJobOnce(scheduler, leased.job);
+  const failed = await service.getJob(job.id);
+  assert.equal(failed?.status, 'failed');
+  assert.match(failed?.blockedReason ?? '', /blocked/);
+  await fs.rm(temp, { recursive: true, force: true });
+});
+
 test('Scheduler dispatches terminal target jobs and records the terminal id', async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-queue-terminal-'));
   const service = new QueueService(new MemoryQueueRepository(), undefined, { queuePipelineV2: 'on' });
-  const orchestrator = new FakeOrchestrator();
   const terminal = new FakeTerminalTarget(temp);
-  const scheduler = new Scheduler(service, orchestrator, {
+  const scheduler = new Scheduler(service, {
     owner: 'terminal-scheduler',
     leaseMs: 1000,
     idlePollMs: 1000,
@@ -227,27 +188,23 @@ test('Scheduler dispatches terminal target jobs and records the terminal id', as
     assert.equal(def.name, 'Run tests');
     assert.equal(def.cwd, cwd);
     assert.equal(def.initialCommand, 'npm test');
-    assert.deepEqual(terminal.upserted.map((item) => item.id), [def.id]);
+    assert.deepEqual(
+      terminal.upserted.map((item) => item.id),
+      [def.id],
+    );
     assert.deepEqual(terminal.started, [{ id: def.id, cols: 120, rows: 40 }]);
     assert.equal(terminal.saveCount, 1);
     assert.deepEqual((await service.getJob(job.id))?.targetRef, { terminalId: def.id });
-    assert.equal(orchestrator.startedStages.length, 0);
   } finally {
     scheduler.stop();
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
 
-test('Scheduler dispatches team append jobs to the active run', async () => {
+test('Scheduler dispatches team append jobs as steering on the active run', async () => {
   const service = new QueueService(new MemoryQueueRepository(), undefined, { queuePipelineV2: 'on' });
-  const orchestrator = new FakeOrchestrator();
-  const team = new FakeTeamTarget('team-run-1');
-  const scheduler = new Scheduler(service, orchestrator, {
-    owner: 'team-scheduler',
-    leaseMs: 1000,
-    idlePollMs: 1000,
-    teamTarget: team,
-  });
+  const runTarget = new FakeRunTarget('completed', 'team-run-1');
+  const scheduler = new Scheduler(service, { owner: 'team-scheduler', leaseMs: 1000, idlePollMs: 1000, runTarget });
   try {
     const job = await service.enqueue({
       prompt: 'fallback team prompt',
@@ -259,23 +216,21 @@ test('Scheduler dispatches team append jobs to the active run', async () => {
     await scheduler.start();
     await waitFor(async () => (await service.getJob(job.id))?.status === 'completed', 'team append completion');
 
-    assert.deepEqual(team.steered, ['Refine the implementation plan.']);
+    assert.deepEqual(runTarget.steered, ['Refine the implementation plan.']);
     assert.deepEqual((await service.getJob(job.id))?.targetRef, { runId: 'team-run-1' });
-    assert.equal(orchestrator.startedStages.length, 0);
   } finally {
     scheduler.stop();
   }
 });
 
-test('Scheduler fails only the team append item when no active run exists', async () => {
+test('Scheduler fails only the append item when no active run exists', async () => {
   const service = new QueueService(new MemoryQueueRepository(), undefined, { queuePipelineV2: 'on' });
-  const orchestrator = new FakeOrchestrator();
-  const team = new FakeTeamTarget();
-  const scheduler = new Scheduler(service, orchestrator, {
+  const runTarget = new FakeRunTarget();
+  const scheduler = new Scheduler(service, {
     owner: 'team-fail-scheduler',
     leaseMs: 1000,
     idlePollMs: 1000,
-    teamTarget: team,
+    runTarget,
   });
   const failedJob = await service.enqueue({
     prompt: 'Append to a missing run.',
@@ -294,7 +249,7 @@ test('Scheduler fails only the team append item when no active run exists', asyn
   const failed = await service.getJob(failedJob.id);
   assert.equal(failed?.status, 'failed');
   assert.equal(failed?.failureKind, 'team_dispatch');
-  assert.match(failed?.blockedReason ?? '', /No active team run is available/);
-  assert.deepEqual(team.steered, []);
+  assert.match(failed?.blockedReason ?? '', /No active run is available/);
+  assert.deepEqual(runTarget.steered, []);
   assert.equal((await service.getJob(queuedJob.id))?.status, 'queued');
 });

@@ -10,9 +10,7 @@ export const LOCALE_STORAGE_KEY = 'kaplan.locale';
 
 /** Narrow an arbitrary string to a known LocaleCode (or undefined). */
 function asLocaleCode(value: string | null | undefined): LocaleCode | undefined {
-  return (AVAILABLE_LOCALES as readonly string[]).includes(value ?? '')
-    ? (value as LocaleCode)
-    : undefined;
+  return (AVAILABLE_LOCALES as readonly string[]).includes(value ?? '') ? (value as LocaleCode) : undefined;
 }
 
 /**
@@ -46,9 +44,7 @@ export function useLocale() {
   const locales = AVAILABLE_LOCALES.map((code) => ({ code, label: LOCALE_LABELS[code] }));
 
   /** The active locale code (reactive). */
-  const locale = computed<LocaleCode>(
-    () => asLocaleCode(i18n.locale.value) ?? DEFAULT_LOCALE,
-  );
+  const locale = computed<LocaleCode>(() => asLocaleCode(i18n.locale.value) ?? DEFAULT_LOCALE);
 
   /** Switch the live UI locale and persist the choice. */
   function setLocale(code: LocaleCode): void {

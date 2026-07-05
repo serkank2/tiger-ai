@@ -3,9 +3,8 @@ import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit';
 import type { WebglAddon as XTermWebglAddon } from '@xterm/addon-webgl';
 import type { Ref } from 'vue';
 
-let xtermCorePromise: Promise<
-  readonly [typeof import('@xterm/xterm'), typeof import('@xterm/addon-fit')]
-> | null = null;
+let xtermCorePromise: Promise<readonly [typeof import('@xterm/xterm'), typeof import('@xterm/addon-fit')]> | null =
+  null;
 let webLinksAddonPromise: Promise<typeof import('@xterm/addon-web-links')> | null = null;
 let webglAddonPromise: Promise<typeof import('@xterm/addon-webgl')> | null = null;
 // Once WebGL context creation has failed (no GPU, blocklisted driver, too many live
@@ -80,7 +79,18 @@ export function useTerminalView(
     webgl?.dispose();
     ro?.disconnect();
     term?.dispose();
-    offOutput = offSnapshot = onData = onResize = offWebglContextLoss = ro = term = fit = webgl = mousedown = mountedHost = null;
+    offOutput =
+      offSnapshot =
+      onData =
+      onResize =
+      offWebglContextLoss =
+      ro =
+      term =
+      fit =
+      webgl =
+      mousedown =
+      mountedHost =
+        null;
     attachedId = null;
   }
 

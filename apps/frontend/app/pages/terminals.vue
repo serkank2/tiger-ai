@@ -90,8 +90,7 @@ watch(shouldPollPreviews, syncPreviewPoll);
       @open-composer="showComposer = true"
       @open-prompts="navigateTo('/prompts')"
       @open-settings="navigateTo('/settings')"
-      @open-tiger="navigateTo('/tiger')"
-      @open-templates="navigateTo('/templates')"
+      @open-runs="navigateTo('/runs')"
     />
 
     <div v-if="terminals.loadError && !terminals.loaded" class="error-shell">
@@ -100,7 +99,9 @@ watch(shouldPollPreviews, syncPreviewPoll);
         :title="t('terminals.cantReachBackend')"
         :description="`${apiBase} — ${terminals.loadError}`"
       >
-        <p class="dim">{{ t('terminals.backendHintPrefix') }} <code>npm run dev</code> {{ t('terminals.backendHintSuffix') }}</p>
+        <p class="dim">
+          {{ t('terminals.backendHintPrefix') }} <code>npm run dev</code> {{ t('terminals.backendHintSuffix') }}
+        </p>
         <button class="retry" @click="loadTerminals">{{ t('common.retry') }}</button>
       </StateView>
     </div>

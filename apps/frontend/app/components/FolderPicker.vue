@@ -53,7 +53,9 @@ onMounted(async () => {
 
 <template>
   <BaseModal :title="t('settings.folderPicker.title')" size="md" @close="emit('close')">
-    <div class="cur"><code>{{ path || '…' }}</code></div>
+    <div class="cur">
+      <code>{{ path || '…' }}</code>
+    </div>
 
     <form class="go-row" @submit.prevent="loadTyped">
       <BaseInput
@@ -64,15 +66,21 @@ onMounted(async () => {
         :aria-label="t('settings.folderPicker.pathLabel')"
         :disabled="loading"
       />
-      <BaseButton type="submit" variant="secondary" :loading="loading" :disabled="!typedPath.trim()">{{ t('settings.folderPicker.go') }}</BaseButton>
+      <BaseButton type="submit" variant="secondary" :loading="loading" :disabled="!typedPath.trim()">{{
+        t('settings.folderPicker.go')
+      }}</BaseButton>
     </form>
 
     <div class="list" :aria-busy="loading || undefined">
-      <button v-if="parent && parent !== path" type="button" class="row up" :disabled="loading" @click="load(parent)">↑ ..</button>
+      <button v-if="parent && parent !== path" type="button" class="row up" :disabled="loading" @click="load(parent)">
+        ↑ ..
+      </button>
       <button v-for="d in dirs" :key="d.path" type="button" class="row" :disabled="loading" @click="load(d.path)">
         <span class="ic">📁</span>{{ d.name }}
       </button>
-      <div v-if="loading" class="loading-row"><Spinner :size="16" label="" /> {{ t('settings.folderPicker.loading') }}</div>
+      <div v-if="loading" class="loading-row">
+        <Spinner :size="16" label="" /> {{ t('settings.folderPicker.loading') }}
+      </div>
       <div v-else-if="!dirs.length" class="empty">{{ t('settings.folderPicker.noSubfolders') }}</div>
     </div>
 
@@ -80,7 +88,9 @@ onMounted(async () => {
 
     <template #footer>
       <BaseButton variant="ghost" :disabled="loading" @click="emit('close')">{{ t('common.cancel') }}</BaseButton>
-      <BaseButton variant="primary" :disabled="!path || loading" @click="emit('select', path)">{{ t('settings.folderPicker.useFolder') }}</BaseButton>
+      <BaseButton variant="primary" :disabled="!path || loading" @click="emit('select', path)">{{
+        t('settings.folderPicker.useFolder')
+      }}</BaseButton>
     </template>
   </BaseModal>
 </template>

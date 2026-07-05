@@ -4,7 +4,7 @@
 
 **A local-first control panel for running, orchestrating, and supervising AI coding agents in real terminals.**
 
-Kaplan turns your machine into a cockpit for AI software work: live PTY terminals, a queue, reusable prompts, provider usage limits, a staged "Tiger" pipeline, and an autonomous **AI Team** of role-agents (Lead, Analyst, Developer, Tester, Reviewer) that converse, write code, and sign off — all watchable in live terminal tiles.
+Kaplan turns your machine into a cockpit for AI software work: live PTY terminals, a durable command queue, reusable prompts, provider usage limits, and a headless **Runs** engine that drives Claude / Codex / Antigravity over a work graph — plan → build → review with engine-run verification, optional multi-agent councils, parallel git-worktree builds, and live steering — all watchable per agent.
 
 [Features](#-features) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Configuration](#-configuration) · [Development](#-development) · [Contributing](#-contributing)
 
@@ -18,15 +18,16 @@ Kaplan turns your machine into a cockpit for AI software work: live PTY terminal
 
 ## ✨ Features
 
-| Area | What it does |
-| --- | --- |
-| **Terminals** | Create, name, group, and drive real PTY terminals (powered by `node-pty` + `xterm.js`) with full scrollback replay on attach and live streaming over WebSocket. |
-| **Command queue** | Schedule commands/prompts to fan out to one or many terminals, with a backend scheduler. |
-| **Prompts** | Compose prompts with variables, generate them with AI, keep a searchable history, and organize reusable libraries/templates. |
-| **Tiger pipeline** | A staged AI software pipeline (plan → tasks → execute → review) that runs Claude/Codex agents as interactive CLIs and auto-advances on completion markers. |
-| **AI Team** | An autonomous, Lead-coordinated team of role-agents working a real project: a file-based task board, conversation transcript, objective done-gate (every required role must sign off + verification must pass), live steering, and *Stop = pause / Close = end* session lifecycle. |
-| **Usage limits** | Tracks provider usage/limits and gates agent runs when a provider is rate-limited. |
-| **Templates** | Full CRUD for run templates and team templates, with least-privilege-aware role configuration. |
+| Area                | What it does                                                                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Runs**            | A headless work-graph engine (`plan → build → review`) that drives Claude / Codex / Antigravity as one-shot turns with session resume and delta briefs. Kaplan runs the checks itself — exit code 0 is the only definition of "green."            |
+| **Councils**        | Optional multi-agent ensembles at the read-only phases: N independent plan candidates (distinct lenses, synthesized into one graph) and N review lenses (findings merged). The write path stays single-agent. Per-phase counts and skip planning. |
+| **Parallel builds** | Build tasks fan out into isolated git worktree lanes and merge back as patches (Kaplan never commits on your branch); conflicts fall back to a sequential retry.                                                                                  |
+| **Live control**    | Watch every agent's stream per-terminal, steer mid-run (queued or interrupt-now), and run agents as interactive PTYs you type into when you want to drive by hand.                                                                                |
+| **Terminals**       | Create, name, group, and drive real PTY terminals (`node-pty` + `xterm.js`) with full scrollback replay on attach and live streaming over WebSocket.                                                                                              |
+| **Command queue**   | A MySQL-backed durable queue + scheduler that fans commands/prompts out to one or many terminals or run targets.                                                                                                                                  |
+| **Prompts**         | Compose prompts with variables, generate them with AI, keep a searchable history, and organize reusable libraries.                                                                                                                                |
+| **Usage limits**    | Tracks provider usage/limits and gates dispatch when a provider is rate-limited.                                                                                                                                                                  |
 
 ## 🏛 Architecture
 
@@ -37,25 +38,28 @@ kaplan/
 ├── apps/
 │   ├── backend/     # Express 5 REST control-plane + ws data-plane, owns the PTY processes
 │   │   └── src/
-│   │       ├── terminal/      # TerminalManager / TerminalSession (node-pty)
-│   │       ├── orchestrator/  # Tiger staged pipeline engine
-│   │       ├── team/          # AI Team run engine (TeamOrchestrator + modules)
-│   │       ├── queue/         # command queue + scheduler
-│   │       ├── services/      # prompt generation, limits, templates …
-│   │       ├── repositories/  # MySQL repositories
-│   │       ├── http/          # REST routers
-│   │       ├── ws/            # WebSocket hub
-│   │       └── db/            # pool + migrations
+│   │       ├── run/          # v2 Runs engine: WorkGraph, lanes, staged planning
+│   │       ├── agents/       # headless + interactive provider drivers (claude/codex/agy)
+│   │       ├── context/      # session preamble + delta briefs + project map
+│   │       ├── verify/       # engine-run verification (exit code = truth)
+│   │       ├── terminal/     # TerminalManager / TerminalSession (node-pty)
+│   │       ├── orchestrator/ # provider CLI config + usage probing
+│   │       ├── queue/        # durable command queue + scheduler
+│   │       ├── services/     # prompt generation, limits …
+│   │       ├── repositories/ # MySQL repositories
+│   │       ├── http/         # REST routers (/api)
+│   │       ├── ws/           # WebSocket hub
+│   │       └── db/           # pool + migrations
 │   └── frontend/    # Nuxt 4 + Vue 3 + Pinia SPA (xterm.js terminals)
 │       └── app/
-│           ├── pages/         # terminals, team, tiger, queue, prompts, limits, …
+│           ├── pages/         # runs, terminals, queue, cue, prompts, limits, settings
 │           ├── components/    # per-domain Vue components
 │           ├── stores/        # Pinia stores (one per domain)
 │           └── composables/   # useApi, useSocket, useTerminalView …
 └── prompts/         # on-disk prompt library
 ```
 
-**Data flow:** the frontend talks to the backend over **REST** (control: create/start/stop) and a **WebSocket** (data: live terminal output + run state). **MySQL is the durable system of record** — the backend connects and migrates on boot and *fails fast* if the database is unreachable (it never silently boots on stale file state).
+**Data flow:** the frontend talks to the backend over **REST** (control: create/start/stop) and a **WebSocket** (data: live terminal output + run state). **MySQL is the durable system of record** — the backend connects and migrates on boot and _fails fast_ if the database is unreachable (it never silently boots on stale file state).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper tour.
 
@@ -64,27 +68,39 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper tour.
 ### Prerequisites
 
 - **Node.js ≥ 20**
-- **MySQL ≥ 8** running locally (the schema is auto-created on first boot)
-- A C/C++ toolchain for `node-pty` (Windows: *Visual Studio Build Tools*; macOS: *Xcode CLT*; Linux: *build-essential*)
+- **Docker** (Compose v2) — used to run MySQL locally with one command. _(Or bring your own MySQL ≥ 8 and skip Docker.)_
+- A C/C++ toolchain for `node-pty` (Windows: _Visual Studio Build Tools_; macOS: _Xcode CLT_; Linux: _build-essential_)
+- The **AI coding CLIs** you want to drive, installed and authenticated on your `PATH` — [`claude`](https://docs.anthropic.com/en/docs/claude-code), `codex`, and/or `agy` (Antigravity). Kaplan orchestrates these; it does not bundle them.
 
-### Install & configure
+### Fastest path (Make + Docker) — clone to running in ~5 minutes
+
+```bash
+git clone <your-fork-url> kaplan && cd kaplan
+make setup     # writes apps/backend/.env, installs deps, starts MySQL (Docker), runs migrations
+make dev       # starts backend (:4517) + frontend (:3000)
+```
+
+Then open **http://localhost:3000**. A DB browser (Adminer) is at **http://localhost:8080** (server `mysql`, user `root`, password `kaplan`).
+
+Run `make help` to see every target (`test`, `lint`, `typecheck`, `db-down`, `db-reset`, …).
+
+### Manual path (no Make)
 
 ```bash
 git clone <your-fork-url> kaplan && cd kaplan
 npm install
 
+# Start MySQL (Docker) …
+docker compose up -d
+# … or point at your own MySQL instead.
+
 # Configure the backend's database connection
 cp apps/backend/.env.example apps/backend/.env
-# edit apps/backend/.env and set KAPLAN_DB_PASSWORD (and host/user if not defaults)
+# set KAPLAN_DB_PASSWORD=kaplan (matches docker-compose), or your own credentials
+
+npm run migrate -w @kaplan/backend   # apply migrations (also runs automatically on boot)
+npm run dev                          # backend (:4517) + frontend (:3000) together
 ```
-
-### Run (both apps)
-
-```bash
-npm run dev          # starts backend (:4517) + frontend (:3000) together
-```
-
-Then open **http://localhost:3000**.
 
 Run them separately if you prefer:
 
@@ -93,19 +109,21 @@ npm run dev:backend  # Express + ws on KAPLAN_PORT (default 4517)
 npm run dev:frontend # Nuxt dev server on :3000
 ```
 
+> **Stopping / resetting the database:** `make db-down` (keeps data) or `make db-reset` / `docker compose down -v` (wipes the volume).
+
 ## ⚙️ Configuration
 
 All backend configuration is via environment variables (read from `apps/backend/.env` or the real environment, which always wins). The most common:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `KAPLAN_PORT` | `4517` | Backend HTTP/WS port |
-| `KAPLAN_DB_HOST` / `KAPLAN_DB_PORT` | `127.0.0.1` / `3306` | MySQL location |
-| `KAPLAN_DB_USER` / `KAPLAN_DB_PASSWORD` | `root` / *(empty)* | MySQL credentials |
-| `KAPLAN_DB_NAME` | `kaplan` | Schema name (auto-created) |
-| `KAPLAN_CORS_ORIGINS` | dev origins | Comma-separated allowed origins |
-| `KAPLAN_DATA_DIR` | OS app-data dir | Where durable file state lives |
-| `KAPLAN_PROMPTS_DIR` | `<repo>/prompts` | Prompt library location |
+| Variable                                | Default              | Purpose                         |
+| --------------------------------------- | -------------------- | ------------------------------- |
+| `KAPLAN_PORT`                           | `4517`               | Backend HTTP/WS port            |
+| `KAPLAN_DB_HOST` / `KAPLAN_DB_PORT`     | `127.0.0.1` / `3306` | MySQL location                  |
+| `KAPLAN_DB_USER` / `KAPLAN_DB_PASSWORD` | `root` / _(empty)_   | MySQL credentials               |
+| `KAPLAN_DB_NAME`                        | `kaplan`             | Schema name (auto-created)      |
+| `KAPLAN_CORS_ORIGINS`                   | dev origins          | Comma-separated allowed origins |
+| `KAPLAN_DATA_DIR`                       | OS app-data dir      | Where durable file state lives  |
+| `KAPLAN_PROMPTS_DIR`                    | `<repo>/prompts`     | Prompt library location         |
 
 See [`apps/backend/.env.example`](apps/backend/.env.example) for the full list.
 
@@ -124,10 +142,10 @@ npm run build:frontend               # production build of the SPA
 
 The near-term direction (see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full, prioritized backlog):
 
-- Engineering foundation: CI, linting, contribution guides, architecture docs ✅ *in progress*
+- Runs engine depth: worktree merge-back tuning, richer diff/PR review, cost/token budgets
 - Observability: structured logging, health/readiness endpoints, request tracing
-- AI Team maturity: run history & re-open, cost/token budgets, a diff/PR view of agent changes, per-role pause, approval gates
-- Security hardening: workspace allow-listing, tighter input validation, optional auth
+- Provider breadth: more coding CLIs behind the same driver contract
+- Security hardening: workspace allow-listing, tighter input validation, shared-token auth
 - Accessibility & i18n passes across every page
 
 ## 🤝 Contributing

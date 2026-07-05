@@ -27,7 +27,7 @@ const sections = computed(() => {
 });
 const groupKey = (id: string | null) => id ?? '__none__';
 const groupName = (id: string | null) =>
-  id ? groups.byId[id]?.name ?? t('prompts.targetPicker.ungrouped') : t('prompts.targetPicker.ungrouped');
+  id ? (groups.byId[id]?.name ?? t('prompts.targetPicker.ungrouped')) : t('prompts.targetPicker.ungrouped');
 
 const selected = computed(() => new Set(props.modelValue));
 const chips = computed(() => props.modelValue.map((id) => terminals.byId[id]).filter(Boolean) as TerminalDto[]);
@@ -121,7 +121,9 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
           >
             <span class="dot" :class="isRunning(term) ? 'on' : 'off'" />
             <span class="tname" :title="term.cwd"><span v-if="term.protected" class="lk">🔒</span>{{ term.name }}</span>
-            <span v-if="term.protected" class="addedtag" :title="t('prompts.targetPicker.protectedExcluded')">{{ t('prompts.targetPicker.protected') }}</span>
+            <span v-if="term.protected" class="addedtag" :title="t('prompts.targetPicker.protectedExcluded')">{{
+              t('prompts.targetPicker.protected')
+            }}</span>
             <button
               v-else-if="!selected.has(term.id)"
               class="add"
@@ -139,7 +141,9 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
     </div>
 
     <div class="col-head row">
-      <span>{{ t('prompts.targetPicker.sendTo') }} <b>{{ chips.length }}</b></span>
+      <span
+        >{{ t('prompts.targetPicker.sendTo') }} <b>{{ chips.length }}</b></span
+      >
       <button v-if="chips.length" class="link" @click="clearAll">{{ t('terminals.clear') }}</button>
     </div>
     <div
@@ -168,34 +172,171 @@ const isRunning = (t: TerminalDto) => t.status.state === 'running' || t.status.s
 </template>
 
 <style scoped>
-.picker { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.col-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-faint); padding: 0 0 6px; font-weight: 700; }
-.col-head.row { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; }
-.available { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); min-height: 120px; }
-.ghead { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-elev-2); cursor: grab; font-size: 12px; }
-.chev { width: 16px; color: var(--text-dim); }
-.gdot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.gname { flex: 1; font-weight: 600; }
-.gcount { color: var(--text-faint); font-size: 11px; }
-.trow { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; cursor: grab; border-top: 1px solid var(--border); font-size: 13px; }
-.trow:hover { background: var(--bg-elev-2); }
-.trow.added { opacity: 0.5; }
-.trow.prot { opacity: 0.55; cursor: not-allowed; }
-.lk { margin-right: 4px; font-size: 10px; }
-.tname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.dot.on { background: var(--green); }
-.dot.off { background: var(--slate, var(--text-faint)); }
-.add { border: 1px solid var(--border-strong); color: var(--accent); padding: 1px 7px; font-size: 11px; border-radius: var(--radius-sm); }
-.add:hover { background: var(--accent-soft); }
-.addedtag { font-size: 10px; color: var(--text-faint); }
-.dropzone { flex: 1; min-height: 100px; border: 1.5px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; overflow-y: auto; }
-.dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
-.dzempty { color: var(--text-faint); font-size: 12px; margin: auto; text-align: center; }
-.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 12px; height: fit-content; }
-.chip .x { color: var(--text-dim); font-size: 11px; }
-.chip .x:hover { color: var(--red); }
-.link { color: var(--text-dim); text-decoration: underline; font-size: 12px; }
-.empty { padding: 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.picker {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.col-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  padding: 0 0 6px;
+  font-weight: 700;
+}
+.col-head.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+}
+.available {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 120px;
+}
+.ghead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-elev-2);
+  cursor: grab;
+  font-size: 12px;
+}
+.chev {
+  width: 16px;
+  color: var(--text-dim);
+}
+.gdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.gname {
+  flex: 1;
+  font-weight: 600;
+}
+.gcount {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 22px;
+  cursor: grab;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.trow:hover {
+  background: var(--bg-elev-2);
+}
+.trow.added {
+  opacity: 0.5;
+}
+.trow.prot {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.lk {
+  margin-right: 4px;
+  font-size: 10px;
+}
+.tname {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.on {
+  background: var(--green);
+}
+.dot.off {
+  background: var(--slate, var(--text-faint));
+}
+.add {
+  border: 1px solid var(--border-strong);
+  color: var(--accent);
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+}
+.add:hover {
+  background: var(--accent-soft);
+}
+.addedtag {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.dropzone {
+  flex: 1;
+  min-height: 100px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: flex-start;
+  overflow-y: auto;
+}
+.dropzone.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dzempty {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: auto;
+  text-align: center;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  height: fit-content;
+}
+.chip .x {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.chip .x:hover {
+  color: var(--red);
+}
+.link {
+  color: var(--text-dim);
+  text-decoration: underline;
+  font-size: 12px;
+}
+.empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
 </style>

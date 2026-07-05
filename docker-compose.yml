@@ -1,0 +1,50 @@
+# Kaplan local dependencies — MySQL 8 (the durable system of record) + Adminer.
+#
+# WHY ONLY THE DATABASE? Kaplan drives your locally-installed AI coding CLIs
+# (claude / codex / agy) in real PTYs on the HOST, so the app itself runs on
+# your machine (`npm run dev`), not in a container. This compose file provides
+# the one hard external dependency — MySQL — so a fresh clone is running in
+# minutes. See the Makefile (`make setup && make dev`) and README Quick start.
+#
+#   docker compose up -d           # start MySQL (+ Adminer on :8080)
+#   docker compose down            # stop
+#   docker compose down -v         # stop AND wipe the database volume
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: kaplan-mysql
+    restart: unless-stopped
+    environment:
+      # Dev-only defaults; override via a root .env (MYSQL_ROOT_PASSWORD=…).
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kaplan}
+      MYSQL_DATABASE: ${KAPLAN_DB_NAME:-kaplan}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - '${KAPLAN_DB_PORT:-3306}:3306'
+    volumes:
+      - kaplan-mysql-data:/var/lib/mysql
+    healthcheck:
+      # `make setup` waits on this so migrations never race an unready server.
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-uroot', '-p${MYSQL_ROOT_PASSWORD:-kaplan}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # Lightweight web DB browser at http://localhost:8080 (optional convenience).
+  adminer:
+    image: adminer:5
+    container_name: kaplan-adminer
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - '${KAPLAN_ADMINER_PORT:-8080}:8080'
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+
+volumes:
+  kaplan-mysql-data:
+    name: kaplan-mysql-data

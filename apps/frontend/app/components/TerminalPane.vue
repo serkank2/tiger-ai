@@ -8,9 +8,7 @@ const terminals = useTerminalsStore();
 const host = ref<HTMLElement | null>(null);
 const active = computed(() => terminals.active);
 const activeId = computed(() => terminals.activeId);
-const running = computed(
-  () => active.value?.status.state === 'running' || active.value?.status.state === 'starting',
-);
+const running = computed(() => active.value?.status.state === 'running' || active.value?.status.state === 'starting');
 
 useTerminalView(host, activeId, { focusOnMount: true });
 
@@ -54,14 +52,19 @@ async function runLifecycle(action: () => unknown | Promise<unknown>) {
         @click="runLifecycle(() => terminals.start(active!.id))"
         >{{ t('terminals.pane.start') }}</BaseButton
       >
-      <BaseButton v-else size="sm" :loading="pending" @click="runLifecycle(() => terminals.stop(active!.id))">{{ t('terminals.pane.stop') }}</BaseButton>
-      <BaseButton size="sm" :loading="pending" @click="runLifecycle(() => terminals.restart(active!.id))">{{ t('terminals.pane.restart') }}</BaseButton>
+      <BaseButton v-else size="sm" :loading="pending" @click="runLifecycle(() => terminals.stop(active!.id))">{{
+        t('terminals.pane.stop')
+      }}</BaseButton>
+      <BaseButton size="sm" :loading="pending" @click="runLifecycle(() => terminals.restart(active!.id))">{{
+        t('terminals.pane.restart')
+      }}</BaseButton>
     </div>
 
     <div class="term-wrap">
       <div ref="host" class="term" />
       <div v-if="active && !running" class="stopped-hint">
-        {{ active.status.state }} — {{ t('terminals.pane.pressPrefix') }} <b>{{ t('terminals.pane.start') }}</b> {{ t('terminals.pane.pressSuffix') }}
+        {{ active.status.state }} — {{ t('terminals.pane.pressPrefix') }} <b>{{ t('terminals.pane.start') }}</b>
+        {{ t('terminals.pane.pressSuffix') }}
       </div>
     </div>
 

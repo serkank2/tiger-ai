@@ -20,10 +20,7 @@ test('leaseNext enforces per-provider concurrency lanes', async () => {
   const l2 = await service.leaseNext('w', 60_000);
   assert.equal(l1.kind, 'leased');
   assert.equal(l2.kind, 'leased');
-  assert.deepEqual(
-    [l1.kind === 'leased' ? l1.job.id : '', l2.kind === 'leased' ? l2.job.id : ''],
-    [c1.id, c2.id],
-  );
+  assert.deepEqual([l1.kind === 'leased' ? l1.job.id : '', l2.kind === 'leased' ? l2.job.id : ''], [c1.id, c2.id]);
 
   // Claude lane is now full (2/2); the next lease must skip c3 and pick the codex job.
   const l3 = await service.leaseNext('w', 60_000);
@@ -75,7 +72,10 @@ test('bulk applies an action per job, skipping incompatible states', async () =>
 
   // Pause both queued jobs.
   const paused = await service.bulk('pause', [a.id, b.id]);
-  assert.deepEqual(paused.map((r) => r.ok), [true, true]);
+  assert.deepEqual(
+    paused.map((r) => r.ok),
+    [true, true],
+  );
   assert.equal((await service.getJob(a.id))?.status, 'paused');
   assert.equal((await service.getJob(b.id))?.status, 'paused');
 
@@ -88,12 +88,18 @@ test('bulk applies an action per job, skipping incompatible states', async () =>
   // Resume both, then bulk-cancel.
   await service.bulk('resume', [a.id, b.id]);
   const canceled = await service.bulk('cancel', [a.id, b.id]);
-  assert.deepEqual(canceled.map((r) => r.ok), [true, true]);
+  assert.deepEqual(
+    canceled.map((r) => r.ok),
+    [true, true],
+  );
   assert.equal((await service.getJob(a.id))?.status, 'canceled');
 
   // Bulk delete removes the jobs entirely.
   const deleted = await service.bulk('delete', [a.id, b.id]);
-  assert.deepEqual(deleted.map((r) => r.ok), [true, true]);
+  assert.deepEqual(
+    deleted.map((r) => r.ok),
+    [true, true],
+  );
   assert.equal(await service.getJob(a.id), null);
   assert.equal(await service.getJob(b.id), null);
 });
@@ -109,7 +115,10 @@ test('deleteJob removes the job, its steps, and unlinks its events', async () =>
   assert.equal((await service.listSteps(job.id)).length, 0);
   const state = await service.getState();
   // Events survive but are unlinked from the deleted job (mirrors MySQL ON DELETE SET NULL).
-  assert.equal(state.events.some((e) => e.jobId === job.id), false);
+  assert.equal(
+    state.events.some((e) => e.jobId === job.id),
+    false,
+  );
 
   await assert.rejects(() => service.deleteJob(job.id));
 });

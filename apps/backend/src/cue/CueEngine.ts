@@ -76,12 +76,10 @@ export class CueEngine {
   private warnings: string[] = [];
 
   // Bound orchestrator listeners (so we can detach cleanly on stop).
-  private onTeamState?: (state: { runId: string; status: string }) => void;
-  private onTigerState?: (state: { currentStage: string | null; stages: Record<string, { status: string }> }) => void;
+  private onRunEngineEvent?: (payload: { kind: string; state?: { runId: string; status: string } }) => void;
   private lastTeamStatus: string | null = null;
   /** RunIds whose `completed` we have already fired on — keyed so back-to-back runs both fire. */
   private firedTeamRunIds = new Set<string>();
-  private lastTigerStageStatus = new Map<string, string>();
 
   constructor(opts: CueEngineOptions) {
     this.ctx = opts.ctx;
@@ -89,11 +87,11 @@ export class CueEngine {
     this.overrideConfig = opts.config;
   }
 
-  /** Resolve the workspace: explicit override, else the active Tiger project workspace. */
+  /** Resolve the workspace: explicit override, else the active v2 run's workspace. */
   private resolveWorkspace(): string | null {
     if (this.workspace) return this.workspace;
     try {
-      return this.ctx.orchestrator.getState().workspace ?? null;
+      return this.ctx.runEngine.getSnapshot()?.workspace ?? null;
     } catch {
       return null;
     }
@@ -268,9 +266,12 @@ export class CueEngine {
       log.warn('cue time.scheduled: invalid interval', { id: rt.sub.id, spec: rt.sub.intervalMs ?? rt.sub.watch });
       return;
     }
-    rt.interval = setInterval(() => {
-      void this.dispatchIfMatch(rt, { event: 'time.scheduled' });
-    }, Math.max(MIN_INTERVAL_MS, ms));
+    rt.interval = setInterval(
+      () => {
+        void this.dispatchIfMatch(rt, { event: 'time.scheduled' });
+      },
+      Math.max(MIN_INTERVAL_MS, ms),
+    );
     // Don't keep the process alive purely for a cue timer.
     rt.interval.unref?.();
   }
@@ -308,41 +309,35 @@ export class CueEngine {
   // --- orchestrator completion listeners (agent.completed) ---
 
   private attachAgentListeners(): void {
-    const initial = this.ctx.teamOrchestrator.tryGetState();
+    const initial = this.ctx.runEngine.getSnapshot();
     this.lastTeamStatus = initial?.status ?? null;
     // Seed the watermark for an already-completed run so we don't re-fire it on attach.
     if (initial?.status === 'completed' && initial.runId) this.firedTeamRunIds.add(initial.runId);
-    this.onTeamState = (state) => {
-      const status = state?.status;
-      if (!status) return;
+    // v2 run completion fires as triggeredBy 'team' so existing agent.completed
+    // subscriptions written against the old Team engine keep working.
+    this.onRunEngineEvent = (payload) => {
+      if (payload.kind !== 'state' || !payload.state) return;
+      const { runId, status } = payload.state;
       this.lastTeamStatus = status;
       // Fire once per runId reaching completed. A single global "was previously completed" flag
       // would suppress a second run that completes right after the first (both share status text).
-      if (status === 'completed' && state.runId && !this.firedTeamRunIds.has(state.runId)) {
-        this.firedTeamRunIds.add(state.runId);
-        void this.onAgentCompleted('team', state.runId);
-      }
-    };
-    this.ctx.teamOrchestrator.on('state', this.onTeamState as (s: unknown) => void);
-
-    this.onTigerState = (state) => {
-      const stages = state?.stages ?? {};
-      for (const [stageId, stage] of Object.entries(stages)) {
-        const prev = this.lastTigerStageStatus.get(stageId);
-        this.lastTigerStageStatus.set(stageId, stage.status);
-        if (stage.status === 'completed' && prev && prev !== 'completed') {
-          void this.onAgentCompleted('tiger', stageId);
+      if (status === 'completed' && runId && !this.firedTeamRunIds.has(runId)) {
+        this.firedTeamRunIds.add(runId);
+        // Bound the dedupe set on a long-lived backend: only the most recent
+        // runIds can still be "the current run", so drop the oldest entries.
+        if (this.firedTeamRunIds.size > 512) {
+          const oldest = this.firedTeamRunIds.values().next().value;
+          if (oldest !== undefined) this.firedTeamRunIds.delete(oldest);
         }
+        void this.onAgentCompleted('team', runId);
       }
     };
-    this.ctx.orchestrator.on('state', this.onTigerState as (s: unknown) => void);
+    this.ctx.runEngine.on('engine-event', this.onRunEngineEvent as (p: unknown) => void);
   }
 
   private detachAgentListeners(): void {
-    if (this.onTeamState) this.ctx.teamOrchestrator.off('state', this.onTeamState as (s: unknown) => void);
-    if (this.onTigerState) this.ctx.orchestrator.off('state', this.onTigerState as (s: unknown) => void);
-    this.onTeamState = undefined;
-    this.onTigerState = undefined;
+    if (this.onRunEngineEvent) this.ctx.runEngine.off('engine-event', this.onRunEngineEvent as (p: unknown) => void);
+    this.onRunEngineEvent = undefined;
   }
 
   /**
@@ -376,10 +371,10 @@ export class CueEngine {
   private async readSourceOutput(triggeredBy: 'team' | 'tiger', source: string): Promise<string> {
     try {
       if (triggeredBy === 'team') {
-        const state = this.ctx.teamOrchestrator.tryGetState();
-        return state?.message ?? `Team run ${source} completed.`;
+        const state = this.ctx.runEngine.getSnapshot();
+        return state?.message ?? `Run ${source} completed.`;
       }
-      return `Tiger stage ${source} completed.`;
+      return `Run ${source} completed.`;
     } catch {
       return '';
     } finally {
@@ -457,7 +452,11 @@ export class CueEngine {
     if (target.kind === 'queue') {
       await this.ctx.queueService.enqueue({
         prompt,
-        ...(target.workspacePath ? { workspacePath: target.workspacePath } : this.workspace ? { workspacePath: this.workspace } : {}),
+        ...(target.workspacePath
+          ? { workspacePath: target.workspacePath }
+          : this.workspace
+            ? { workspacePath: this.workspace }
+            : {}),
         ...(target.projectName ? { projectName: target.projectName } : { projectName: `Cue: ${sub.name ?? sub.id}` }),
         ...(target.provider ? { provider: target.provider } : {}),
         ...(target.priority !== undefined ? { priority: target.priority } : {}),
@@ -465,8 +464,8 @@ export class CueEngine {
       });
       return;
     }
-    // team steering: only valid while a steerable run is live. A failure here is captured by fire().
-    await this.ctx.teamOrchestrator.steer(prompt);
+    // run steering: only valid while a steerable v2 run is live. A failure here is captured by fire().
+    await this.ctx.runEngine.steer(prompt);
   }
 
   // --- status ---

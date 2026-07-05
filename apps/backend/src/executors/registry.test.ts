@@ -9,11 +9,7 @@ import type { AgentType } from '../orchestrator/types.js';
 const cfg = defaultTigerConfig();
 
 /** Build the full shell command via an adapter, mirroring buildLaunchCommand's delegation. */
-function buildVia(
-  type: AgentType,
-  params: BuildLaunchContext['params'],
-  allowDangerous: boolean,
-): string {
+function buildVia(type: AgentType, params: BuildLaunchContext['params'], allowDangerous: boolean): string {
   const adapter = getAdapter(type);
   const { command, args } = adapter.buildLaunch({ cfg, tool: cfg.cli[type], params, allowDangerous });
   return quoteInvocation(command, args);
@@ -77,10 +73,7 @@ test('codex adapter: model + reasoning effort + sandbox + extra args', () => {
 });
 
 test('codex adapter: yolo downgraded but extra args kept', () => {
-  assert.equal(
-    buildVia('codex', { model: '', effort: '', permission: 'yolo' }, false),
-    'codex --no-alt-screen',
-  );
+  assert.equal(buildVia('codex', { model: '', effort: '', permission: 'yolo' }, false), 'codex --no-alt-screen');
 });
 
 test('antigravity adapter: quotes label model + dangerous flag, ignores effort', () => {

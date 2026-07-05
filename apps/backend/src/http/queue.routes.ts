@@ -12,6 +12,7 @@ import type {
   QueueTargetType,
 } from '../queue/types.js';
 import { badRequest, notFound } from './errors.js';
+import { assertWorkspaceAllowed } from '../security/workspace.js';
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -42,7 +43,13 @@ function action(v: unknown): QueueRuleAction {
   throw badRequest('action must be block_dispatch');
 }
 
-const BULK_ACTIONS: ReadonlySet<QueueBulkAction> = new Set<QueueBulkAction>(['pause', 'resume', 'cancel', 'retry', 'delete']);
+const BULK_ACTIONS: ReadonlySet<QueueBulkAction> = new Set<QueueBulkAction>([
+  'pause',
+  'resume',
+  'cancel',
+  'retry',
+  'delete',
+]);
 
 function bulkAction(v: unknown): QueueBulkAction {
   if (typeof v === 'string' && BULK_ACTIONS.has(v as QueueBulkAction)) return v as QueueBulkAction;
@@ -69,19 +76,23 @@ function ruleFromBody(body: Record<string, unknown>, existing?: QueueRule): Queu
   const now = new Date().toISOString();
   const name = str(body.name) ?? existing?.name;
   if (!name) throw badRequest('name is required');
-  const threshold = typeof body.threshold === 'number' && Number.isFinite(body.threshold) ? body.threshold : existing?.threshold;
+  const threshold =
+    typeof body.threshold === 'number' && Number.isFinite(body.threshold) ? body.threshold : existing?.threshold;
   if (threshold == null || threshold < 0 || threshold > 100) throw badRequest('threshold must be between 0 and 100');
   return {
     id: str(body.id) ?? existing?.id ?? nanoid(),
     name,
-    enabled: typeof body.enabled === 'boolean' ? body.enabled : existing?.enabled ?? true,
+    enabled: typeof body.enabled === 'boolean' ? body.enabled : (existing?.enabled ?? true),
     provider: body.provider === undefined && existing ? existing.provider : ruleProvider(body.provider),
     windowKey: str(body.windowKey) ?? existing?.windowKey ?? 'any',
     metric: 'percent_used',
     operator: body.operator === undefined && existing ? existing.operator : operator(body.operator),
     threshold,
     action: body.action === undefined && existing ? existing.action : action(body.action),
-    config: body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? (body.config as Record<string, unknown>) : existing?.config ?? null,
+    config:
+      body.config && typeof body.config === 'object' && !Array.isArray(body.config)
+        ? (body.config as Record<string, unknown>)
+        : (existing?.config ?? null),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -112,17 +123,27 @@ export function createQueueRouter(ctx: AppCtx): Router {
 
   router.post('/enqueue', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // A workspace-targeted job spawns a run/PTY at this path, so it must clear
+    // the same allow-list the /runs and /terminals routes enforce — otherwise
+    // the queue is an escape hatch around KAPLAN_ENFORCE_WORKSPACE.
+    const rawWorkspace = str(body.workspacePath) ?? str(body.workspace);
+    const workspacePath = rawWorkspace ? assertWorkspaceAllowed(rawWorkspace) : undefined;
     const job = await service.enqueue({
       prompt: typeof body.prompt === 'string' ? body.prompt : '',
       body: typeof body.body === 'string' ? body.body : undefined,
       title: str(body.title),
-      workspacePath: str(body.workspacePath) ?? str(body.workspace),
+      workspacePath,
       projectName: str(body.projectName),
       provider: body.provider === undefined ? undefined : provider(body.provider),
       priority: int(body.priority, 0),
       maxAttempts: int(body.maxAttempts, 1),
       configSnapshot: body.configSnapshot && typeof body.configSnapshot === 'object' ? body.configSnapshot : undefined,
-      target: body.target === undefined ? undefined : targetType(typeof body.target === 'string' ? body.target : (body.target as { type?: unknown } | undefined)?.type),
+      target:
+        body.target === undefined
+          ? undefined
+          : targetType(
+              typeof body.target === 'string' ? body.target : (body.target as { type?: unknown } | undefined)?.type,
+            ),
       payload:
         body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
           ? (body.payload as Record<string, unknown>)
@@ -176,7 +197,11 @@ export function createQueueRouter(ctx: AppCtx): Router {
   router.put('/rules/:id', async (req, res) => {
     const current = (await service.listRules()).find((rule) => rule.id === req.params.id);
     if (!current) throw notFound('rule not found');
-    res.json(await service.upsertRule(ruleFromBody({ ...(req.body ?? {}), id: req.params.id } as Record<string, unknown>, current)));
+    res.json(
+      await service.upsertRule(
+        ruleFromBody({ ...(req.body ?? {}), id: req.params.id } as Record<string, unknown>, current),
+      ),
+    );
   });
 
   router.delete('/rules/:id', async (req, res) => {

@@ -115,11 +115,14 @@ test('StateLimitGate fails OPEN by default when the latest probe failed (does no
 });
 
 test('StateLimitGate blocks conservatively on stale snapshots', async () => {
-  const gate = new StateLimitGate(() => limits([snapshot({ percentUsed: 10, checkedAt: '2026-06-18T05:00:00.000Z' })]), {
-    now: NOW,
-    staleAfterMs: 10 * 60 * 1000,
-    failOpen: false,
-  });
+  const gate = new StateLimitGate(
+    () => limits([snapshot({ percentUsed: 10, checkedAt: '2026-06-18T05:00:00.000Z' })]),
+    {
+      now: NOW,
+      staleAfterMs: 10 * 60 * 1000,
+      failOpen: false,
+    },
+  );
 
   const decision = await gate.check('claude');
 
@@ -163,10 +166,10 @@ test('StateLimitGate ignores a stale leftover window when a fresh window exists'
 });
 
 test('StateLimitGate FAILS OPEN when the snapshot source is unavailable (missing table)', async () => {
-  const gate = new StateLimitGate(
-    () => ({ ...limits([]), snapshotsUnavailable: true }),
-    { now: NOW, staleAfterMs: 60_000 },
-  );
+  const gate = new StateLimitGate(() => ({ ...limits([]), snapshotsUnavailable: true }), {
+    now: NOW,
+    staleAfterMs: 60_000,
+  });
 
   const decision = await gate.check('claude');
 

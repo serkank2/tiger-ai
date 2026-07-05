@@ -1,4 +1,4 @@
-import type { CommandTarget, LimitStatus, ServerMessage, TigerState } from '~/types';
+import type { CommandTarget, LimitStatus, ServerMessage } from '~/types';
 import { useLimitsStore } from '~/stores/limits';
 
 // Optional shared-token auth, persisted to localStorage by the settings store.
@@ -67,7 +67,6 @@ export function useSocket() {
   const conn = useConnectionStore();
   const terminals = useTerminalsStore();
   const notices = useNoticesStore();
-  const tiger = useTigerStore();
   const limits = useLimitsStore();
   const wsBase = config.public.wsBase as string;
 
@@ -225,7 +224,10 @@ export function useSocket() {
           const parts = Object.entries(counts).map(([c, n]) => `${n} ${labels[c] ?? c.toLowerCase()}`);
           // protected-only skips are intentional → info, not error
           const realFailure = failed.some((f) => f.code !== 'PROTECTED');
-          notices.push(`Sent to ${written}/${matched} — ${parts.join(', ')}`, written > 0 || !realFailure ? 'info' : 'error');
+          notices.push(
+            `Sent to ${written}/${matched} — ${parts.join(', ')}`,
+            written > 0 || !realFailure ? 'info' : 'error',
+          );
           if (counts.UNKNOWN) void terminals.fetchAll().catch(() => {});
         }
         break;
@@ -240,19 +242,11 @@ export function useSocket() {
         if (msg.message && !msg.id) notices.push(msg.message, 'error');
         if (msg.code === 'UNKNOWN_TERMINAL') void terminals.fetchAll().catch(() => {});
         break;
-      case 'tiger.state':
-        // tiger.state carries the full orchestrator snapshot in `state` (typed loosely here).
-        tiger.applyState((msg as unknown as { state: TigerState }).state);
-        break;
       // Domain-state pushes for screens delivered by later tasks. The shell does not
       // own these stores yet, so it simply fans the raw message out to subscribers.
       case 'queue.state':
-      case 'team.state':
-      case 'team.message':
-      case 'team.role':
-      case 'team.done':
-      case 'team.steering':
-      case 'team.changes':
+      case 'run.state':
+      case 'run.event':
       case 'generation.state':
       case 'history.changed':
         emitServerEvent(msg);
@@ -301,11 +295,7 @@ export function useSocket() {
    * Every waiter is settled: ok from server routing, not_sent if the frame cannot be
    * sent or is rejected, timeout after 5s, and disconnected if the socket closes first.
    */
-  function broadcast(
-    target: CommandTarget,
-    data: string,
-    appendNewline?: boolean,
-  ): Promise<BroadcastOutcome> {
+  function broadcast(target: CommandTarget, data: string, appendNewline?: boolean): Promise<BroadcastOutcome> {
     const id = `c${++msgSeq}`;
     const sent = raw({ type: 'term.broadcastInput', id, target, data, appendNewline });
     if (!sent) return Promise.resolve({ kind: 'not_sent', reason: 'socket_not_open' });
