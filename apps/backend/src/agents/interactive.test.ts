@@ -84,6 +84,21 @@ test('interactive: seeds the brief, streams output, and completes when the resul
   assert.ok(fake.wasKilled(), 'PTY torn down on completion');
 });
 
+test('interactive: auto-answers the first-run "trust this directory?" dialog with Enter', async () => {
+  const dir = await scratch();
+  const fake = fakePty();
+  // Large seed delay so the brief isn't seeded before the trust prompt arrives
+  // (auto-answering only runs until the brief is seeded).
+  const controller = runInteractiveTurn({ ...baseOpts(dir, () => fake.pty), seedDelayMs: 5000 });
+  await new Promise((r) => setTimeout(r, 40)); // let the PTY spawn + onData register
+  fake.emitData('  Do you trust the contents of this directory?\r\n  1. Yes, continue\r\n  2. No, quit');
+  assert.ok(fake.writes.includes('\r'), 'a bare Enter was sent to accept the highlighted "Yes, continue" default');
+  // The brief has NOT been pasted yet (still clearing the dialog).
+  assert.ok(!fake.writes.some((w) => w.includes('Do the task.')));
+  controller.abort('cleanup');
+  await controller.promise;
+});
+
 test('interactive: user keystrokes route into the live PTY', async () => {
   const dir = await scratch();
   const fake = fakePty();

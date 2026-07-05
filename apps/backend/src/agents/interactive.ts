@@ -85,6 +85,14 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI, '');
 }
 
+/**
+ * First-run startup dialogs whose safe default is "yes" and which Enter accepts:
+ * codex/claude "Do you trust the contents of this directory?", theme/consent
+ * prompts, etc. Matched on the STRIPPED stream, only before the brief is seeded.
+ */
+const TRUST_PROMPT_RE =
+  /do you trust|trust the (contents|files|workspace)|yes,?\s*(continue|proceed)|press enter to continue|allow project-local/i;
+
 /** Interactive argv for a provider CLI (NO headless `-p`/`exec` flag). */
 function buildInteractiveArgs(opts: InteractiveTurnOptions): string[] {
   const { tool, provider } = opts;
@@ -251,9 +259,48 @@ export function runInteractiveTurn(opts: InteractiveTurnOptions): InteractiveTur
     }
 
     emit(agentEvent.turnStarted());
+
+    // Auto-clear the provider's first-run "trust this directory?" dialog so the
+    // engine drives the session unattended: its default is "Yes, continue" and
+    // Enter accepts it. Only until the brief is seeded (trust prompts precede
+    // input), so it never interferes once the agent is working.
+    const seed = opts.prompt + resultInstruction(resultFile);
+    const write = (data: string): void => {
+      try {
+        pty?.write(data);
+      } catch {
+        /* pty gone */
+      }
+    };
+    let briefSeeded = false;
+    let lastAutoAnswer = 0;
+    let seedTimer: ReturnType<typeof setTimeout> | null = null;
+    const seedBrief = (): void => {
+      if (briefSeeded || settled) return;
+      briefSeeded = true;
+      if (seedTimer) clearTimeout(seedTimer);
+      // Paste the brief, then submit with a SEPARATE Enter — a TUI in bracketed-
+      // paste mode treats a trailing \r inside the paste as content, not submit.
+      write(seed);
+      setTimeout(() => write('\r'), 250);
+    };
+    // Fallback: no trust dialog on this provider/dir → seed after the base delay.
+    const baseSeedDelay = opts.seedDelayMs ?? 1200;
+    seedTimer = setTimeout(seedBrief, baseSeedDelay);
+
     dataDisp = pty.onData((data) => {
       const text = stripAnsi(data);
       if (text.trim()) emit(agentEvent.text(text));
+      if (!briefSeeded && TRUST_PROMPT_RE.test(text)) {
+        const now = Date.now();
+        if (now - lastAutoAnswer > 600) {
+          lastAutoAnswer = now;
+          write('\r'); // accept the highlighted default ("Yes, continue")
+        }
+        // Wait for the dialog(s) to clear before pasting the brief.
+        if (seedTimer) clearTimeout(seedTimer);
+        seedTimer = setTimeout(seedBrief, 900);
+      }
     });
     exitDisp = pty.onExit(async ({ exitCode }) => {
       // The interactive CLI exited (user typed /exit or it closed): the result
@@ -266,17 +313,6 @@ export function runInteractiveTurn(opts: InteractiveTurnOptions): InteractiveTur
     });
 
     opts.signal?.addEventListener('abort', () => controller.abort('run stopped'), { once: true });
-
-    // Seed the brief once the TUI has had a moment to come up.
-    const seed = opts.prompt + resultInstruction(resultFile);
-    setTimeout(() => {
-      if (settled) return;
-      try {
-        pty?.write(seed + '\r');
-      } catch {
-        /* pty gone */
-      }
-    }, opts.seedDelayMs ?? 600);
 
     // Poll the result file — the agent writing it means "done".
     poll = setInterval(() => {
