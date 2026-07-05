@@ -450,7 +450,16 @@ function unknownKey(value: Record<string, unknown>, allowed: readonly string[]):
 }
 
 function isSafeToken(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\s"'`;&|<>()[\]{}$\\]/.test(value);
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    // Reject shell metacharacters/whitespace AND control chars (incl. NUL) —
+    // a NUL in a model token would otherwise crash spawn() with a cryptic Node
+    // error instead of a clean 400 (validateLaunchOverrides' documented contract).
+    // eslint-disable-next-line no-control-regex
+    !/[\s"'`;&|<>()[\]{}$\\\x00-\x1f\x7f]/.test(value)
+  );
 }
 
 /**
