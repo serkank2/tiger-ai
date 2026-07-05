@@ -80,6 +80,16 @@ const tr: MessageSchema = {
     parallelBuildsLabel: 'Paralel yapım',
     parallelBuildsHint:
       'Aynı anda kaç yapım görevi çalışsın. >1 ise her biri izole bir git worktree içinde çalışır ve sonucu yama olarak geri birleştirir (git deposu gerekir; çakışma olursa sıralı yeniden denemeye düşer). 1 = paylaşılan ağaçta klasik sıralı.',
+    phases: {
+      title: 'Aşamalar (aşama başına ajan)',
+      hint: 'Her aşamada kaç ajan çalışsın. Plan: Otomatik önem ayarından boyutlanır, Atla planlamadan doğrudan işi yapar, ya da bir konsey boyutu seç. Yapım: kaç paralel yapımcı. İnceleme: Otomatik/Yok ya da inceleme mercek sayısı.',
+      auto: 'Otomatik',
+      skip: 'Atla (plan yok)',
+      none: 'Yok',
+      plan: 'Plan',
+      build: 'Yapım',
+      review: 'İnceleme',
+    },
     interactiveLabel: 'İnteraktif terminaller (her ajanı izle ve içine yaz)',
     interactiveHint:
       'Her ajanı, izleyip içine yazabildiğin canlı bir terminalde gerçek interaktif CLI olarak çalıştırır (bağlamı /compact ile kendin yönetirsin). Verimli headless varsayılandan daha yavaş ve daha elle — bir tur, ajan sonucunu yazınca ya da “turu tamamla”ya basınca biter.',

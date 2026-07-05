@@ -262,6 +262,35 @@ describe('RunView', () => {
     expect(input.config.interactive).toBe(true);
   });
 
+  it('maps the per-phase selectors: skip planning, review count → config', async () => {
+    const wrapper = await mountView(null);
+    api.createRun.mockResolvedValue({ run: snapshot({ status: 'created' }) });
+    api.startRun.mockResolvedValue({ run: snapshot() });
+    await wrapper.find('[data-testid="run-goal"]').setValue('Just do it');
+    await wrapper.find('[data-testid="run-workspace"]').setValue('C:/w');
+    await wrapper.find('[data-testid="run-phase-plan"]').setValue('skip');
+    await wrapper.find('[data-testid="run-phase-review"]').setValue('3');
+    await wrapper.find('[data-testid="run-create-form"]').trigger('submit');
+    await flushPromises();
+    const input = api.createRun.mock.calls[0]![0];
+    expect(input.config.skipPlanning).toBe(true);
+    expect(input.config.reviewPolicy).toBe('final');
+    expect(input.config.council.review).toBe(3);
+  });
+
+  it('review phase None sets reviewPolicy none', async () => {
+    const wrapper = await mountView(null);
+    api.createRun.mockResolvedValue({ run: snapshot({ status: 'created' }) });
+    api.startRun.mockResolvedValue({ run: snapshot() });
+    await wrapper.find('[data-testid="run-goal"]').setValue('X');
+    await wrapper.find('[data-testid="run-workspace"]').setValue('C:/w');
+    await wrapper.find('[data-testid="run-phase-review"]').setValue('none');
+    await wrapper.find('[data-testid="run-create-form"]').trigger('submit');
+    await flushPromises();
+    expect(api.createRun.mock.calls[0]![0].config.reviewPolicy).toBe('none');
+    expect(api.createRun.mock.calls[0]![0].config.skipPlanning).toBe(false);
+  });
+
   it('sends the explicit council roster and builder model on create', async () => {
     const wrapper = await mountView(null);
     api.createRun.mockResolvedValue({ run: snapshot({ status: 'created' }) });

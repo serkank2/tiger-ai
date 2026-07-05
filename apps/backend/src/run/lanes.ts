@@ -84,6 +84,7 @@ function runGit(cwd: string, args: string[], input?: string, maxBytes = 5_000_00
         clearTimeout(timer);
         finish(code === 0);
       });
+      child.stdin?.on('error', () => {}); // ignore broken-pipe if git exits early
       if (input !== undefined) child.stdin?.write(input);
       child.stdin?.end();
     } catch {
@@ -122,6 +123,10 @@ export async function prepareLane(workspace: string, runId: string, itemId: stri
     for (const line of untracked.stdout.split('\n')) {
       const rel = line.replace(/\r$/, '').trim();
       if (!rel) continue;
+      // Never copy Kaplan's own bookkeeping (run state + other lanes' worktrees)
+      // into a lane — it is untracked in a user repo that doesn't gitignore it,
+      // and copying it recursively would bloat/poison the lane.
+      if (rel === '.tiger' || rel.startsWith('.tiger/') || rel.startsWith('.tiger\\')) continue;
       const from = path.join(workspace, rel);
       const to = path.join(worktree.path, rel);
       try {
@@ -192,4 +197,29 @@ export async function mergeLane(workspace: string, lane: BuildLane): Promise<Lan
 export async function cleanupLane(workspace: string, lane: BuildLane): Promise<void> {
   await removeWorktree({ repoDir: workspace, path: lane.worktree.path, force: true }).catch(() => {});
   await runGit(workspace, ['branch', '-D', lane.worktree.branch]);
+}
+
+/**
+ * Make git universally ignore Kaplan's `.tiger/` bookkeeping via the repo's
+ * local `.git/info/exclude` (never touches the user's committed `.gitignore`).
+ * This keeps `.tiger` out of the Changes/diff panel AND out of the lane
+ * untracked scan, even when the user repo doesn't already ignore it. Idempotent
+ * and best-effort — a failure here is not fatal to a run.
+ */
+export async function ensureTigerExcluded(workspace: string): Promise<void> {
+  const dirRes = await runGit(workspace, ['rev-parse', '--git-common-dir']);
+  const gitDir = dirRes.stdout.trim();
+  if (!dirRes.ok || !gitDir) return;
+  const excludeFile = path.isAbsolute(gitDir)
+    ? path.join(gitDir, 'info', 'exclude')
+    : path.join(workspace, gitDir, 'info', 'exclude');
+  try {
+    const current = await fs.readFile(excludeFile, 'utf8').catch(() => '');
+    if (/^\.tiger\/?\s*$/m.test(current)) return;
+    const prefix = current && !current.endsWith('\n') ? '\n' : '';
+    await fs.mkdir(path.dirname(excludeFile), { recursive: true });
+    await fs.appendFile(excludeFile, `${prefix}# Kaplan run bookkeeping\n.tiger/\n`, 'utf8');
+  } catch {
+    /* best-effort */
+  }
 }

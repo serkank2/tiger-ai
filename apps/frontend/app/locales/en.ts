@@ -89,6 +89,16 @@ export default {
     parallelBuildsLabel: 'Parallel builds',
     parallelBuildsHint:
       'How many build tasks run at once. >1 runs each in an isolated git worktree and merges the result back as a patch (needs a git workspace; conflicts fall back to a sequential retry). 1 = classic sequential in the shared tree.',
+    phases: {
+      title: 'Phases (agents per stage)',
+      hint: 'How many agents run at each stage. Plan: Auto sizes from Importance, Skip does the goal directly with no plan, or pick a council size. Build: how many parallel builders. Review: Auto/None, or a review-lens count.',
+      auto: 'Auto',
+      skip: 'Skip (no plan)',
+      none: 'None',
+      plan: 'Plan',
+      build: 'Build',
+      review: 'Review',
+    },
     interactiveLabel: 'Interactive terminals (watch & type into each agent)',
     interactiveHint:
       'Runs each agent as a real interactive CLI in a live terminal you can watch and type into (use /compact yourself). Slower and more hands-on than the efficient headless default — a turn ends when the agent writes its result or you click “complete turn”.',

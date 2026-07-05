@@ -178,11 +178,19 @@ function sanitizeConfig(raw: unknown): Partial<RunConfig> | undefined {
   ) {
     out.sessionRotateTurns = Math.floor(input.sessionRotateTurns);
   }
+  if (
+    typeof input.rateLimitBackoffMs === 'number' &&
+    input.rateLimitBackoffMs >= 0 &&
+    input.rateLimitBackoffMs <= 5 * 60_000
+  ) {
+    out.rateLimitBackoffMs = Math.floor(input.rateLimitBackoffMs);
+  }
   if (typeof input.hardTurnTimeoutMs === 'number' && input.hardTurnTimeoutMs >= 60_000) {
     out.hardTurnTimeoutMs = Math.min(input.hardTurnTimeoutMs, 6 * 60 * 60_000);
   }
   if (typeof input.allowDangerous === 'boolean') out.allowDangerous = input.allowDangerous;
   if (typeof input.interactive === 'boolean') out.interactive = input.interactive;
+  if (typeof input.skipPlanning === 'boolean') out.skipPlanning = input.skipPlanning;
   if (
     input.importance === 'low' ||
     input.importance === 'normal' ||

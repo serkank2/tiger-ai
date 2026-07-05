@@ -1141,6 +1141,8 @@ export interface RunCreateConfigInput {
   council?: Partial<RunCouncilConfig>;
   /** Interactive mode: agents run as live PTYs you watch and type into. */
   interactive?: boolean;
+  /** Skip the planning phase — seed the goal as a single direct build task. */
+  skipPlanning?: boolean;
   /** Build lanes: 1 = sequential; >1 = isolated worktrees merged back (needs git). */
   maxParallelBuilds?: number;
   /** Staged planning: max tasks planned per plan turn (mega-goals plan in batches). */

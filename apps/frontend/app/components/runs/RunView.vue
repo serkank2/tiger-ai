@@ -18,12 +18,14 @@ import RunHistoryPanel from '~/components/runs/RunHistoryPanel.vue';
 import RunItemModal from '~/components/runs/RunItemModal.vue';
 import RunTerminalsPanel from '~/components/runs/RunTerminalsPanel.vue';
 import { useRunsStore } from '~/stores/runs';
+import { useConnectionStore } from '~/stores/connection';
 import { useApi } from '~/composables/useApi';
 import { useDialog } from '~/composables/useDialog';
 import { useT } from '~/composables/useT';
 import type { ProvidersConfig, RunCouncilMember, RunEventDto, RunWorkItem } from '~/types';
 
 const runs = useRunsStore();
+const conn = useConnectionStore();
 const api = useApi();
 const dialog = useDialog();
 const { t } = useT();
@@ -38,9 +40,13 @@ const workspace = ref('');
 const provider = ref<Provider>('claude');
 const builderModel = ref('');
 const builderEffort = ref('');
-const reviewPolicy = ref<'final' | 'per-task' | 'none'>('final');
 const verifyPolicy = ref<'per-build' | 'final' | 'both' | 'none'>('both');
 const importance = ref<'low' | 'normal' | 'high' | 'critical'>('normal');
+// Per-phase agent controls. 'auto' = size from importance; a number overrides.
+//   Plan:   'auto' | 'skip' | '1'..'5'   (skip → no planning, direct build)
+//   Review: 'auto' | 'none' | '1'..'5'   (none → reviewPolicy none)
+const planPhase = ref('auto');
+const reviewPhase = ref('auto');
 // Build lanes: 1 = sequential in the shared tree; >1 = isolated worktrees
 // merged back (needs a git workspace; the engine degrades to 1 otherwise).
 const parallelBuilds = ref('1');
@@ -84,6 +90,16 @@ onBeforeUnmount(() => {
   unbind?.();
 });
 
+// Reconcile on (re)connect: after a backend restart or a load that raced an
+// unready backend, re-fetch the snapshot + replay missed events (mirrors
+// QueueView). Without this the screen can get stuck on the create form.
+watch(
+  () => conn.status,
+  (status) => {
+    if (status === 'connected') void runs.load();
+  },
+);
+
 // Model/effort lists are provider-specific — a switched builder keeps no stale pin.
 watch(provider, () => {
   builderModel.value = '';
@@ -98,16 +114,34 @@ const selectedItem = computed<RunWorkItem | null>(
   () => runs.items.find((item) => item.id === selectedItemId.value) ?? null,
 );
 
+// The history run currently being opened (disables its row to block double-clicks).
+const openingHistoryId = computed<string | null>(() => {
+  const key = Object.keys(runs.busyKeys).find((k) => k.startsWith('history:'));
+  return key ? key.slice('history:'.length) : null;
+});
+
 // Brand names stay literal; policy labels are localized.
 const providerOptions = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
   { value: 'antigravity', label: 'Antigravity' },
 ];
-const reviewOptions = computed(() => [
-  { value: 'final', label: t('runs.options.reviewFinal') },
-  { value: 'per-task', label: t('runs.options.reviewPerTask') },
-  { value: 'none', label: t('runs.options.reviewNone') },
+// Phase-count selectors: Plan (auto/skip/N) and Review (auto/none/N).
+const planPhaseOptions = computed(() => [
+  { value: 'auto', label: t('runs.phases.auto') },
+  { value: 'skip', label: t('runs.phases.skip') },
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '5', label: '5' },
+]);
+const reviewPhaseOptions = computed(() => [
+  { value: 'auto', label: t('runs.phases.auto') },
+  { value: 'none', label: t('runs.phases.none') },
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '5', label: '5' },
 ]);
 const verifyOptions = computed(() => [
   { value: 'both', label: t('runs.options.verifyBoth') },
@@ -162,6 +196,15 @@ const councilMembers = computed<RunCouncilMember[]>(() =>
 );
 const councilTotal = computed(() => councilMembers.value.reduce((total, member) => total + member.count, 0));
 
+/** Fold the roster + per-phase selectors into the backend council config patch. */
+function buildCouncilPatch(): Record<string, unknown> | undefined {
+  const patch: Record<string, unknown> = {};
+  if (councilMembers.value.length) patch.members = councilMembers.value;
+  if (planPhase.value !== 'auto' && planPhase.value !== 'skip') patch.plan = Number(planPhase.value);
+  if (reviewPhase.value !== 'auto' && reviewPhase.value !== 'none') patch.review = Number(reviewPhase.value);
+  return Object.keys(patch).length ? patch : undefined;
+}
+
 async function onCreate(): Promise<void> {
   if (!goal.value.trim() || !workspace.value.trim()) return;
   try {
@@ -169,6 +212,7 @@ async function onCreate(): Promise<void> {
   } catch {
     /* storage unavailable */
   }
+  const council = buildCouncilPatch();
   try {
     await runs.create({
       workspace: workspace.value.trim(),
@@ -179,12 +223,14 @@ async function onCreate(): Promise<void> {
           model: builderModel.value || undefined,
           effort: builderEffort.value || undefined,
         },
-        reviewPolicy: reviewPolicy.value,
+        // Review phase 'none' skips review; otherwise final (count via council.review).
+        reviewPolicy: reviewPhase.value === 'none' ? 'none' : 'final',
         verifyPolicy: verifyPolicy.value,
         importance: importance.value,
         maxParallelBuilds: Number(parallelBuilds.value),
         interactive: interactive.value,
-        ...(councilMembers.value.length ? { council: { members: councilMembers.value } } : {}),
+        skipPlanning: planPhase.value === 'skip',
+        ...(council ? { council } : {}),
       },
     });
     await runs.start();
@@ -245,8 +291,11 @@ watch(
 );
 
 // Keep the live feed pinned to the newest line unless the user scrolled up.
+// Follow on every new event. Watch the monotonic lastSeq, not events.length —
+// once the feed hits its 500-cap the length stops changing but events keep
+// flowing, and a length watcher would silently stop auto-scrolling.
 watch(
-  () => runs.events.length,
+  () => runs.lastSeq,
   async () => {
     const el = feedEl.value;
     if (!el) return;
@@ -376,6 +425,7 @@ function formatCost(): string {
       v-if="showHistory"
       :entries="runs.history"
       :loading="runs.isBusy('history')"
+      :busy-id="openingHistoryId"
       @open="(id) => runs.openHistoryRun(id)"
       @refresh="runs.loadHistory()"
     />
@@ -416,20 +466,31 @@ function formatCost(): string {
         <BaseField :label="t('runs.council.effort')">
           <BaseSelect v-model="builderEffort" data-testid="run-builder-effort" :options="effortOptions(provider)" />
         </BaseField>
-        <BaseField :label="t('runs.reviewPolicy')">
-          <BaseSelect v-model="reviewPolicy" :options="reviewOptions" />
-        </BaseField>
         <BaseField :label="t('runs.verifyPolicy')">
           <BaseSelect v-model="verifyPolicy" :options="verifyOptions" />
         </BaseField>
         <BaseField :label="t('runs.importanceLabel')">
           <BaseSelect v-model="importance" data-testid="run-importance" :options="importanceOptions" />
         </BaseField>
-        <BaseField :label="t('runs.parallelBuildsLabel')">
-          <BaseSelect v-model="parallelBuilds" data-testid="run-parallel-builds" :options="parallelOptions" />
-        </BaseField>
       </div>
       <p class="hint">{{ t('runs.importanceHint') }}</p>
+
+      <!-- Per-phase agents: how many run at plan / build / review (or skip a phase). -->
+      <fieldset class="council phases">
+        <legend>{{ t('runs.phases.title') }}</legend>
+        <p class="hint">{{ t('runs.phases.hint') }}</p>
+        <div class="council-row">
+          <BaseField :label="t('runs.phases.plan')">
+            <BaseSelect v-model="planPhase" data-testid="run-phase-plan" :options="planPhaseOptions" />
+          </BaseField>
+          <BaseField :label="t('runs.phases.build')">
+            <BaseSelect v-model="parallelBuilds" data-testid="run-parallel-builds" :options="parallelOptions" />
+          </BaseField>
+          <BaseField :label="t('runs.phases.review')">
+            <BaseSelect v-model="reviewPhase" data-testid="run-phase-review" :options="reviewPhaseOptions" />
+          </BaseField>
+        </div>
+      </fieldset>
       <p class="hint">{{ t('runs.parallelBuildsHint') }}</p>
       <label class="interactive-toggle">
         <input v-model="interactive" type="checkbox" data-testid="run-interactive" />

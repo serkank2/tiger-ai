@@ -651,6 +651,10 @@ export class QueueService extends EventEmitter {
     await this.repo.transaction(async (tx) => {
       const now = nowIso();
       const job = await requireJob(tx, id);
+      // Respect a user-issued terminal state: if the job was canceled/paused
+      // while running, the drive-to-end failure must NOT resurrect it to
+      // retrying/failed (which would re-dispatch a canceled job).
+      if (job.status === 'canceled' || job.status === 'paused') return;
       // Exponential backoff so a deterministically-failing job defers via resumeAfter
       // instead of hot-looping; terminal `failed` once the attempts cap is reached.
       const plan = planRetry(job.attempts, job.maxAttempts, now);

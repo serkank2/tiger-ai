@@ -52,8 +52,10 @@ function setScreen(id: string, el: Element | ComponentPublicInstance | null): vo
   if (el instanceof HTMLElement) screens.set(id, el);
   else screens.delete(id);
 }
+// Key on lastAt (updates every frame), not lines.length — panes cap at 400
+// lines, after which a length-based key stops changing and auto-scroll freezes.
 watch(
-  () => props.terminals.map((pane) => pane.lines.length).join(','),
+  () => props.terminals.map((pane) => `${pane.id}:${pane.lines.length}:${pane.lastAt}`).join('|'),
   async () => {
     await nextTick();
     for (const pane of props.terminals) {

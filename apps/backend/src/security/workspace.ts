@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import { config } from '../config.js';
 import { HttpError } from '../http/errors.js';
 
@@ -100,14 +101,27 @@ export function isWorkspaceAllowed(
  * throws this code (it is the closest stable error for "this workspace can't be used").
  */
 export function assertWorkspaceAllowed(dir: unknown): string {
-  const result = isWorkspaceAllowed(
-    dir,
-    config.security.workspaceAllowlist,
-    config.dataDir,
-    config.security.enforceWorkspaceBoundary,
-  );
+  const enforce = config.security.enforceWorkspaceBoundary;
+  const result = isWorkspaceAllowed(dir, config.security.workspaceAllowlist, config.dataDir, enforce);
   if (!result.ok) {
     throw new HttpError(403, 'workspace_not_allowed', result.reason);
+  }
+  // When enforcing, re-check containment AFTER resolving symlinks: a lexical
+  // check alone lets `/allowed/link → /etc` pass while the agent operates in
+  // /etc. A path that doesn't exist yet can't be realpath'd — fall back to the
+  // lexical result (a brand-new workspace dir has no symlink to escape through).
+  if (enforce) {
+    let real: string;
+    try {
+      real = realpathSync(result.path);
+    } catch {
+      return result.path;
+    }
+    if (real !== result.path) {
+      const recheck = isWorkspaceAllowed(real, config.security.workspaceAllowlist, config.dataDir, enforce);
+      if (!recheck.ok) throw new HttpError(403, 'workspace_not_allowed', recheck.reason);
+      return recheck.path;
+    }
   }
   return result.path;
 }

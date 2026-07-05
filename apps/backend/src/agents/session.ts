@@ -85,10 +85,15 @@ export class SessionRegistry {
     return [...this.sessions.values()];
   }
 
+  private saveSeq = 0;
+
   private async save(): Promise<void> {
     const shape: RegistryFileShape = { sessions: this.list() };
     await fs.mkdir(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
+    // Unique temp per write: parallel lane builds each upsert their session at
+    // end-of-turn, and a shared `${file}.tmp` would let two writers truncate
+    // each other's temp before the rename.
+    const tmp = `${this.file}.${process.pid}.${this.saveSeq++}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(shape, null, 2), 'utf8');
     // Windows: rename onto an existing file can transiently EPERM under AV
     // scanning; retry briefly, then fall back to a direct (non-atomic) write —

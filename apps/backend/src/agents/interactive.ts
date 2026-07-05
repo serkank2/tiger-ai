@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import pty from 'node-pty';
+import { createRequire } from 'node:module';
 import type { CliToolConfig } from '../orchestrator/types.js';
 import { logger } from '../obs/logger.js';
 import { agentEvent, type AgentEvent } from './events.js';
@@ -318,10 +318,18 @@ export function resolvePtyCommand(
   return { command: resolved.file, args };
 }
 
+// node-pty is a native module loaded LAZILY (only when an interactive turn
+// actually spawns) so headless runs and backend boot never hard-depend on it.
+const requireCjs = createRequire(import.meta.url);
+let ptyModule: typeof import('node-pty') | null = null;
+function loadPty(): typeof import('node-pty') {
+  return (ptyModule ??= requireCjs('node-pty') as typeof import('node-pty'));
+}
+
 /** Real node-pty spawn — the default backing for a live interactive turn. */
 const defaultPtySpawn: InteractivePtySpawn = (file, args, opts) => {
   const { command, args: spawnArgs } = resolvePtyCommand(file, args, opts.env);
-  const proc = pty.spawn(command, spawnArgs, {
+  const proc = loadPty().spawn(command, spawnArgs, {
     name: 'xterm-256color',
     cols: opts.cols,
     rows: opts.rows,

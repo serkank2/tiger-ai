@@ -61,7 +61,14 @@ export function createWsServer(server: Server, ctx: AppCtx): WebSocketServer {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
   const broadcast = (msg: ServerMsg): void => {
-    for (const p of peers) send(p.ws, msg);
+    // Skip a stalled peer (open socket, not draining): the v2 engine streams
+    // high-frequency run.state/run.event frames, and every broadcast payload is
+    // self-healing state (a full snapshot on reconnect / the next frame), so
+    // dropping to a lagging peer bounds server memory without losing correctness.
+    for (const p of peers) {
+      if (p.ws.bufferedAmount > MAX_BUFFERED) continue;
+      send(p.ws, msg);
+    }
   };
   const cleanup = (peer: Peer): void => {
     peers.delete(peer);

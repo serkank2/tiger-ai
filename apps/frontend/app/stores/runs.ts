@@ -79,9 +79,13 @@ export const useRunsStore = defineStore('runs', () => {
   }
 
   function applySnapshot(next: RunSnapshot | null): void {
-    run.value = next;
     loaded.value = true;
     loadError.value = null;
+    // Ignore a stale snapshot: a slow REST getCurrentRun() must never clobber a
+    // newer WS run.state frame for the SAME run (seq is monotonic per run). A
+    // different runId (or null) is always applied.
+    if (next && run.value && next.runId === run.value.runId && next.seq < run.value.seq) return;
+    run.value = next;
     // A settled run has no in-flight turns — every terminal goes idle.
     if (next?.status !== 'running' && Object.values(terminals.value).some((pane) => pane.live)) {
       const settled: Record<string, RunTerminal> = {};
@@ -92,10 +96,16 @@ export const useRunsStore = defineStore('runs', () => {
 
   const EVENT_FEED_CAP = 500;
   const TERMINAL_LINE_CAP = 400;
+  const MAX_TERMINALS = 32;
+  /** Dedupe key set — tolerates out-of-order replay (unlike a monotonic seq gate). */
+  const seenSeqs = new Set<number>();
 
   function appendEvent(event: RunEventDto): void {
-    if (event.seq <= lastSeq.value) return; // replay/dupe guard
-    lastSeq.value = event.seq;
+    // Drop a late frame leaking from a previous run (create() resets seq to 0).
+    if (run.value && event.runId !== run.value.runId) return;
+    if (seenSeqs.has(event.seq)) return; // replay/dupe guard (order-independent)
+    seenSeqs.add(event.seq);
+    if (event.seq > lastSeq.value) lastSeq.value = event.seq;
     const next = events.value.length >= EVENT_FEED_CAP ? events.value.slice(-EVENT_FEED_CAP + 1) : events.value.slice();
     next.push(event);
     events.value = next;
@@ -121,15 +131,25 @@ export const useRunsStore = defineStore('runs', () => {
     pane.model = event.model ?? pane.model;
     pane.itemId = event.itemId ?? pane.itemId;
     pane.lastAt = event.at;
-    // `result` is the provider's authoritative end-of-turn signal.
-    pane.live = agent.type !== 'result';
+    // `result` is the authoritative end-of-turn signal → idle. `usage`/`raw`
+    // frames often arrive AFTER it, so they must not resurrect the pane to live.
+    if (agent.type === 'result') pane.live = false;
+    else if (agent.type !== 'usage' && agent.type !== 'raw') pane.live = true;
     if (agent.type !== 'usage') {
       const lines =
         pane.lines.length >= TERMINAL_LINE_CAP ? pane.lines.slice(-TERMINAL_LINE_CAP + 1) : pane.lines.slice();
       lines.push({ seq: event.seq, at: agent.at, type: agent.type, text: agent.text, tool: agent.tool });
       pane.lines = lines;
     }
-    terminals.value = { ...terminals.value, [id]: pane };
+    const nextTerminals = { ...terminals.value, [id]: pane };
+    // Bound pane count on huge runs: evict the oldest IDLE pane when over cap.
+    if (!existing && Object.keys(nextTerminals).length > MAX_TERMINALS) {
+      const victim = Object.values(nextTerminals)
+        .filter((p) => p.id !== id && !p.live)
+        .sort((a, b) => a.lastAt.localeCompare(b.lastAt))[0];
+      if (victim) delete nextTerminals[victim.id];
+    }
+    terminals.value = nextTerminals;
   }
 
   /** WS fan-in. Registered once by the page; returns the unsubscribe pair. */
@@ -150,12 +170,16 @@ export const useRunsStore = defineStore('runs', () => {
   async function load(): Promise<void> {
     if (loading.value) return;
     loading.value = true;
+    // Capture the replay lower-bound BEFORE the await: live run.event frames can
+    // advance lastSeq during it, which would shrink the window and drop missed
+    // events. appendEvent dedupes by seenSeqs, so re-fetching seen ones is safe.
+    const replayFrom = lastSeq.value;
     try {
       const { run: snapshot } = await api.getCurrentRun();
       applySnapshot(snapshot);
       if (snapshot) {
         // Reconcile the feed: replay anything we missed while disconnected.
-        const { events: missed } = await api.listRunEvents(lastSeq.value);
+        const { events: missed } = await api.listRunEvents(replayFrom);
         for (const event of missed) appendEvent(event);
       }
     } catch (e) {
@@ -173,6 +197,7 @@ export const useRunsStore = defineStore('runs', () => {
       const { run: snapshot } = await api.createRun(input);
       events.value = [];
       lastSeq.value = 0;
+      seenSeqs.clear();
       terminals.value = {};
       applySnapshot(snapshot);
     } catch (e) {

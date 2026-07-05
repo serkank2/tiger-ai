@@ -127,6 +127,8 @@ export interface RunConfig {
    * still emit follow-up build tasks). For "just do the work" runs.
    */
   skipPlanning: boolean;
+  /** Backoff (ms) before retrying a turn that hit a provider rate/quota limit. */
+  rateLimitBackoffMs: number;
 }
 
 export interface RunSteering {

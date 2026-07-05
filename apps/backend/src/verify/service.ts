@@ -92,6 +92,7 @@ export class VerificationService {
 
     if (child.stdout) readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', keep);
     if (child.stderr) readline.createInterface({ input: child.stderr, crlfDelay: Infinity }).on('line', keep);
+    child.stdin?.on('error', () => {}); // ignore broken-pipe on early exit
     child.stdin?.end();
 
     const { exitCode, spawnError } = await new Promise<{ exitCode: number | null; spawnError?: string }>((resolve) => {

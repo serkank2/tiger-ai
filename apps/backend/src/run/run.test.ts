@@ -366,8 +366,7 @@ test('engine: an explicit council roster pins per-provider counts + models and s
       reviewPolicy: 'final',
       verifyPolicy: 'none',
       council: {
-        plan: 1,
-        review: 1,
+        // No explicit plan/review counts → the roster total sizes both phases.
         providers: [],
         members: [
           { provider: 'claude', model: 'opus', effort: 'xhigh', count: 2 },
@@ -678,6 +677,120 @@ test('engine: interactive mode drives PTY turns and routes user input/complete b
   assert.equal(engine.getSnapshot()?.status, 'completed');
   assert.ok(writes.includes('/compact\r'));
   assert.ok(seen.includes('planner') && seen.includes('T1'));
+});
+
+test('engine: skipPlanning seeds a single direct build task (no planner turn)', async () => {
+  const kinds: string[] = [];
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      kinds.push(opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA ? 'plan' : 'build');
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: 's',
+        resultText: JSON.stringify({ status: 'done', summary: 'did the whole goal' }),
+        result: { status: 'done', summary: 'did the whole goal' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Just do this one thing',
+    config: { reviewPolicy: 'none', verifyPolicy: 'none', skipPlanning: true },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+
+  const snapshot = engine.getSnapshot();
+  assert.equal(snapshot?.status, 'completed');
+  // No plan turn ran; exactly one build item executed.
+  assert.ok(!kinds.includes('plan'), 'no planner turn with skipPlanning');
+  assert.deepEqual(
+    snapshot!.graph.items.map((item) => `${item.kind}:${item.status}`),
+    ['build:done'],
+  );
+  assert.ok(snapshot!.graph.items[0]!.description.includes('Just do this one thing'));
+});
+
+test('engine: a rate-limited failure backs off and still retries with context intact', async () => {
+  let attempt = 0;
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      const isPlan = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      if (isPlan) {
+        return {
+          state: 'completed',
+          exitCode: 0,
+          sessionId: 's',
+          resultText: JSON.stringify({
+            status: 'done',
+            summary: 'one task',
+            tasks: [{ id: 'T1', title: 'X', description: 'do X' }],
+          }),
+          result: null,
+          eventCount: 1,
+          durationMs: 1,
+          command: 'fake',
+        };
+      }
+      attempt += 1;
+      // First build attempt hits a 429; second succeeds.
+      if (attempt === 1) {
+        return {
+          state: 'failed',
+          exitCode: 1,
+          result: null,
+          error: 'HTTP 429 rate_limit_exceeded: too many requests',
+          eventCount: 1,
+          durationMs: 1,
+          command: 'fake',
+        };
+      }
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: 's',
+        resultText: JSON.stringify({ status: 'done', summary: 'ok' }),
+        result: { status: 'done', summary: 'ok' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Goal',
+    config: { reviewPolicy: 'none', verifyPolicy: 'none', maxAttemptsPerItem: 2, rateLimitBackoffMs: 10 },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+
+  const snapshot = engine.getSnapshot();
+  assert.equal(snapshot?.status, 'completed');
+  assert.equal(attempt, 2, 'retried after the rate-limit backoff');
+  // The backoff note was recorded.
+  const events = await engine.listEvents(0);
+  assert.ok(events.some((event) => event.type === 'note' && /rate.*limit/i.test(event.text ?? '')));
 });
 
 test('engine: a persistently blocked builder blocks the item and the run — honestly', async () => {

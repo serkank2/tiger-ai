@@ -102,11 +102,15 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<AgentTurn
   };
   opts.signal?.addEventListener('abort', onAbort, { once: true });
 
-  // Feed the prompt and close stdin — headless CLIs read to EOF.
-  if (invocation.stdinText !== undefined) {
-    child.stdin?.write(invocation.stdinText);
+  // Feed the prompt and close stdin — headless CLIs read to EOF. A child that
+  // exits early (bad flag, auth failure, missing CLI) can break the pipe while
+  // a large prompt is still buffered; an unhandled stdin `error` would crash the
+  // whole process, so swallow it here (the exit/error is handled below).
+  if (child.stdin) {
+    child.stdin.on('error', () => {});
+    if (invocation.stdinText !== undefined) child.stdin.write(invocation.stdinText);
+    child.stdin.end();
   }
-  child.stdin?.end();
 
   if (child.stdout) {
     const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });

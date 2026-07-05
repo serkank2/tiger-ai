@@ -12,6 +12,7 @@ import type {
   QueueTargetType,
 } from '../queue/types.js';
 import { badRequest, notFound } from './errors.js';
+import { assertWorkspaceAllowed } from '../security/workspace.js';
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -122,11 +123,16 @@ export function createQueueRouter(ctx: AppCtx): Router {
 
   router.post('/enqueue', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // A workspace-targeted job spawns a run/PTY at this path, so it must clear
+    // the same allow-list the /runs and /terminals routes enforce — otherwise
+    // the queue is an escape hatch around KAPLAN_ENFORCE_WORKSPACE.
+    const rawWorkspace = str(body.workspacePath) ?? str(body.workspace);
+    const workspacePath = rawWorkspace ? assertWorkspaceAllowed(rawWorkspace) : undefined;
     const job = await service.enqueue({
       prompt: typeof body.prompt === 'string' ? body.prompt : '',
       body: typeof body.body === 'string' ? body.body : undefined,
       title: str(body.title),
-      workspacePath: str(body.workspacePath) ?? str(body.workspace),
+      workspacePath,
       projectName: str(body.projectName),
       provider: body.provider === undefined ? undefined : provider(body.provider),
       priority: int(body.priority, 0),

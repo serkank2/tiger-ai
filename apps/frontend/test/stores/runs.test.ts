@@ -183,6 +183,33 @@ describe('runs store', () => {
     expect(api.interactiveComplete).toHaveBeenCalledWith('T1');
   });
 
+  it('a usage frame after result does NOT resurrect a finished pane to live', () => {
+    const runs = useRunsStore();
+    const agentFrame = (seq: number, type: string) =>
+      event(seq, {
+        type: 'agent',
+        agentId: 'builder',
+        provider: 'claude',
+        agent: { type: type as never, at: `at-${seq}`, text: type },
+      });
+    runs.appendEvent(agentFrame(1, 'text'));
+    runs.appendEvent(agentFrame(2, 'result'));
+    expect(runs.terminals['builder']!.live).toBe(false);
+    // Providers often emit a trailing usage/cost frame AFTER the result.
+    runs.appendEvent(agentFrame(3, 'usage'));
+    expect(runs.terminals['builder']!.live).toBe(false);
+  });
+
+  it('appendEvent drops a late frame leaking from a previous run (runId guard)', async () => {
+    const runs = useRunsStore();
+    api.getCurrentRun.mockResolvedValue({ run: snapshot({ runId: 'run-2' }) });
+    api.listRunEvents.mockResolvedValue({ events: [] });
+    await runs.load(); // run.value.runId = 'run-2'
+    runs.appendEvent(event(99, { runId: 'run-1', type: 'agent', agentId: 'ghost', agent: { type: 'text', at: 'x' } }));
+    expect(runs.terminals['ghost']).toBeUndefined();
+    expect(runs.events.some((e) => e.seq === 99)).toBe(false);
+  });
+
   it('a settled run.state snapshot marks every terminal idle', () => {
     const runs = useRunsStore();
     runs.appendEvent(

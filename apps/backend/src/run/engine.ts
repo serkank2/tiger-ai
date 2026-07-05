@@ -23,7 +23,7 @@ import {
   type VerificationCommand,
   type VerificationRecord,
 } from '../verify/service.js';
-import { cleanupLane, mergeLane, prepareLane, type BuildLane } from './lanes.js';
+import { cleanupLane, ensureTigerExcluded, mergeLane, prepareLane, type BuildLane } from './lanes.js';
 import { PLAN_RESULT_JSON_SCHEMA, parsePlanResult } from './plan.js';
 import { upsertRunIndex } from './history.js';
 import { isDrained, nextItemId, propagateDoom, selectRunnable, summarizeGraph, type WorkItem } from './graph.js';
@@ -72,7 +72,8 @@ export interface RunEngineOptions {
 export interface CreateRunInput {
   workspace: string;
   goal: string;
-  config?: Partial<RunConfig>;
+  /** council is accepted partially — engine/route fill plan/review from the roster or presets. */
+  config?: Partial<Omit<RunConfig, 'council'>> & { council?: Partial<RunConfig['council']> };
 }
 
 export type RunEngineEvent = { kind: 'event'; event: RunEvent } | { kind: 'state'; state: RunSnapshot };
@@ -97,13 +98,12 @@ const DEFAULT_CONFIG: RunConfig = {
   sessionRotateTurns: 12,
   interactive: false,
   skipPlanning: false,
+  rateLimitBackoffMs: 20_000,
 };
 
 const MAX_PARALLEL_BUILDS = 4;
 /** Cap on how many council candidates run at once — bounds token/rate spikes. */
 const COUNCIL_CONCURRENCY = 4;
-/** Backoff applied before retrying a turn that hit a provider rate/quota limit. */
-const RATE_LIMIT_BACKOFF_MS = 20_000;
 
 /**
  * Importance → council size. Parallelism lives ONLY in the read-only phases
@@ -158,12 +158,17 @@ export class RunEngine extends EventEmitter {
   private readonly lanes = new Map<string, BuildLane>();
   /** Items that must re-run alone in the main workspace (lane merge conflict / lane failure). */
   private readonly sequentialOnly = new Set<string>();
+  /** Serializes worktree creation — concurrent `git worktree add` on one repo contends on the lock. */
+  private laneCreateChain: Promise<unknown> = Promise.resolve();
+  /** Serializes lane merge-back — `git apply` to the shared tree must be atomic vs other lanes. */
+  private laneMergeChain: Promise<unknown> = Promise.resolve();
   private readonly turnRunner: (opts: RunAgentTurnOptions) => Promise<AgentTurnReport>;
   private readonly interactiveRunner: typeof runInteractiveTurn;
   private readonly verification: VerificationService;
   private readonly loadCliConfig: (workspace: string) => Promise<TigerConfig>;
   private cliConfig: TigerConfig | null = null;
   private projectMap = '';
+  private persistSeq = 0;
 
   constructor(options: RunEngineOptions = {}) {
     super();
@@ -180,9 +185,12 @@ export class RunEngine extends EventEmitter {
       throw new Error('a run is already active; stop it before creating a new one');
     }
     const runId = `run-${nanoid(10)}`;
+    // council is (re)computed below from the roster/presets, so keep the
+    // possibly-partial input council out of the initial full-config spread.
+    const { council: _inputCouncil, ...inputRest } = input.config ?? {};
     const config: RunConfig = {
       ...DEFAULT_CONFIG,
-      ...input.config,
+      ...inputRest,
       builder: { ...DEFAULT_CONFIG.builder, ...input.config?.builder },
     };
     // Parallel builds run in isolated worktree lanes (patch merge-back); the
@@ -316,8 +324,11 @@ export class RunEngine extends EventEmitter {
     if (!this.projectMap) {
       this.projectMap = await buildProjectMap(state.workspace).catch(() => '');
     }
-    // Worktree lanes need git; a non-repo workspace degrades to sequential.
-    if (state.config.maxParallelBuilds > 1 && !(await isGitRepo(state.workspace))) {
+    // Keep Kaplan's own `.tiger/` bookkeeping out of git (diff panel + lanes).
+    if (await isGitRepo(state.workspace)) {
+      await ensureTigerExcluded(state.workspace);
+    } else if (state.config.maxParallelBuilds > 1) {
+      // Worktree lanes need git; a non-repo workspace degrades to sequential.
       state.config.maxParallelBuilds = 1;
       await this.record({
         type: 'note',
@@ -460,7 +471,11 @@ export class RunEngine extends EventEmitter {
     // Isolated lane for a parallel build (an existing lane is reused across retries).
     if (item.kind === 'build' && useLane && !this.lanes.has(item.id)) {
       try {
-        const lane = await prepareLane(state.workspace, state.runId, item.id);
+        // Serialize creation: concurrent `git worktree add` on the same repo
+        // contends on git's worktree lock and can spuriously fail.
+        const create = this.laneCreateChain.then(() => prepareLane(state.workspace, state.runId, item.id));
+        this.laneCreateChain = create.catch(() => undefined);
+        const lane = await create;
         this.lanes.set(item.id, lane);
         item.worktree = { path: lane.worktree.path, branch: lane.worktree.branch };
         await this.record({
@@ -627,7 +642,7 @@ export class RunEngine extends EventEmitter {
           event,
         ),
     });
-    this.activeTurnAborts.delete(item.id);
+    this.clearTurnSignal(item.id);
 
     await sessions.upsert(sessionKey, agent.provider, {
       sessionId: report.sessionId ?? newSessionId ?? stored?.sessionId,
@@ -712,7 +727,7 @@ export class RunEngine extends EventEmitter {
       return await controller.promise;
     } finally {
       this.interactiveTurns.delete(agentId);
-      this.activeTurnAborts.delete(item.id);
+      this.clearTurnSignal(item.id);
       // Interactive slots still count turns (for rotation-recap bookkeeping).
       await this.requireSessions()
         .upsert(this.sessionKeyFor(item), agent.provider, { lastSeq: state.seq, turnServed: true })
@@ -764,30 +779,52 @@ export class RunEngine extends EventEmitter {
       }
     }
 
-    let added = 0;
+    // Two passes so dependsOn survives id remapping: when a planner task id
+    // collides with an existing item it is reassigned (e.g. a re-plan batch
+    // numbering from T1 again), and a sibling's dependsOn:["T1"] must follow the
+    // NEW id, not silently bind to the old, already-done T1.
+    const idMap = new Map<string, string>();
+    const assigned: string[] = [];
     for (const task of plan.tasks) {
-      const id =
-        task.id && !state.graph.items.some((entry) => entry.id === task.id) ? task.id : nextItemId(state.graph, 'T');
+      const wanted = task.id?.trim();
+      const id = wanted && !state.graph.items.some((entry) => entry.id === wanted) && !idMap.has(wanted)
+        ? wanted
+        : nextItemId(state.graph, 'T');
+      if (wanted) idMap.set(wanted, id);
+      assigned.push(id);
+      // Reserve the id immediately so nextItemId can't hand it out twice.
       state.graph.items.push({
         id,
         kind: 'build',
         title: task.title,
         description: task.description,
         acceptanceCriteria: task.acceptanceCriteria,
-        dependsOn: (task.dependsOn ?? []).filter((dep) => dep !== id),
+        dependsOn: [],
         status: 'pending',
         agentKey: 'builder',
         attempts: 0,
         createdAt: nowIso(),
       });
+    }
+    let added = 0;
+    plan.tasks.forEach((task, index) => {
+      const id = assigned[index]!;
+      const entry = state.graph.items.find((candidate) => candidate.id === id)!;
+      entry.dependsOn = (task.dependsOn ?? [])
+        .map((dep) => idMap.get(dep.trim()) ?? dep.trim())
+        .filter((dep) => dep !== id);
       added += 1;
-      await this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: task.title });
+    });
+    for (const id of assigned) {
+      const entry = state.graph.items.find((candidate) => candidate.id === id)!;
+      await this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: entry.title });
     }
 
     // Staged planning bookkeeping: remember any remaining scope so finalize
-    // schedules the next batch instead of ending the run.
+    // schedules the next batch instead of ending the run. Guard against a spin:
+    // a batch that added ZERO tasks must not schedule yet another empty plan.
     state.planBatches += 1;
-    const moreToPlan = plan.remainingScope && state.planBatches < state.config.maxPlanBatches;
+    const moreToPlan = plan.remainingScope && added > 0 && state.planBatches < state.config.maxPlanBatches;
     state.pendingScope = moreToPlan ? plan.remainingScope : undefined;
 
     item.status = 'done';
@@ -893,11 +930,18 @@ export class RunEngine extends EventEmitter {
     const state = this.requireState();
     const lane = this.lanes.get(item.id);
     if (!lane) return true;
-    const result = await mergeLane(state.workspace, lane).catch((err) => ({
-      ok: false as const,
-      files: [] as string[],
-      detail: err instanceof Error ? err.message : String(err),
-    }));
+    // Serialize the patch-to-main step: two lanes' `git apply` to the shared
+    // working tree must never interleave (no index.lock protects it), or they
+    // corrupt/half-apply each other's changes.
+    const merge = this.laneMergeChain.then(() =>
+      mergeLane(state.workspace, lane).catch((err) => ({
+        ok: false as const,
+        files: [] as string[],
+        detail: err instanceof Error ? err.message : String(err),
+      })),
+    );
+    this.laneMergeChain = merge.catch(() => undefined);
+    const result = await merge;
     // Tear the lane down either way; a conflict retry runs in the main tree.
     // Compute the per-item session key BEFORE forgetting the lane.
     const sessionKey = this.sessionKeyFor(item);
@@ -979,10 +1023,24 @@ export class RunEngine extends EventEmitter {
   /** Link a per-item abort controller under the loop signal (steering interrupt). */
   private linkTurnSignal(itemId: string, parent: AbortSignal): AbortSignal {
     const controller = new AbortController();
+    const onParentAbort = (): void => controller.abort();
     if (parent.aborted) controller.abort();
-    else parent.addEventListener('abort', () => controller.abort(), { once: true });
+    else parent.addEventListener('abort', onParentAbort, { once: true });
     this.activeTurnAborts.set(itemId, controller);
+    // Store the removal so a completed turn drops its listener — otherwise every
+    // turn leaks one 'abort' listener on the long-lived run signal.
+    this.turnSignalCleanups.set(itemId, () => parent.removeEventListener('abort', onParentAbort));
     return controller.signal;
+  }
+
+  /** In-flight turn signal listener removers, keyed by item id. */
+  private readonly turnSignalCleanups = new Map<string, () => void>();
+
+  /** Drop a finished turn's abort controller AND its run-signal listener. */
+  private clearTurnSignal(itemId: string): void {
+    this.activeTurnAborts.delete(itemId);
+    this.turnSignalCleanups.get(itemId)?.();
+    this.turnSignalCleanups.delete(itemId);
   }
 
   /** One read-only, one-shot council candidate turn. Null when it failed. */
@@ -1050,8 +1108,13 @@ export class RunEngine extends EventEmitter {
 
   /** Read-only permission key per provider (council candidates never write). */
   private readOnlyPermission(provider: AgentType): string {
+    // Council candidates run concurrently in the shared workspace, so they must
+    // NOT be able to write — a prose "do not edit" is not enough. Map each
+    // provider to its genuinely non-writing mode (config.ts built-ins):
+    //   codex → read-only sandbox, claude → plan mode, agy → sandbox.
     if (provider === 'codex') return 'read-only';
-    return 'default';
+    if (provider === 'antigravity') return 'sandbox';
+    return 'plan';
   }
 
   /**
@@ -1097,23 +1160,22 @@ export class RunEngine extends EventEmitter {
       });
       return { lens, provider: seat.provider, model: seat.model, effort: seat.effort, brief };
     });
-    const results = await Promise.all(
-      briefs.map((candidate, index) =>
-        this.runCouncilCandidate(
-          item,
-          {
-            role: 'plan',
-            lens: candidate.lens,
-            index,
-            provider: candidate.provider,
-            model: candidate.model,
-            effort: candidate.effort,
-            brief: candidate.brief,
-          },
-          signal,
-        ),
-      ),
-    );
+    const results = await mapWithConcurrency(briefs.length, COUNCIL_CONCURRENCY, (index) => {
+      const candidate = briefs[index]!;
+      return this.runCouncilCandidate(
+        item,
+        {
+          role: 'plan',
+          lens: candidate.lens,
+          index,
+          provider: candidate.provider,
+          model: candidate.model,
+          effort: candidate.effort,
+          brief: candidate.brief,
+        },
+        signal,
+      );
+    });
     const out: CouncilPlanCandidate[] = [];
     results.forEach((result, index) => {
       const plan = result ? parsePlanResult(result.text) : null;
@@ -1167,29 +1229,28 @@ export class RunEngine extends EventEmitter {
       model: seat.model,
       effort: seat.effort,
     }));
-    const results = await Promise.all(
-      lenses.map((entry, index) =>
-        this.runCouncilCandidate(
-          item,
-          {
-            role: 'review',
-            lens: entry.lens,
-            index,
-            provider: entry.provider,
-            model: entry.model,
-            effort: entry.effort,
-            brief: composeTaskBrief({
-              title: `${item.id} — review lens ${index + 1}`,
-              description:
-                reviewBrief +
-                `\n\nYOUR ASSIGNED REVIEW LENS (judge ONLY through it; other lenses cover the rest): ${entry.lens}. ` +
-                'Do NOT modify any files. Report follow-up tasks ONLY for defects you can back with evidence from the diff.',
-            }),
-          },
-          signal,
-        ),
-      ),
-    );
+    const results = await mapWithConcurrency(lenses.length, COUNCIL_CONCURRENCY, (index) => {
+      const entry = lenses[index]!;
+      return this.runCouncilCandidate(
+        item,
+        {
+          role: 'review',
+          lens: entry.lens,
+          index,
+          provider: entry.provider,
+          model: entry.model,
+          effort: entry.effort,
+          brief: composeTaskBrief({
+            title: `${item.id} — review lens ${index + 1}`,
+            description:
+              reviewBrief +
+              `\n\nYOUR ASSIGNED REVIEW LENS (judge ONLY through it; other lenses cover the rest): ${entry.lens}. ` +
+              'Do NOT modify any files. Report follow-up tasks ONLY for defects you can back with evidence from the diff.',
+          }),
+        },
+        signal,
+      );
+    });
 
     const verdicts: string[] = [];
     const followUps: Array<{ title: string; description?: string }> = [];
@@ -1246,6 +1307,16 @@ export class RunEngine extends EventEmitter {
     const state = this.requireState();
     if (item.attempts < state.config.maxAttemptsPerItem) {
       item.status = 'pending';
+      // Provider rate/quota limit: back off before the retry instead of
+      // immediately hammering a limited provider (bounded, abort-aware).
+      if (isRateLimitError(error) && state.config.rateLimitBackoffMs > 0) {
+        await this.record({
+          type: 'note',
+          itemId: item.id,
+          text: `Rate/quota limit hit — backing off ${Math.round(state.config.rateLimitBackoffMs / 1000)}s before retrying ${item.id}.`,
+        });
+        await this.backoff(state.config.rateLimitBackoffMs);
+      }
       await this.record({
         type: 'item-status',
         itemId: item.id,
@@ -1355,7 +1426,12 @@ export class RunEngine extends EventEmitter {
       attempts: 0,
       createdAt: nowIso(),
     });
-    void this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: 'Direct build (planning skipped).' });
+    void this.record({
+      type: 'item-status',
+      itemId: id,
+      itemStatus: 'pending',
+      text: 'Direct build (planning skipped).',
+    });
   }
 
   private planDescription(): string {
@@ -1418,8 +1494,11 @@ export class RunEngine extends EventEmitter {
   private async itemDescriptionForReview(item: WorkItem): Promise<string> {
     const state = this.requireState();
     const changes = await computeTeamChanges(state.workspace, nowIso()).catch(() => null);
+    const stat = changes?.summary
+      ? `+${changes.summary.insertions ?? 0}/-${changes.summary.deletions ?? 0}`
+      : '';
     const diffBlock = changes?.diff?.trim()
-      ? `\n\n## Working-tree diff (${changes.files.length} file(s), ${changes.summary ?? ''})\n\n` +
+      ? `\n\n## Working-tree diff (${changes.files.length} file(s), ${stat})\n\n` +
         '```diff\n' +
         changes.diff.slice(0, 60_000) +
         '\n```'
@@ -1456,9 +1535,11 @@ export class RunEngine extends EventEmitter {
   }
 
   private drainSteeringTexts(item: WorkItem): string[] | undefined {
-    // Steering is consumed by the plan item created for it.
-    if (item.kind !== 'plan') return undefined;
+    // Steering is consumed by the plan item created for it — or, when planning
+    // is skipped (no plan phase), by the next build turn.
     const state = this.requireState();
+    const consumes = item.kind === 'plan' || (state.config.skipPlanning && item.kind === 'build');
+    if (!consumes) return undefined;
     const pending = state.steering.filter((entry) => entry.status === 'pending');
     if (!pending.length) return undefined;
     for (const entry of pending) entry.status = 'applied';
@@ -1481,6 +1562,22 @@ export class RunEngine extends EventEmitter {
     const state = this.requireState();
     this.deltaLog.push({ seq: state.seq, line });
     if (this.deltaLog.length > 500) this.deltaLog.shift();
+  }
+
+  /** Wait `ms`, resolving early if the run is aborted (rate-limit backoff). */
+  private backoff(ms: number): Promise<void> {
+    const signal = this.abort?.signal;
+    if (signal?.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(done, ms);
+      const onAbort = (): void => done();
+      function done(): void {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   /** Tear down every live lane (used when the run settles or is stopped). */
@@ -1549,7 +1646,9 @@ export class RunEngine extends EventEmitter {
     await upsertRunIndex(state);
     const file = path.join(this.runDir(), 'state.json');
     await fs.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
+    // Unique temp so a stop()-triggered persist() can't collide with the run
+    // loop's in-flight persist() on a shared `${file}.tmp`.
+    const tmp = `${file}.${process.pid}.${this.persistSeq++}.tmp`;
     const json = JSON.stringify(state, null, 2);
     await fs.writeFile(tmp, json, 'utf8');
     // Windows: rename onto an existing file can transiently EPERM under AV
@@ -1617,6 +1716,26 @@ function clampCount(value: number): number {
   return Math.max(1, Math.min(COUNCIL_MAX, Math.floor(value)));
 }
 
+/** Whether an error string looks like a provider rate/quota/overload limit. */
+function isRateLimitError(error: string): boolean {
+  return /\b(429|rate.?limit|quota|too many requests|overloaded|resource[_ ]exhausted|usage limit)\b/i.test(error);
+}
+
+/** Run `tasks` with at most `limit` in flight; preserves input order in the result. */
+async function mapWithConcurrency<T>(count: number, limit: number, task: (index: number) => Promise<T>): Promise<T[]> {
+  const results = new Array<T>(count);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, count)) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= count) return;
+      results[index] = await task(index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 const STOPWORDS = new Set(['the', 'a', 'an', 'to', 'of', 'in', 'on', 'for', 'and', 'or', 'is', 'are', 'fix', 'add']);
 
 /** Content tokens of a title (lowercased, destopped) — the fuzzy-dedup signature. */
@@ -1632,8 +1751,9 @@ function titleTokens(title: string): Set<string> {
 
 /**
  * Two review findings are "the same issue" when their titles' content tokens
- * overlap heavily (Jaccard ≥ 0.6). Catches "Null check missing in parseX" vs
- * "parseX crashes on null input" that exact-string dedup would keep as two.
+ * overlap heavily: Jaccard ≥ 0.6 AND at least 2 shared content tokens. The
+ * two-token floor stops distinct bugs that merely share one noun (e.g. two
+ * different defects both about "parseConfig") from being wrongly merged.
  */
 function titlesSimilar(a: string, b: string): boolean {
   const ta = titleTokens(a);
@@ -1642,7 +1762,8 @@ function titlesSimilar(a: string, b: string): boolean {
   let intersection = 0;
   for (const token of ta) if (tb.has(token)) intersection += 1;
   const union = ta.size + tb.size - intersection;
-  return union > 0 && intersection / union >= 0.6;
+  const jaccard = union > 0 ? intersection / union : 0;
+  return intersection >= 2 && jaccard >= 0.6;
 }
 
 function round4(value: number): number {

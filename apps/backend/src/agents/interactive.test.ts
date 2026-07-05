@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { runInteractiveTurn, type InteractivePty, type InteractivePtySpawn } from './interactive.js';
+import { runInteractiveTurn, resolvePtyCommand, type InteractivePty, type InteractivePtySpawn } from './interactive.js';
 import { defaultTigerConfig } from '../orchestrator/config.js';
 import type { AgentEvent } from './events.js';
 
@@ -106,6 +106,16 @@ test('interactive: user "complete" without a result file still resolves as done'
   const report = await controller.promise;
   assert.equal(report.state, 'completed');
   assert.match(report.result?.summary ?? '', /user/i);
+});
+
+test('resolvePtyCommand passes an absolute executable through unchanged (node-pty has no PATH search)', () => {
+  // process.execPath is an absolute path with a known extension on every OS —
+  // the resolver must return it verbatim with the args preserved (this is the
+  // fix for interactive "Cannot create process, error code: 2" on Windows).
+  const env = { PATH: process.env.PATH ?? '', Path: process.env.Path ?? '' } as Record<string, string>;
+  const out = resolvePtyCommand(process.execPath, ['--version'], env);
+  assert.equal(out.command, process.execPath);
+  assert.deepEqual(out.args, ['--version']);
 });
 
 test('interactive: a non-zero PTY exit with no result file fails the turn', async () => {
