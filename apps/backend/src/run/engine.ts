@@ -89,7 +89,10 @@ const DEFAULT_CONFIG: RunConfig = {
   verifyCommands: [],
   quickVerifyCommands: [],
   maxFixRounds: 3,
-  allowDangerous: false,
+  // Autonomous by default: builders launch in the provider's full-bypass mode
+  // (yolo/dangerous) so they can edit + run commands without approval prompts.
+  // Kaplan is a local, single-user, RCE-by-design tool (see SECURITY.md).
+  allowDangerous: true,
   mcp: false,
   importance: 'normal',
   council: { plan: 1, review: 1, providers: [] },
@@ -708,8 +711,11 @@ export class RunEngine extends EventEmitter {
       prompt,
       model: agent.model,
       effort: agent.effort,
-      permission: agent.permission ?? this.defaultPermission(agent.provider, item),
-      allowDangerous: state.config.allowDangerous,
+      // Interactive turns are human-watched and must be frictionless: launch in
+      // the provider's full-bypass mode so NO trust/approval dialog appears at
+      // all (belt-and-suspenders with the startup-dialog auto-answer).
+      permission: agent.permission ?? autonomousPermission(agent.provider),
+      allowDangerous: true,
       cwd: this.cwdFor(item),
       scratchDir: path.join(this.runDir(), 'scratch', item.id),
       hardTimeoutMs: state.config.hardTurnTimeoutMs,
@@ -1525,12 +1531,10 @@ export class RunEngine extends EventEmitter {
   }
 
   private defaultPermission(provider: RunConfig['builder']['provider'], item: WorkItem): string {
-    // Planners/reviewers read; builders write. These map onto the built-in
-    // permission keys from config.ts.
-    const writes = item.kind === 'build';
-    if (provider === 'claude') return writes ? 'acceptEdits' : 'default';
-    if (provider === 'codex') return writes ? 'workspace-write' : 'read-only';
-    return writes ? 'sandbox' : 'default';
+    // Builders must run FULLY AUTONOMOUS — edit files AND run commands (tests,
+    // installs, git) without stalling on approval/trust prompts, which is the
+    // whole point of an unattended run. Planners/reviewers only read.
+    return item.kind === 'build' ? autonomousPermission(provider) : this.readOnlyPermission(provider);
   }
 
   private drainSteeringTexts(item: WorkItem): string[] | undefined {
@@ -1713,6 +1717,19 @@ function describeSeats(seats: CouncilSeat[]): string {
 function clampCount(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(1, Math.min(COUNCIL_MAX, Math.floor(value)));
+}
+
+/**
+ * The fully-autonomous permission key per provider (config.ts built-ins): edits
+ * AND commands with no approval/trust prompts. Requires `allowDangerous` for the
+ * driver to actually emit the flag — the run engine enables it by default so
+ * unattended agents can do real work; a user can dial it back via config.
+ *   claude → --dangerously-skip-permissions, codex → --dangerously-bypass-
+ *   approvals-and-sandbox, agy → --dangerously-skip-permissions.
+ */
+function autonomousPermission(provider: AgentType): string {
+  if (provider === 'codex') return 'yolo';
+  return 'dangerous';
 }
 
 /** Whether an error string looks like a provider rate/quota/overload limit. */
