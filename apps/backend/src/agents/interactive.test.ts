@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { runInteractiveTurn, resolvePtyCommand, type InteractivePty, type InteractivePtySpawn } from './interactive.js';
+import {
+  runInteractiveTurn,
+  resolvePtyCommand,
+  cleanInteractiveOutput,
+  type InteractivePty,
+  type InteractivePtySpawn,
+} from './interactive.js';
 import { defaultTigerConfig } from '../orchestrator/config.js';
 import type { AgentEvent } from './events.js';
 
@@ -54,6 +60,7 @@ const baseOpts = (dir: string, spawn: InteractivePtySpawn, events: AgentEvent[] 
   hardTimeoutMs: 10_000,
   pollMs: 20,
   seedDelayMs: 10,
+  submitDelayMs: 10,
   ptySpawn: spawn,
   onEvent: (e: AgentEvent) => events.push(e),
 });
@@ -66,12 +73,15 @@ test('interactive: seeds the brief, streams output, and completes when the resul
 
   // The brief is seeded into the PTY (after a short delay), with the result-file contract.
   await new Promise((r) => setTimeout(r, 50));
-  assert.equal(fake.writes.length, 1);
   assert.ok(fake.writes[0]!.includes('Do the task.'));
   assert.ok(fake.writes[0]!.includes('KAPLAN_RESULT_FILE') || fake.writes[0]!.includes('interactive-result.json'));
+  // …then a SEPARATE Enter is sent to submit the paste (not part of the brief write).
+  assert.ok(fake.writes.slice(1).includes('\r'), 'submit Enter sent separately after the brief');
 
-  // TUI output (with ANSI colour codes) streams out as plain text.
+  // TUI output (with ANSI colour codes) streams out as plain text — coalesced
+  // and emitted on the ~200ms flush, so wait for it.
   fake.emitData(ESC + '[32mworking done' + ESC + '[0m\r\n');
+  await new Promise((r) => setTimeout(r, 260));
   const streamed = events.find((e) => e.type === 'text' && e.text?.includes('working done'));
   assert.ok(streamed, 'TUI text streamed as an agent event');
   assert.ok(!streamed?.text?.includes(ESC), 'ANSI stripped from streamed text');
@@ -121,6 +131,23 @@ test('interactive: user "complete" without a result file still resolves as done'
   const report = await controller.promise;
   assert.equal(report.state, 'completed');
   assert.match(report.result?.summary ?? '', /user/i);
+});
+
+test('cleanInteractiveOutput strips OSC titles + spinner glyphs and collapses repaints', () => {
+  const BEL = String.fromCharCode(7);
+  const spinner = String.fromCharCode(0x280b); // ⠋
+  const noisy = [
+    ESC + ']0;' + spinner + ' yetisio' + BEL, // OSC window-title (the "0;… yetisio" spam)
+    spinner + spinner + spinner, // a pure-spinner animation line
+    '  Working (7s)  ',
+    '  Working (7s)  ', // duplicate repaint of the same status line
+    ESC + '[32mI edited main.ts' + ESC + '[0m',
+  ].join('\n');
+  const cleaned = cleanInteractiveOutput(noisy);
+  assert.ok(!cleaned.includes('yetisio'), 'OSC title payload removed');
+  assert.ok(!/[⠀-⣿]/.test(cleaned), 'spinner glyphs removed');
+  assert.ok(cleaned.includes('I edited main.ts'), 'real assistant text kept');
+  assert.equal((cleaned.match(/Working \(7s\)/g) ?? []).length, 1, 'duplicate repaint collapsed to one');
 });
 
 test('resolvePtyCommand passes an absolute executable through unchanged (node-pty has no PATH search)', () => {

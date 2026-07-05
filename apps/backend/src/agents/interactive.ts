@@ -63,6 +63,8 @@ export interface InteractiveTurnOptions {
   pollMs?: number;
   /** Delay before seeding the brief, to let the TUI come up (ms). */
   seedDelayMs?: number;
+  /** Delay after pasting the brief before the submit Enter, so the paste finalizes (ms). */
+  submitDelayMs?: number;
 }
 
 /** A live interactive turn: route input, complete, or abort it from the outside. */
@@ -76,13 +78,53 @@ export interface InteractiveTurnController {
   abort(reason?: string): void;
 }
 
-// CSI + simple escape sequences, plus BEL/CR — built via new RegExp so the
-// source file carries no raw control bytes.
-const ANSI = new RegExp('\\u001b(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])|[\\u0007\\r]', 'g');
+// Everything a full-screen TUI emits that is NOT visible text, built via
+// new RegExp so the source file carries no raw control bytes:
+//   1. OSC (window-title etc.): ESC ] … BEL/ST  — the "0;⠋ yetisio" title spam.
+//   2. Fe escapes: ESC + a single 0x40–0x5F char.
+//   3. CSI: ESC [ … final                          — colours, cursor moves.
+//   4. stray BEL / CR.
+const ANSI = new RegExp(
+  [
+    '\\u001b\\][^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)',
+    '\\u001b[@-Z\\\\-_]',
+    '\\u001b\\[[0-?]*[ -/]*[@-~]',
+    '[\\u0007\\r]',
+  ].join('|'),
+  'g',
+);
+// Braille spinner glyphs (⠋⠙⠹…) a TUI animates while "working".
+const SPINNER = /[⠀-⣿]/g;
 
-/** Strip ANSI/CSI sequences so the streamed TUI reads as plain text in the panel. */
+/** Strip ANSI/CSI/OSC sequences so the streamed TUI reads as plain text. */
 function stripAnsi(text: string): string {
   return text.replace(ANSI, '');
+}
+
+/**
+ * Turn a burst of raw full-screen-TUI output into readable panel text: strip
+ * escapes, drop spinner-only/blank noise, and collapse consecutive duplicate
+ * lines (a redrawing TUI repaints the same lines every animation frame). This
+ * is a log-friendly approximation — a TUI is not truly a line stream — but it
+ * keeps the panel from being flooded with thousands of redraw fragments.
+ */
+export function cleanInteractiveOutput(raw: string): string {
+  const out: string[] = [];
+  let last: string | null = null;
+  for (const rawLine of stripAnsi(raw).split('\n')) {
+    const line = rawLine.replace(SPINNER, '').trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (out.length === 0 || out[out.length - 1] === '') continue; // collapse blank runs
+      out.push('');
+      last = '';
+      continue;
+    }
+    if (trimmed === last) continue; // drop repeated repaint of the same line
+    out.push(line);
+    last = trimmed;
+  }
+  return out.join('\n').trim();
 }
 
 /**
@@ -157,6 +199,8 @@ export function runInteractiveTurn(opts: InteractiveTurnOptions): InteractiveTur
   let exitDisp: { dispose(): void } | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  /** Stops the coalesced-output flush interval (set once the PTY is streaming). */
+  let outputFlush: (() => void) | null = null;
   let eventCount = 0;
 
   const emit = (event: AgentEvent): void => {
@@ -171,6 +215,7 @@ export function runInteractiveTurn(opts: InteractiveTurnOptions): InteractiveTur
   const cleanup = (): void => {
     dataDisp?.dispose();
     exitDisp?.dispose();
+    outputFlush?.();
     if (poll) clearInterval(poll);
     if (timeout) clearTimeout(timeout);
     poll = timeout = null;
@@ -275,22 +320,46 @@ export function runInteractiveTurn(opts: InteractiveTurnOptions): InteractiveTur
     let briefSeeded = false;
     let lastAutoAnswer = 0;
     let seedTimer: ReturnType<typeof setTimeout> | null = null;
+    const submitDelayMs = opts.submitDelayMs ?? 1200;
     const seedBrief = (): void => {
       if (briefSeeded || settled) return;
       briefSeeded = true;
       if (seedTimer) clearTimeout(seedTimer);
-      // Paste the brief, then submit with a SEPARATE Enter — a TUI in bracketed-
-      // paste mode treats a trailing \r inside the paste as content, not submit.
+      // A large multi-line brief is detected by the TUI as a PASTE; the submit
+      // Enter must arrive AFTER the CLI finalizes the paste (a quiet period) —
+      // an Enter sent too soon is absorbed into the paste buffer as content
+      // instead of submitting. Send it after a settle delay, then retry once
+      // (guards the race with async startup, e.g. codex spinning up MCP servers).
       write(seed);
-      setTimeout(() => write('\r'), 250);
+      const submit = (): void => {
+        if (!settled) write('\r');
+      };
+      setTimeout(submit, submitDelayMs);
+      setTimeout(submit, submitDelayMs + 2500);
     };
     // Fallback: no trust dialog on this provider/dir → seed after the base delay.
     const baseSeedDelay = opts.seedDelayMs ?? 1200;
     seedTimer = setTimeout(seedBrief, baseSeedDelay);
 
+    // Coalesce the high-frequency TUI redraw stream: buffer raw output and emit
+    // a single CLEANED event ~every 200ms, instead of one event per repaint
+    // fragment (which floods the panel with spinner frames + partial words).
+    let outBuf = '';
+    let flushTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+      if (!outBuf) return;
+      const cleaned = cleanInteractiveOutput(outBuf);
+      outBuf = '';
+      if (cleaned) emit(agentEvent.text(cleaned));
+    }, 200);
+    outputFlush = () => {
+      if (flushTimer) clearInterval(flushTimer);
+      flushTimer = null;
+    };
+
     dataDisp = pty.onData((data) => {
+      outBuf += data;
+      // Trust/seed detection reacts to the immediate chunk (not the coalesced feed).
       const text = stripAnsi(data);
-      if (text.trim()) emit(agentEvent.text(text));
       if (!briefSeeded && TRUST_PROMPT_RE.test(text)) {
         const now = Date.now();
         if (now - lastAutoAnswer > 600) {
