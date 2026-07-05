@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: typecheck · lint · test
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: kaplan
+          MYSQL_DATABASE: kaplan
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pkaplan"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # Point the backend + its DB-backed tests at the service container.
+      KAPLAN_DB_HOST: 127.0.0.1
+      KAPLAN_DB_PORT: '3306'
+      KAPLAN_DB_USER: root
+      KAPLAN_DB_PASSWORD: kaplan
+      KAPLAN_DB_NAME: kaplan
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # node-pty is a native addon; ubuntu-latest already ships a C/C++ toolchain
+      # and python3, so `npm ci` builds it without extra setup.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Backend tests
+        run: npm test -w @kaplan/backend
+
+      - name: Frontend tests
+        run: npm test -w @kaplan/frontend

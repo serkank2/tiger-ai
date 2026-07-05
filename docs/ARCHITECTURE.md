@@ -5,6 +5,13 @@ PTYs) and a Nuxt **frontend** that renders and steers them. This document is the
 it explains how the pieces fit and why. Per-domain detail lives next to the code; per-domain
 design notes are collected at the end.
 
+> **⚠️ Doc drift notice.** The v1 staged **Tiger** pipeline and the role-based **AI Team**
+> engine described in parts of this file have been **removed**. The current execution model
+> is the headless **v2 Runs** engine — a WorkGraph of `plan → build → review` items with
+> engine-run verification (`apps/backend/src/{run,agents,verify,context}`), documented in
+> [`REDESIGN.md`](REDESIGN.md). Sections below still referencing Tiger/Team are being
+> rewritten; [`AGENTS.md`](../AGENTS.md) is the accurate quick reference in the meantime.
+
 ## High-level shape
 
 ```
@@ -145,8 +152,8 @@ otherwise.
 
 A config-gated (`KAPLAN_MCP_ENABLED=1`, OFF by default) stdio MCP server (`server.ts`) exposes
 the board to coding agents. Tools (`tools.ts`) are plain JSON-serializable handlers adapted into
-MCP `registerTool` calls: `list_queue_jobs`, `get_queue_job`, `enqueue_prompt`,
-`get_tiger_state`, `get_team_run`, `list_team_messages`, and `post_team_steering`.
+MCP `registerTool` calls: `list_queue_jobs`, `get_queue_job`, `enqueue_prompt`, `get_run`,
+`list_run_events`, and `steer_run`.
 
 ### `db/`, `repositories/`, `services/`
 
@@ -156,8 +163,7 @@ MySQL pool (`db/pool.ts`), idempotent migrations keyed in `schema_migrations`
 
 ## Frontend (`apps/frontend/app`)
 
-- **`pages/`** — one route per domain (terminals, team, tiger, queue, prompts, limits,
-  settings, templates).
+- **`pages/`** — one route per domain (runs, terminals, queue, cue, prompts, limits, settings).
 - **`stores/`** — one Pinia store per domain; the single source of truth components read.
 - **`composables/`** — `useApi` (typed REST client), `useSocket` (singleton multiplexed WS with
   exponential-backoff reconnect), `useTerminalView` (lazy xterm mount + ref-counted attach).

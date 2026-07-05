@@ -18,16 +18,16 @@ Kaplan turns your machine into a cockpit for AI software work: live PTY terminal
 
 ## ✨ Features
 
-| Area              | What it does                                                                                                                                                                                                                                    |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Runs**          | A headless work-graph engine (`plan → build → review`) that drives Claude / Codex / Antigravity as one-shot turns with session resume and delta briefs. Kaplan runs the checks itself — exit code 0 is the only definition of "green."          |
-| **Councils**      | Optional multi-agent ensembles at the read-only phases: N independent plan candidates (distinct lenses, synthesized into one graph) and N review lenses (findings merged). The write path stays single-agent. Per-phase counts and skip planning. |
-| **Parallel builds** | Build tasks fan out into isolated git worktree lanes and merge back as patches (Kaplan never commits on your branch); conflicts fall back to a sequential retry.                                                                              |
-| **Live control**  | Watch every agent's stream per-terminal, steer mid-run (queued or interrupt-now), and run agents as interactive PTYs you type into when you want to drive by hand.                                                                              |
-| **Terminals**     | Create, name, group, and drive real PTY terminals (`node-pty` + `xterm.js`) with full scrollback replay on attach and live streaming over WebSocket.                                                                                            |
-| **Command queue** | A MySQL-backed durable queue + scheduler that fans commands/prompts out to one or many terminals or run targets.                                                                                                                                |
-| **Prompts**       | Compose prompts with variables, generate them with AI, keep a searchable history, and organize reusable libraries.                                                                                                                              |
-| **Usage limits**  | Tracks provider usage/limits and gates dispatch when a provider is rate-limited.                                                                                                                                                                |
+| Area                | What it does                                                                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Runs**            | A headless work-graph engine (`plan → build → review`) that drives Claude / Codex / Antigravity as one-shot turns with session resume and delta briefs. Kaplan runs the checks itself — exit code 0 is the only definition of "green."            |
+| **Councils**        | Optional multi-agent ensembles at the read-only phases: N independent plan candidates (distinct lenses, synthesized into one graph) and N review lenses (findings merged). The write path stays single-agent. Per-phase counts and skip planning. |
+| **Parallel builds** | Build tasks fan out into isolated git worktree lanes and merge back as patches (Kaplan never commits on your branch); conflicts fall back to a sequential retry.                                                                                  |
+| **Live control**    | Watch every agent's stream per-terminal, steer mid-run (queued or interrupt-now), and run agents as interactive PTYs you type into when you want to drive by hand.                                                                                |
+| **Terminals**       | Create, name, group, and drive real PTY terminals (`node-pty` + `xterm.js`) with full scrollback replay on attach and live streaming over WebSocket.                                                                                              |
+| **Command queue**   | A MySQL-backed durable queue + scheduler that fans commands/prompts out to one or many terminals or run targets.                                                                                                                                  |
+| **Prompts**         | Compose prompts with variables, generate them with AI, keep a searchable history, and organize reusable libraries.                                                                                                                                |
+| **Usage limits**    | Tracks provider usage/limits and gates dispatch when a provider is rate-limited.                                                                                                                                                                  |
 
 ## 🏛 Architecture
 
@@ -142,10 +142,10 @@ npm run build:frontend               # production build of the SPA
 
 The near-term direction (see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full, prioritized backlog):
 
-- Engineering foundation: CI, linting, contribution guides, architecture docs ✅ _in progress_
+- Runs engine depth: worktree merge-back tuning, richer diff/PR review, cost/token budgets
 - Observability: structured logging, health/readiness endpoints, request tracing
-- AI Team maturity: run history & re-open, cost/token budgets, a diff/PR view of agent changes, per-role pause, approval gates
-- Security hardening: workspace allow-listing, tighter input validation, optional auth
+- Provider breadth: more coding CLIs behind the same driver contract
+- Security hardening: workspace allow-listing, tighter input validation, shared-token auth
 - Accessibility & i18n passes across every page
 
 ## 🤝 Contributing

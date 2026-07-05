@@ -323,6 +323,12 @@ export class CueEngine {
       // would suppress a second run that completes right after the first (both share status text).
       if (status === 'completed' && runId && !this.firedTeamRunIds.has(runId)) {
         this.firedTeamRunIds.add(runId);
+        // Bound the dedupe set on a long-lived backend: only the most recent
+        // runIds can still be "the current run", so drop the oldest entries.
+        if (this.firedTeamRunIds.size > 512) {
+          const oldest = this.firedTeamRunIds.values().next().value;
+          if (oldest !== undefined) this.firedTeamRunIds.delete(oldest);
+        }
         void this.onAgentCompleted('team', runId);
       }
     };
