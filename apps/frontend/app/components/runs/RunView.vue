@@ -41,6 +41,11 @@ const builderEffort = ref('');
 const reviewPolicy = ref<'final' | 'per-task' | 'none'>('final');
 const verifyPolicy = ref<'per-build' | 'final' | 'both' | 'none'>('both');
 const importance = ref<'low' | 'normal' | 'high' | 'critical'>('normal');
+// Build lanes: 1 = sequential in the shared tree; >1 = isolated worktrees
+// merged back (needs a git workspace; the engine degrades to 1 otherwise).
+const parallelBuilds = ref('1');
+// Interactive mode: agents run as live PTYs you watch and type into.
+const interactive = ref(false);
 // Explicit council roster: how many agents start from each provider, and with
 // which model/effort. Any selection overrides the importance preset (counts as
 // strings — HTML select values are strings).
@@ -119,6 +124,7 @@ const importanceOptions = computed(() => [
   { value: 'critical', label: t('runs.importance.critical') },
 ]);
 const countOptions = ['0', '1', '2', '3', '4', '5', '6'].map((value) => ({ value, label: value }));
+const parallelOptions = ['1', '2', '3', '4'].map((value) => ({ value, label: value }));
 
 function providerLabel(p: Provider): string {
   return providerOptions.find((option) => option.value === p)?.label ?? p;
@@ -176,6 +182,8 @@ async function onCreate(): Promise<void> {
         reviewPolicy: reviewPolicy.value,
         verifyPolicy: verifyPolicy.value,
         importance: importance.value,
+        maxParallelBuilds: Number(parallelBuilds.value),
+        interactive: interactive.value,
         ...(councilMembers.value.length ? { council: { members: councilMembers.value } } : {}),
       },
     });
@@ -417,8 +425,17 @@ function formatCost(): string {
         <BaseField :label="t('runs.importanceLabel')">
           <BaseSelect v-model="importance" data-testid="run-importance" :options="importanceOptions" />
         </BaseField>
+        <BaseField :label="t('runs.parallelBuildsLabel')">
+          <BaseSelect v-model="parallelBuilds" data-testid="run-parallel-builds" :options="parallelOptions" />
+        </BaseField>
       </div>
       <p class="hint">{{ t('runs.importanceHint') }}</p>
+      <p class="hint">{{ t('runs.parallelBuildsHint') }}</p>
+      <label class="interactive-toggle">
+        <input v-model="interactive" type="checkbox" data-testid="run-interactive" />
+        <span>{{ t('runs.interactiveLabel') }}</span>
+      </label>
+      <p class="hint">{{ t('runs.interactiveHint') }}</p>
 
       <!-- Explicit council roster: how many agents from which provider, on which model. -->
       <fieldset class="council">
@@ -463,8 +480,12 @@ function formatCost(): string {
         v-if="showTerminals"
         :terminals="runs.terminalList"
         :active="runs.isActive"
+        :interactive="runs.run.interactive"
         :steer-busy="runs.isBusy('steer')"
+        :complete-busy="(id) => runs.isBusy(`complete:${id}`)"
         @steer="(body, interrupt) => runs.steer(body, interrupt)"
+        @input="(agentId, data) => runs.interactiveInput(agentId, data)"
+        @complete="(agentId) => runs.interactiveComplete(agentId)"
       />
 
       <div class="layout">
@@ -903,6 +924,13 @@ function formatCost(): string {
   color: var(--text-dim);
   font-size: 12px;
   margin: 0;
+}
+.interactive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
 .status.importance[data-importance='critical'] {
   color: var(--danger, #f87171);

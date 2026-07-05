@@ -77,6 +77,12 @@ const tr: MessageSchema = {
     importanceLabel: 'Önem',
     importanceHint:
       'Önem, konseyi boyutlandırır: bağımsız plan adayları ve inceleme mercekleri (farklı modeller, farklı açılar). Yazan her zaman tektir. Düşük/Normal = 1, Yüksek = 3, Kritik = 5.',
+    parallelBuildsLabel: 'Paralel yapım',
+    parallelBuildsHint:
+      'Aynı anda kaç yapım görevi çalışsın. >1 ise her biri izole bir git worktree içinde çalışır ve sonucu yama olarak geri birleştirir (git deposu gerekir; çakışma olursa sıralı yeniden denemeye düşer). 1 = paylaşılan ağaçta klasik sıralı.',
+    interactiveLabel: 'İnteraktif terminaller (her ajanı izle ve içine yaz)',
+    interactiveHint:
+      'Her ajanı, izleyip içine yazabildiğin canlı bir terminalde gerçek interaktif CLI olarak çalıştırır (bağlamı /compact ile kendin yönetirsin). Verimli headless varsayılandan daha yavaş ve daha elle — bir tur, ajan sonucunu yazınca ya da “turu tamamla”ya basınca biter.',
     importance: {
       low: 'Düşük',
       normal: 'Normal',
@@ -93,6 +99,9 @@ const tr: MessageSchema = {
       idle: 'boşta',
       turnStarted: 'tur başladı',
       turnEnded: 'tur bitti',
+      inputPlaceholder: 'Bu ajana yaz…',
+      send: 'Gönder',
+      completeTurn: 'Turu tamamla',
     },
     council: {
       title: 'Agentlar (konsey)',

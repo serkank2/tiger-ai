@@ -8,18 +8,22 @@ import { defaultTigerConfig } from '../orchestrator/config.js';
 import { logger } from '../obs/logger.js';
 import { getDriver } from '../agents/providers/registry.js';
 import { runAgentTurn, type AgentTurnReport, type RunAgentTurnOptions } from '../agents/runner.js';
+import { runInteractiveTurn, type InteractiveTurnController } from '../agents/interactive.js';
 import { SessionRegistry } from '../agents/session.js';
 import { TURN_RESULT_JSON_SCHEMA, parseTurnResult } from '../agents/result.js';
 import type { AgentEvent } from '../agents/events.js';
 import { composeSessionPreamble, composeTaskBrief } from '../context/brief.js';
 import { buildProjectMap } from '../context/project-map.js';
 import { computeTeamChanges } from '../git/changes.js';
+import { isGitRepo } from '../git/worktree.js';
 import {
   VerificationService,
+  discoverQuickVerificationCommands,
   discoverVerificationCommands,
   type VerificationCommand,
   type VerificationRecord,
 } from '../verify/service.js';
+import { cleanupLane, mergeLane, prepareLane, type BuildLane } from './lanes.js';
 import { PLAN_RESULT_JSON_SCHEMA, parsePlanResult } from './plan.js';
 import { upsertRunIndex } from './history.js';
 import { isDrained, nextItemId, propagateDoom, selectRunnable, summarizeGraph, type WorkItem } from './graph.js';
@@ -44,15 +48,22 @@ import {
 // and the final checks are green. No role chat, no sign-off ceremony, no
 // marker files, no idle heuristics.
 //
-// v2.0 executes builds SEQUENTIALLY in the shared workspace (the evidence in
-// REDESIGN.md §3: coding rarely parallelizes well). `maxParallelBuilds` is
-// plumbed for the worktree-isolated fan-out, but the engine clamps it to 1
-// until the merge-back flow lands.
+// Builds run SEQUENTIALLY in the shared workspace by default (REDESIGN.md §3:
+// coding rarely parallelizes well). When `maxParallelBuilds > 1` and the
+// workspace is a git repo, a build BATCH fans out across isolated worktree
+// lanes (run/lanes.ts) that each snapshot the tree, run one item, and merge
+// back as a patch; a patch conflict falls back to a sequential retry in the
+// main tree. Verification is scoped: a cheap QUICK gate (typecheck/lint) per
+// build, the FULL suite (incl. tests) only at finalize. Big goals are planned
+// in BATCHES (staged planning via `remainingScope`), and long-lived agent
+// sessions ROTATE to a fresh session with a recap after N turns.
 // ---------------------------------------------------------------------------
 
 export interface RunEngineOptions {
   /** Injectable for tests; defaults to the real headless runner. */
   turnRunner?: (opts: RunAgentTurnOptions) => Promise<AgentTurnReport>;
+  /** Injectable for tests; defaults to the real interactive PTY runner. */
+  interactiveRunner?: typeof runInteractiveTurn;
   verification?: VerificationService;
   /** CLI tool configs (executables/flags); defaults to the built-in defaults. */
   loadCliConfig?: (workspace: string) => Promise<TigerConfig>;
@@ -75,12 +86,24 @@ const DEFAULT_CONFIG: RunConfig = {
   reviewPolicy: 'final',
   verifyPolicy: 'both',
   verifyCommands: [],
+  quickVerifyCommands: [],
   maxFixRounds: 3,
   allowDangerous: false,
   mcp: false,
   importance: 'normal',
   council: { plan: 1, review: 1, providers: [] },
+  planBatchSize: 12,
+  maxPlanBatches: 20,
+  sessionRotateTurns: 12,
+  interactive: false,
+  skipPlanning: false,
 };
+
+const MAX_PARALLEL_BUILDS = 4;
+/** Cap on how many council candidates run at once — bounds token/rate spikes. */
+const COUNCIL_CONCURRENCY = 4;
+/** Backoff applied before retrying a turn that hit a provider rate/quota limit. */
+const RATE_LIMIT_BACKOFF_MS = 20_000;
 
 /**
  * Importance → council size. Parallelism lives ONLY in the read-only phases
@@ -129,7 +152,14 @@ export class RunEngine extends EventEmitter {
   private deltaLog: Array<{ seq: number; line: string }> = [];
   /** In-flight turn abort handles by item id — lets steering interrupt a turn without stopping the run. */
   private readonly activeTurnAborts = new Map<string, AbortController>();
+  /** Live interactive-turn controllers by agentId — routes user input/complete/abort to the PTY. */
+  private readonly interactiveTurns = new Map<string, InteractiveTurnController>();
+  /** Live worktree lanes by build-item id (kept across retries; torn down on done/blocked). */
+  private readonly lanes = new Map<string, BuildLane>();
+  /** Items that must re-run alone in the main workspace (lane merge conflict / lane failure). */
+  private readonly sequentialOnly = new Set<string>();
   private readonly turnRunner: (opts: RunAgentTurnOptions) => Promise<AgentTurnReport>;
+  private readonly interactiveRunner: typeof runInteractiveTurn;
   private readonly verification: VerificationService;
   private readonly loadCliConfig: (workspace: string) => Promise<TigerConfig>;
   private cliConfig: TigerConfig | null = null;
@@ -138,6 +168,7 @@ export class RunEngine extends EventEmitter {
   constructor(options: RunEngineOptions = {}) {
     super();
     this.turnRunner = options.turnRunner ?? runAgentTurn;
+    this.interactiveRunner = options.interactiveRunner ?? runInteractiveTurn;
     this.verification = options.verification ?? new VerificationService();
     this.loadCliConfig = options.loadCliConfig ?? (async () => defaultTigerConfig());
   }
@@ -154,8 +185,9 @@ export class RunEngine extends EventEmitter {
       ...input.config,
       builder: { ...DEFAULT_CONFIG.builder, ...input.config?.builder },
     };
-    // Sequential-build clamp until worktree merge-back lands (see header note).
-    if (config.maxParallelBuilds !== 1) config.maxParallelBuilds = 1;
+    // Parallel builds run in isolated worktree lanes (patch merge-back); the
+    // count is clamped, and runLoop degrades to 1 when the workspace isn't git.
+    config.maxParallelBuilds = Math.max(1, Math.min(MAX_PARALLEL_BUILDS, Math.floor(config.maxParallelBuilds || 1)));
     // Council sizing: an explicit roster (per-provider counts + models) IS the
     // council; otherwise explicit counts; otherwise the importance preset.
     const preset = COUNCIL_PRESETS[config.importance] ?? COUNCIL_PRESETS.normal;
@@ -168,9 +200,11 @@ export class RunEngine extends EventEmitter {
       COUNCIL_MAX,
     );
     if (rosterSize > 0) {
+      // Explicit per-phase counts (from the Phases selectors) win over the
+      // roster total; the roster still provides the provider/model rotation.
       config.council = {
-        plan: rosterSize,
-        review: rosterSize,
+        plan: clampCount(requested?.plan ?? rosterSize),
+        review: clampCount(requested?.review ?? rosterSize),
         providers: [...new Set(members.map((member) => member.provider))],
         members,
       };
@@ -194,6 +228,7 @@ export class RunEngine extends EventEmitter {
       verifications: [],
       steering: [],
       fixRounds: 0,
+      planBatches: 0,
     };
     this.sessions = new SessionRegistry(path.join(this.runDir(), 'sessions.json'));
     await this.sessions.load();
@@ -281,21 +316,32 @@ export class RunEngine extends EventEmitter {
     if (!this.projectMap) {
       this.projectMap = await buildProjectMap(state.workspace).catch(() => '');
     }
+    // Worktree lanes need git; a non-repo workspace degrades to sequential.
+    if (state.config.maxParallelBuilds > 1 && !(await isGitRepo(state.workspace))) {
+      state.config.maxParallelBuilds = 1;
+      await this.record({
+        type: 'note',
+        text: 'Workspace is not a git repository — parallel build lanes need worktrees, running sequentially.',
+      });
+    }
 
     let noProgress = 0;
     while (!signal.aborted && this.state?.status === 'running') {
       const current = this.requireState();
 
       // 1. Steering pending → insert a re-plan item at this boundary (code, not a Lead turn).
+      //    When planning is skipped there is no plan phase to re-plan; steering
+      //    is drained into the next build turn instead (see drainSteeringTexts).
       const pendingSteering = current.steering.filter((entry) => entry.status === 'pending');
       const hasPlanScheduled = current.graph.items.some(
         (item) => item.kind === 'plan' && (item.status === 'pending' || item.status === 'running'),
       );
-      if (pendingSteering.length > 0 && !hasPlanScheduled) {
+      if (pendingSteering.length > 0 && !hasPlanScheduled && !current.config.skipPlanning) {
         this.insertPlanItem('Re-plan for user steering');
       } else if (current.graph.items.length === 0) {
-        // 2. Fresh run → seed the initial plan item.
-        this.insertPlanItem('Plan the work');
+        // 2. Fresh run → seed planning, or a single direct build task when planning is skipped.
+        if (current.config.skipPlanning) this.seedDirectBuild();
+        else this.insertPlanItem('Plan the work');
       }
 
       // 3. Doom propagation (blocked deps cascade), then pick what can run now.
@@ -322,24 +368,38 @@ export class RunEngine extends EventEmitter {
       }
       noProgress = 0;
 
-      // 4. Execute (sequentially with maxParallelBuilds=1; Promise.all keeps the
-      //    shape ready for isolated fan-out).
-      await Promise.all(runnable.map((item) => this.executeItem(item, signal)));
+      // 4. Execute. A multi-build batch fans out into isolated worktree lanes;
+      //    conflict-flagged items pre-empt the batch and run alone in the main
+      //    workspace (their lane work was discarded).
+      let batch = runnable;
+      const sequentialFirst = runnable.find((item) => item.kind === 'build' && this.sequentialOnly.has(item.id));
+      if (sequentialFirst) batch = [sequentialFirst];
+      const useLanes =
+        current.config.maxParallelBuilds > 1 && batch.length > 1 && batch.every((item) => item.kind === 'build');
+      await Promise.all(batch.map((item) => this.executeItem(item, signal, useLanes)));
       await this.persist();
     }
 
     if (this.state?.status === 'running') await this.finish('stopped', 'Run loop exited.');
   }
 
-  /** Drained graph: final checks → fix loop → final review → completed/blocked. */
+  /** Drained graph: next plan batch → final checks → fix loop → final review → completed/blocked. */
   private async finalize(signal: AbortSignal): Promise<boolean> {
     const state = this.requireState();
+
+    // Staged planning: the current batch is built — plan the next one before
+    // finalizing anything (mega-goals never explode into one giant plan).
+    if (state.pendingScope) {
+      this.insertPlanItem(`Plan the next batch (${state.planBatches + 1}/${state.config.maxPlanBatches})`);
+      return false;
+    }
+
     const summary = summarizeGraph(state.graph);
     const hadBuilds = state.graph.items.some((item) => item.kind === 'build' && item.status === 'done');
 
     // Final verification (policy final/both) — the only truth about "green".
     if ((state.config.verifyPolicy === 'final' || state.config.verifyPolicy === 'both') && hadBuilds) {
-      const records = await this.runChecks(signal);
+      const records = await this.runChecks(signal, { scope: 'full' });
       const failed = records.find((record) => record.outcome !== 'passed');
       if (failed) {
         if (state.fixRounds >= state.config.maxFixRounds) {
@@ -389,7 +449,7 @@ export class RunEngine extends EventEmitter {
 
   // --- item execution -------------------------------------------------------
 
-  private async executeItem(item: WorkItem, signal: AbortSignal): Promise<void> {
+  private async executeItem(item: WorkItem, signal: AbortSignal, useLane = false): Promise<void> {
     const state = this.requireState();
     item.status = 'running';
     item.attempts += 1;
@@ -397,11 +457,43 @@ export class RunEngine extends EventEmitter {
     await this.record({ type: 'item-status', itemId: item.id, itemStatus: 'running' });
     this.emitStatus();
 
+    // Isolated lane for a parallel build (an existing lane is reused across retries).
+    if (item.kind === 'build' && useLane && !this.lanes.has(item.id)) {
+      try {
+        const lane = await prepareLane(state.workspace, state.runId, item.id);
+        this.lanes.set(item.id, lane);
+        item.worktree = { path: lane.worktree.path, branch: lane.worktree.branch };
+        await this.record({
+          type: 'note',
+          itemId: item.id,
+          text: `Build lane ready: ${lane.worktree.branch} (isolated worktree).`,
+        });
+      } catch (err) {
+        // No lane → never race the shared tree inside a parallel batch; defer
+        // to a sequential pass instead (attempt refunded).
+        item.status = 'pending';
+        item.attempts -= 1;
+        this.sequentialOnly.add(item.id);
+        await this.record({
+          type: 'item-status',
+          itemId: item.id,
+          itemStatus: 'pending',
+          text: `Worktree lane failed (${err instanceof Error ? err.message : String(err)}) — queued for sequential execution.`,
+        });
+        this.emitStatus();
+        return;
+      }
+    }
+
     // Council: independent read-only perspectives BEFORE the authoritative
     // turn. Plan candidates are merged by a synthesis turn on the planner's
     // session; review lenses are merged in code. The write path stays single.
+    // Interactive mode drives ONE live agent, so the council (which is a
+    // headless parallel fan-out) is skipped — otherwise a run would pay for a
+    // full ensemble before every hands-on turn.
     const council = state.config.council;
-    if (item.kind === 'plan' && council.plan > 1) {
+    const useCouncil = !state.config.interactive;
+    if (item.kind === 'plan' && council.plan > 1 && useCouncil) {
       const candidates = await this.runPlanCouncil(item, council, signal);
       if (candidates.length > 0) {
         this.descriptionOverrides.set(item.id, this.synthesisDescription(item, candidates));
@@ -410,7 +502,7 @@ export class RunEngine extends EventEmitter {
     }
     if (item.kind === 'review') {
       const reviewBrief = await this.itemDescriptionForReview(item);
-      if (council.review > 1) {
+      if (council.review > 1 && useCouncil) {
         const merged = await this.runReviewCouncil(item, reviewBrief, council, signal);
         if (merged) {
           await this.applyReviewResult(item, merged);
@@ -466,13 +558,29 @@ export class RunEngine extends EventEmitter {
 
   private async runTurn(item: WorkItem, signal: AbortSignal): Promise<AgentTurnReport> {
     const state = this.requireState();
+    // Interactive mode: a real PTY the user watches and drives (opt-in).
+    if (state.config.interactive) return this.runInteractive(item, signal);
+
     const cli = this.cliConfig ?? defaultTigerConfig();
     const agent = this.agentConfigFor(item);
     const driver = getDriver(agent.provider);
     const sessions = this.requireSessions();
-    const sessionKey = `${state.runId}:${item.agentKey}`;
+    const sessionKey = this.sessionKeyFor(item);
     const stored = sessions.get(sessionKey);
-    const canResume = driver.supportsResume && stored?.sessionId !== undefined;
+    // Session rotation: a slot that has served many turns starts a FRESH
+    // provider session (with a recap) so stale assumptions don't accumulate.
+    const rotate =
+      state.config.sessionRotateTurns > 0 &&
+      (stored?.turns ?? 0) > 0 &&
+      (stored?.turns ?? 0) % state.config.sessionRotateTurns === 0;
+    const canResume = driver.supportsResume && stored?.sessionId !== undefined && !rotate;
+    if (rotate) {
+      await this.record({
+        type: 'note',
+        itemId: item.id,
+        text: `Rotating ${item.agentKey} to a fresh session after ${stored?.turns} turns (recap carried forward).`,
+      });
+    }
 
     // Brief composition: preamble once per session; delta-only follow-ups.
     const brief = composeTaskBrief({
@@ -482,7 +590,7 @@ export class RunEngine extends EventEmitter {
       deltaLines: canResume ? this.deltaLinesSince(stored?.lastSeq ?? 0) : undefined,
       steering: this.drainSteeringTexts(item),
       verificationFailure: this.pendingFailureFor(item),
-      recap: !canResume && (stored?.turns ?? 0) > 0 ? this.composeRecap() : undefined,
+      recap: !canResume && ((stored?.turns ?? 0) > 0 || rotate) ? this.composeRecap() : undefined,
     });
     const prompt = canResume
       ? brief
@@ -490,7 +598,7 @@ export class RunEngine extends EventEmitter {
           runId: state.runId,
           agentName: item.agentKey,
           goal: state.goal,
-          workspace: state.workspace,
+          workspace: this.cwdFor(item),
           projectMap: this.projectMap,
         })}\n${brief}`;
 
@@ -509,11 +617,15 @@ export class RunEngine extends EventEmitter {
         resultSchema: item.kind === 'plan' ? PLAN_RESULT_JSON_SCHEMA : TURN_RESULT_JSON_SCHEMA,
         scratchDir: path.join(this.runDir(), 'scratch', item.id),
       },
-      cwd: state.workspace,
+      cwd: this.cwdFor(item),
       hardTimeoutMs: state.config.hardTurnTimeoutMs,
       signal: this.linkTurnSignal(item.id, signal),
       onEvent: (event) =>
-        void this.onAgentEvent(item, { agentId: item.agentKey, provider: agent.provider, model: agent.model }, event),
+        void this.onAgentEvent(
+          item,
+          { agentId: this.agentIdFor(item), provider: agent.provider, model: agent.model },
+          event,
+        ),
     });
     this.activeTurnAborts.delete(item.id);
 
@@ -523,6 +635,110 @@ export class RunEngine extends EventEmitter {
       turnServed: true,
     });
     return report;
+  }
+
+  /**
+   * Session slot key. Sequential builds share the `builder` session (context
+   * continuity + delta briefs); a build running in its own worktree lane gets a
+   * PER-ITEM session so parallel lanes never resume the same provider session
+   * concurrently.
+   */
+  private sessionKeyFor(item: WorkItem): string {
+    const state = this.requireState();
+    if (item.kind === 'build' && this.lanes.has(item.id)) return `${state.runId}:${item.agentKey}:${item.id}`;
+    return `${state.runId}:${item.agentKey}`;
+  }
+
+  /** Working directory for a turn: the item's lane worktree when isolated, else the workspace. */
+  private cwdFor(item: WorkItem): string {
+    const lane = this.lanes.get(item.id);
+    return lane ? lane.worktree.path : this.requireState().workspace;
+  }
+
+  /** Stable per-turn stream id: unique per build item (parallel-safe), role key otherwise. */
+  private agentIdFor(item: WorkItem): string {
+    return item.kind === 'build' ? item.id : item.agentKey;
+  }
+
+  /**
+   * Interactive turn: launch the provider's REAL CLI in a PTY the user watches
+   * and types into. The engine seeds the brief (always with preamble + recap —
+   * interactive sessions are not resumed by id) and registers the controller so
+   * input / complete / abort can reach the live process.
+   */
+  private async runInteractive(item: WorkItem, signal: AbortSignal): Promise<AgentTurnReport> {
+    const state = this.requireState();
+    const cli = this.cliConfig ?? defaultTigerConfig();
+    const agent = this.agentConfigFor(item);
+    const agentId = this.agentIdFor(item);
+    const brief = composeTaskBrief({
+      title: `${item.id} — ${item.title}`,
+      description: this.itemDescription(item),
+      acceptanceCriteria: item.acceptanceCriteria,
+      steering: this.drainSteeringTexts(item),
+      verificationFailure: this.pendingFailureFor(item),
+      recap: (this.requireSessions().get(this.sessionKeyFor(item))?.turns ?? 0) > 0 ? this.composeRecap() : undefined,
+    });
+    const prompt = `${composeSessionPreamble({
+      runId: state.runId,
+      agentName: agentId,
+      goal: state.goal,
+      workspace: this.cwdFor(item),
+      projectMap: this.projectMap,
+    })}\n${brief}`;
+
+    const controller = this.interactiveRunner({
+      provider: agent.provider,
+      tool: cli.cli[agent.provider],
+      prompt,
+      model: agent.model,
+      effort: agent.effort,
+      permission: agent.permission ?? this.defaultPermission(agent.provider, item),
+      allowDangerous: state.config.allowDangerous,
+      cwd: this.cwdFor(item),
+      scratchDir: path.join(this.runDir(), 'scratch', item.id),
+      hardTimeoutMs: state.config.hardTurnTimeoutMs,
+      signal: this.linkTurnSignal(item.id, signal),
+      onEvent: (event) =>
+        void this.onAgentEvent(item, { agentId, provider: agent.provider, model: agent.model }, event),
+    });
+    this.interactiveTurns.set(agentId, controller);
+    await this.record({
+      type: 'note',
+      itemId: item.id,
+      text: `Interactive session live for ${agentId} — watch and type in its terminal; click “complete turn” when done.`,
+    });
+    try {
+      return await controller.promise;
+    } finally {
+      this.interactiveTurns.delete(agentId);
+      this.activeTurnAborts.delete(item.id);
+      // Interactive slots still count turns (for rotation-recap bookkeeping).
+      await this.requireSessions()
+        .upsert(this.sessionKeyFor(item), agent.provider, { lastSeq: state.seq, turnServed: true })
+        .catch(() => {});
+    }
+  }
+
+  /** Route a user keystroke into a live interactive agent turn. */
+  interactiveInput(agentId: string, data: string): boolean {
+    const controller = this.interactiveTurns.get(agentId);
+    if (!controller) return false;
+    controller.write(data);
+    return true;
+  }
+
+  /** User marks an interactive turn complete (the engine reads its result file). */
+  interactiveComplete(agentId: string): boolean {
+    const controller = this.interactiveTurns.get(agentId);
+    if (!controller) return false;
+    controller.complete();
+    return true;
+  }
+
+  /** Live interactive agent stream ids (for the UI / validation). */
+  listInteractiveAgents(): string[] {
+    return [...this.interactiveTurns.keys()];
   }
 
   private async applyPlanResult(item: WorkItem, report: AgentTurnReport): Promise<void> {
@@ -568,6 +784,12 @@ export class RunEngine extends EventEmitter {
       await this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: task.title });
     }
 
+    // Staged planning bookkeeping: remember any remaining scope so finalize
+    // schedules the next batch instead of ending the run.
+    state.planBatches += 1;
+    const moreToPlan = plan.remainingScope && state.planBatches < state.config.maxPlanBatches;
+    state.pendingScope = moreToPlan ? plan.remainingScope : undefined;
+
     item.status = 'done';
     item.endedAt = nowIso();
     item.resultSummary = plan.summary;
@@ -575,7 +797,11 @@ export class RunEngine extends EventEmitter {
       type: 'item-status',
       itemId: item.id,
       itemStatus: 'done',
-      text: `Plan applied: ${added} task(s). ${plan.summary}`,
+      text:
+        `Plan applied: ${added} task(s). ${plan.summary}` +
+        (state.pendingScope
+          ? ` — more to plan after this batch (${state.planBatches}/${state.config.maxPlanBatches}).`
+          : ''),
     });
     this.emitStatus();
   }
@@ -615,12 +841,14 @@ export class RunEngine extends EventEmitter {
       });
     }
 
-    // Per-build verification: red retries the SAME session with the evidence.
+    // Per-build verification: the QUICK static gate (typecheck/lint) only —
+    // the full suite runs at finalize. Red retries the SAME session with the
+    // failing tail as evidence. Lane builds verify inside their worktree.
     if (state.config.verifyPolicy === 'per-build' || state.config.verifyPolicy === 'both') {
       item.status = 'verifying';
       await this.record({ type: 'item-status', itemId: item.id, itemStatus: 'verifying' });
       this.emitStatus();
-      const records = await this.runChecks(signal);
+      const records = await this.runChecks(signal, { scope: 'quick', cwd: this.cwdFor(item) });
       const failed = records.find((record) => record.outcome !== 'passed');
       if (failed) {
         this.pendingFailures.set(item.id, failed);
@@ -641,11 +869,63 @@ export class RunEngine extends EventEmitter {
       this.pendingFailures.delete(item.id);
     }
 
+    // Merge an isolated lane back onto the main working tree as a patch. A
+    // conflict (another lane touched the same lines) is NOT force-merged: the
+    // item re-runs sequentially in the main tree, where it sees the real state.
+    if (this.lanes.has(item.id)) {
+      const merged = await this.mergeItemLane(item);
+      if (!merged) return;
+    }
+
     item.status = 'done';
     item.endedAt = nowIso();
     await this.record({ type: 'item-status', itemId: item.id, itemStatus: 'done', text: result.summary });
     this.noteDelta(`${item.id} done: ${result.summary}`);
     this.emitStatus();
+  }
+
+  /**
+   * Merge the item's worktree lane onto the main tree. Returns true when the
+   * item may proceed to `done`; false when it was re-queued for a sequential
+   * retry (conflict) — the caller must stop processing this item.
+   */
+  private async mergeItemLane(item: WorkItem): Promise<boolean> {
+    const state = this.requireState();
+    const lane = this.lanes.get(item.id);
+    if (!lane) return true;
+    const result = await mergeLane(state.workspace, lane).catch((err) => ({
+      ok: false as const,
+      files: [] as string[],
+      detail: err instanceof Error ? err.message : String(err),
+    }));
+    // Tear the lane down either way; a conflict retry runs in the main tree.
+    // Compute the per-item session key BEFORE forgetting the lane.
+    const sessionKey = this.sessionKeyFor(item);
+    await cleanupLane(state.workspace, lane).catch(() => {});
+    this.lanes.delete(item.id);
+    await this.requireSessions()
+      .remove(sessionKey)
+      .catch(() => {});
+    item.worktree = null;
+
+    if (result.ok) {
+      if (result.files.length) this.noteDelta(`${item.id} merged ${result.files.length} file(s) from its lane`);
+      return true;
+    }
+
+    // Conflict / merge failure → sequential retry in the main workspace.
+    this.sequentialOnly.add(item.id);
+    item.attempts = Math.max(0, item.attempts - 1); // not the agent's fault
+    this.pendingFailures.delete(item.id);
+    item.status = 'pending';
+    await this.record({
+      type: 'item-status',
+      itemId: item.id,
+      itemStatus: 'pending',
+      text: `Lane merge conflicted (${result.detail ?? 'patch did not apply'}) — re-running sequentially in the main tree.`,
+    });
+    this.emitStatus();
+    return false;
   }
 
   private async applyReviewResult(item: WorkItem, report: AgentTurnReport): Promise<void> {
@@ -912,7 +1192,7 @@ export class RunEngine extends EventEmitter {
     );
 
     const verdicts: string[] = [];
-    const followUps = new Map<string, { title: string; description?: string }>();
+    const followUps: Array<{ title: string; description?: string }> = [];
     let usable = 0;
     results.forEach((result, index) => {
       if (!result) return;
@@ -922,8 +1202,10 @@ export class RunEngine extends EventEmitter {
       const lensName = lenses[index]?.lens.split(' — ')[0] ?? 'lens';
       verdicts.push(`[${lensName}] ${parsed.summary}`);
       for (const task of parsed.followUpTasks ?? []) {
-        const key = task.title.trim().toLowerCase().replace(/\s+/g, ' ');
-        if (!followUps.has(key)) followUps.set(key, task);
+        // Fuzzy dedup: two lenses often report the SAME defect in different
+        // words. Merge when titles are near-duplicates (token-overlap), not
+        // just byte-identical, so one fix task is filed per real issue.
+        if (!followUps.some((existing) => titlesSimilar(existing.title, task.title))) followUps.push(task);
       }
     });
     if (usable === 0) return null;
@@ -935,7 +1217,7 @@ export class RunEngine extends EventEmitter {
       result: {
         status: 'done',
         summary: verdicts.join(' | ').slice(0, 4000),
-        followUpTasks: [...followUps.values()],
+        followUpTasks: followUps,
       },
       eventCount: 0,
       durationMs: 0,
@@ -974,10 +1256,24 @@ export class RunEngine extends EventEmitter {
       item.status = 'blocked';
       item.error = error;
       item.endedAt = nowIso();
+      // A blocked lane build is abandoned: drop its worktree so it never leaks.
+      await this.discardItemLane(item);
       await this.record({ type: 'item-status', itemId: item.id, itemStatus: 'blocked', text: error });
       this.noteDelta(`${item.id} blocked: ${error}`);
     }
     this.emitStatus();
+  }
+
+  /** Tear down an item's lane without merging (blocked/abandoned build). */
+  private async discardItemLane(item: WorkItem): Promise<void> {
+    const lane = this.lanes.get(item.id);
+    if (!lane) return;
+    await cleanupLane(this.requireState().workspace, lane).catch(() => {});
+    await this.requireSessions()
+      .remove(this.sessionKeyFor(item))
+      .catch(() => {});
+    this.lanes.delete(item.id);
+    item.worktree = null;
   }
 
   // --- helpers -----------------------------------------------------------------
@@ -990,13 +1286,33 @@ export class RunEngine extends EventEmitter {
     return record ? { command: record.command, outputTail: record.outputTail } : undefined;
   }
 
-  private async runChecks(signal: AbortSignal): Promise<VerificationRecord[]> {
+  /**
+   * Run checks and persist the records. `scope: 'quick'` uses the cheap static
+   * gate (per-build); `scope: 'full'` uses the whole suite (finalize). `cwd`
+   * lets a lane build verify inside its own worktree.
+   */
+  private async runChecks(
+    signal: AbortSignal,
+    opts: { scope?: 'quick' | 'full'; cwd?: string } = {},
+  ): Promise<VerificationRecord[]> {
     const state = this.requireState();
-    let commands: VerificationCommand[] = state.config.verifyCommands;
-    if (!commands.length) commands = await discoverVerificationCommands(state.workspace);
+    const scope = opts.scope ?? 'full';
+    const cwd = opts.cwd ?? state.workspace;
+    let commands: VerificationCommand[];
+    if (scope === 'quick') {
+      commands = state.config.quickVerifyCommands.length
+        ? state.config.quickVerifyCommands
+        : await discoverQuickVerificationCommands(state.workspace);
+    } else {
+      commands = state.config.verifyCommands.length
+        ? state.config.verifyCommands
+        : await discoverVerificationCommands(state.workspace);
+    }
     if (!commands.length) return [];
-    const records = await this.verification.run(commands, { cwd: state.workspace, signal });
-    state.verifications = records;
+    const records = await this.verification.run(commands, { cwd, signal });
+    // Only full/main-tree runs are the authoritative run-level verification
+    // snapshot; a lane's quick gate is item-local and stays in the event log.
+    if (scope === 'full' && cwd === state.workspace) state.verifications = records;
     for (const record of records) {
       await this.record({ type: 'verification', verification: record });
       this.noteDelta(`check ${record.id}: ${record.outcome} (exit ${record.exitCode ?? '—'})`);
@@ -1022,6 +1338,26 @@ export class RunEngine extends EventEmitter {
     void this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: title });
   }
 
+  /** Planning skipped: seed the goal as a single build task the builder does directly. */
+  private seedDirectBuild(): void {
+    const state = this.requireState();
+    const id = nextItemId(state.graph, 'T');
+    state.graph.items.push({
+      id,
+      kind: 'build',
+      title: 'Complete the goal',
+      description:
+        `Planning is disabled — there is no task breakdown. Complete this goal DIRECTLY and fully:\n\n${state.goal}\n\n` +
+        'If the goal is large, do as much as you can this turn and report the rest as follow-up tasks.',
+      dependsOn: [],
+      status: 'pending',
+      agentKey: 'builder',
+      attempts: 0,
+      createdAt: nowIso(),
+    });
+    void this.record({ type: 'item-status', itemId: id, itemStatus: 'pending', text: 'Direct build (planning skipped).' });
+  }
+
   private planDescription(): string {
     const state = this.requireState();
     const existing = state.graph.items.filter((item) => item.kind === 'build');
@@ -1030,6 +1366,20 @@ export class RunEngine extends EventEmitter {
           .map((item) => `- ${item.id} [${item.status}] ${item.title}${item.error ? ` (${item.error})` : ''}`)
           .join('\n')}`
       : '';
+    // Staged planning: for a large goal, plan only the next executable BATCH
+    // and declare what remains, rather than emitting one giant brittle plan.
+    const batch = state.config.planBatchSize;
+    const stagedInstruction =
+      batch > 0
+        ? `\n\nSTAGED PLANNING: plan AT MOST ${batch} build task(s) in this batch — the next coherent, executable slice ` +
+          `of the goal (respecting dependencies). If the goal needs more than that, put a short description of the ` +
+          `NOT-yet-planned remainder in "remainingScope"; Kaplan will call you again to plan the next batch once this ` +
+          `one is built. If everything fits in this batch, leave "remainingScope" empty.`
+        : '';
+    const carriedScope = state.pendingScope
+      ? `\n\nRESUMING A STAGED PLAN. Already-planned batches are shown above (do NOT re-plan them). ` +
+        `Plan the NEXT batch for this remaining scope:\n${state.pendingScope}`
+      : '';
     return (
       `Decompose the goal into the SMALLEST set of build tasks that fully achieves it. ` +
       `Each task description must be SELF-CONTAINED (executable without reading the other tasks): ` +
@@ -1037,6 +1387,8 @@ export class RunEngine extends EventEmitter {
       `Order tasks by dependency; use dependsOn for hard orderings; do not create tasks for verification ` +
       `(Kaplan runs the checks itself) or coordination (there is none to do). ` +
       `End with the plan JSON object contract.` +
+      stagedInstruction +
+      carriedScope +
       graphState
     );
   }
@@ -1131,6 +1483,17 @@ export class RunEngine extends EventEmitter {
     if (this.deltaLog.length > 500) this.deltaLog.shift();
   }
 
+  /** Tear down every live lane (used when the run settles or is stopped). */
+  private async reclaimLanes(): Promise<void> {
+    if (this.lanes.size === 0) return;
+    const workspace = this.state?.workspace;
+    if (!workspace) return;
+    for (const lane of this.lanes.values()) {
+      await cleanupLane(workspace, lane).catch(() => {});
+    }
+    this.lanes.clear();
+  }
+
   private async onAgentEvent(item: WorkItem, source: RunAgentSource, event: AgentEvent): Promise<void> {
     // Live fan-out of EVERYTHING (the per-agent terminal feed); persist a
     // trimmed copy — raw/stderr noise stays live-only.
@@ -1152,6 +1515,9 @@ export class RunEngine extends EventEmitter {
 
   private async finish(status: RunStatus, message: string): Promise<void> {
     const state = this.requireState();
+    // Reclaim any lingering worktree lanes before the run settles so a
+    // stop/failure never leaves orphaned worktrees + branches behind.
+    await this.reclaimLanes();
     state.status = status;
     state.message = message;
     state.endedAt = nowIso();
@@ -1249,6 +1615,34 @@ function describeSeats(seats: CouncilSeat[]): string {
 function clampCount(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(1, Math.min(COUNCIL_MAX, Math.floor(value)));
+}
+
+const STOPWORDS = new Set(['the', 'a', 'an', 'to', 'of', 'in', 'on', 'for', 'and', 'or', 'is', 'are', 'fix', 'add']);
+
+/** Content tokens of a title (lowercased, destopped) — the fuzzy-dedup signature. */
+function titleTokens(title: string): Set<string> {
+  return new Set(
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length > 2 && !STOPWORDS.has(token)),
+  );
+}
+
+/**
+ * Two review findings are "the same issue" when their titles' content tokens
+ * overlap heavily (Jaccard ≥ 0.6). Catches "Null check missing in parseX" vs
+ * "parseX crashes on null input" that exact-string dedup would keep as two.
+ */
+function titlesSimilar(a: string, b: string): boolean {
+  const ta = titleTokens(a);
+  const tb = titleTokens(b);
+  if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  let intersection = 0;
+  for (const token of ta) if (tb.has(token)) intersection += 1;
+  const union = ta.size + tb.size - intersection;
+  return union > 0 && intersection / union >= 0.6;
 }
 
 function round4(value: number): number {

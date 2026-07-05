@@ -60,6 +60,27 @@ export function createRunsRouter(ctx: AppCtx): Router {
     res.json({ run: await engine.steer(body.body, { interrupt: body.interrupt === true }) });
   });
 
+  // Interactive mode: route a user keystroke into a live agent's PTY.
+  router.post('/current/input', (req, res) => {
+    requireRun(engine.getSnapshot());
+    const body = (req.body ?? {}) as { agentId?: unknown; data?: unknown };
+    if (typeof body.agentId !== 'string' || !body.agentId.trim()) throw badRequest('agentId is required');
+    if (typeof body.data !== 'string') throw badRequest('data (string) is required');
+    const routed = engine.interactiveInput(body.agentId, body.data);
+    if (!routed) throw notFound(`no live interactive turn for agent "${body.agentId}"`);
+    res.json({ ok: true });
+  });
+
+  // Interactive mode: the user declares an agent's turn complete.
+  router.post('/current/complete', (req, res) => {
+    requireRun(engine.getSnapshot());
+    const body = (req.body ?? {}) as { agentId?: unknown };
+    if (typeof body.agentId !== 'string' || !body.agentId.trim()) throw badRequest('agentId is required');
+    const done = engine.interactiveComplete(body.agentId);
+    if (!done) throw notFound(`no live interactive turn for agent "${body.agentId}"`);
+    res.json({ ok: true });
+  });
+
   // Event log replay for reconnect/reopen: ?afterSeq=N.
   router.get('/current/events', async (req, res) => {
     requireRun(engine.getSnapshot());
@@ -144,10 +165,24 @@ function sanitizeConfig(raw: unknown): Partial<RunConfig> | undefined {
   if (typeof input.maxAttemptsPerItem === 'number' && input.maxAttemptsPerItem >= 1 && input.maxAttemptsPerItem <= 5) {
     out.maxAttemptsPerItem = Math.floor(input.maxAttemptsPerItem);
   }
+  if (typeof input.maxParallelBuilds === 'number' && input.maxParallelBuilds >= 1 && input.maxParallelBuilds <= 4) {
+    out.maxParallelBuilds = Math.floor(input.maxParallelBuilds);
+  }
+  if (typeof input.planBatchSize === 'number' && input.planBatchSize >= 1 && input.planBatchSize <= 50) {
+    out.planBatchSize = Math.floor(input.planBatchSize);
+  }
+  if (
+    typeof input.sessionRotateTurns === 'number' &&
+    input.sessionRotateTurns >= 0 &&
+    input.sessionRotateTurns <= 100
+  ) {
+    out.sessionRotateTurns = Math.floor(input.sessionRotateTurns);
+  }
   if (typeof input.hardTurnTimeoutMs === 'number' && input.hardTurnTimeoutMs >= 60_000) {
     out.hardTurnTimeoutMs = Math.min(input.hardTurnTimeoutMs, 6 * 60 * 60_000);
   }
   if (typeof input.allowDangerous === 'boolean') out.allowDangerous = input.allowDangerous;
+  if (typeof input.interactive === 'boolean') out.interactive = input.interactive;
   if (
     input.importance === 'low' ||
     input.importance === 'normal' ||

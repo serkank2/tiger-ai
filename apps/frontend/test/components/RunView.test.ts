@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   listRuns: vi.fn(),
   getRunById: vi.fn(),
   getProvidersConfig: vi.fn(),
+  interactiveInput: vi.fn(),
+  interactiveComplete: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -212,6 +214,52 @@ describe('RunView', () => {
     await wrapper.find('[data-testid="run-terminals"] form').trigger('submit');
     await flushPromises();
     expect(api.steerRun).toHaveBeenCalledWith('change course', false);
+  });
+
+  it('shows interactive input + complete controls and routes them for a live interactive run', async () => {
+    api.interactiveInput.mockResolvedValue({ ok: true });
+    api.interactiveComplete.mockResolvedValue({ ok: true });
+    const wrapper = await mountView(snapshot({ interactive: true }));
+    const { useRunsStore } = await import('~/stores/runs');
+    const runs = useRunsStore();
+    // A live interactive agent stream.
+    runs.appendEvent({
+      seq: 20,
+      at: 'now',
+      type: 'agent',
+      runId: 'run-1',
+      itemId: 'T1',
+      agentId: 'T1',
+      provider: 'claude',
+      agent: { type: 'text', at: 'now', text: 'thinking out loud' },
+    });
+    await flushPromises();
+
+    const input = wrapper.find('[data-testid="run-terminal-input-T1"]');
+    expect(input.exists()).toBe(true);
+    await input.find('input').setValue('run the tests');
+    await input.trigger('submit');
+    await flushPromises();
+    expect(api.interactiveInput).toHaveBeenCalledWith('T1', 'run the tests\r');
+
+    await wrapper.find('[data-testid="run-terminal-complete-T1"]').trigger('click');
+    await flushPromises();
+    expect(api.interactiveComplete).toHaveBeenCalledWith('T1');
+  });
+
+  it('sends interactive flag and parallel builds on create', async () => {
+    const wrapper = await mountView(null);
+    api.createRun.mockResolvedValue({ run: snapshot({ status: 'created' }) });
+    api.startRun.mockResolvedValue({ run: snapshot() });
+    await wrapper.find('[data-testid="run-goal"]').setValue('Build it');
+    await wrapper.find('[data-testid="run-workspace"]').setValue('C:/w');
+    await wrapper.find('[data-testid="run-parallel-builds"]').setValue('3');
+    await wrapper.find('[data-testid="run-interactive"]').setValue(true);
+    await wrapper.find('[data-testid="run-create-form"]').trigger('submit');
+    await flushPromises();
+    const input = api.createRun.mock.calls[0]![0];
+    expect(input.config.maxParallelBuilds).toBe(3);
+    expect(input.config.interactive).toBe(true);
   });
 
   it('sends the explicit council roster and builder model on create', async () => {

@@ -1037,6 +1037,8 @@ export interface RunSnapshot {
   profile: RunProfile;
   importance: RunImportance;
   council: RunCouncilConfig;
+  /** Interactive-mode flag → UI shows per-agent input + complete controls. */
+  interactive?: boolean;
   seq: number;
   usage: RunUsageTotals;
   graph: { items: RunWorkItem[] };
@@ -1137,6 +1139,14 @@ export interface RunCreateConfigInput {
   allowDangerous?: boolean;
   importance?: RunImportance;
   council?: Partial<RunCouncilConfig>;
+  /** Interactive mode: agents run as live PTYs you watch and type into. */
+  interactive?: boolean;
+  /** Build lanes: 1 = sequential; >1 = isolated worktrees merged back (needs git). */
+  maxParallelBuilds?: number;
+  /** Staged planning: max tasks planned per plan turn (mega-goals plan in batches). */
+  planBatchSize?: number;
+  /** Rotate an agent slot to a fresh session after N turns (0 = never). */
+  sessionRotateTurns?: number;
 }
 
 // --- Backend health (mirror of GET /api/health) ---

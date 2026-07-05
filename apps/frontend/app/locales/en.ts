@@ -86,6 +86,12 @@ export default {
     importanceLabel: 'Importance',
     importanceHint:
       'Importance sizes the council: independent plan candidates and review lenses (different models, different angles). The writer always stays single. Low/Normal = 1, High = 3, Critical = 5.',
+    parallelBuildsLabel: 'Parallel builds',
+    parallelBuildsHint:
+      'How many build tasks run at once. >1 runs each in an isolated git worktree and merges the result back as a patch (needs a git workspace; conflicts fall back to a sequential retry). 1 = classic sequential in the shared tree.',
+    interactiveLabel: 'Interactive terminals (watch & type into each agent)',
+    interactiveHint:
+      'Runs each agent as a real interactive CLI in a live terminal you can watch and type into (use /compact yourself). Slower and more hands-on than the efficient headless default — a turn ends when the agent writes its result or you click “complete turn”.',
     importance: {
       low: 'Low',
       normal: 'Normal',
@@ -103,6 +109,9 @@ export default {
       idle: 'idle',
       turnStarted: 'turn started',
       turnEnded: 'turn ended',
+      inputPlaceholder: 'Type into this agent…',
+      send: 'Send',
+      completeTurn: 'Complete turn',
     },
     council: {
       title: 'Agents (council)',

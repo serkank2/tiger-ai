@@ -10,17 +10,40 @@ import BaseInput from '~/components/ui/BaseInput.vue';
 import { useT } from '~/composables/useT';
 import type { RunTerminal, RunTerminalLine } from '~/stores/runs';
 
-const props = defineProps<{ terminals: RunTerminal[]; active: boolean; steerBusy?: boolean }>();
-const emit = defineEmits<{ steer: [body: string, interrupt: boolean] }>();
+const props = defineProps<{
+  terminals: RunTerminal[];
+  active: boolean;
+  steerBusy?: boolean;
+  interactive?: boolean;
+  completeBusy?: (agentId: string) => boolean;
+}>();
+const emit = defineEmits<{
+  steer: [body: string, interrupt: boolean];
+  input: [agentId: string, data: string];
+  complete: [agentId: string];
+}>();
 const { t } = useT();
 
 const steering = ref('');
+// Per-pane input buffers for interactive mode (keyed by agent/pane id).
+const paneInput = ref<Record<string, string>>({});
 
 function submit(interrupt: boolean): void {
   const body = steering.value.trim();
   if (!body) return;
   emit('steer', body, interrupt);
   steering.value = '';
+}
+
+function setPaneInput(id: string, value: string | number | undefined): void {
+  paneInput.value = { ...paneInput.value, [id]: String(value ?? '') };
+}
+
+function sendInput(id: string): void {
+  const data = paneInput.value[id];
+  if (!data) return;
+  emit('input', id, data + '\r');
+  paneInput.value = { ...paneInput.value, [id]: '' };
 }
 
 // Keep every pane pinned to its newest line unless the user scrolled up.
@@ -87,6 +110,28 @@ function lineText(line: RunTerminalLine): string {
             {{ lineText(line) }}
           </div>
         </div>
+        <!-- Interactive mode: type into the live CLI + declare the turn done. -->
+        <form
+          v-if="interactive && pane.live && active"
+          class="pane-input"
+          :data-testid="`run-terminal-input-${pane.id}`"
+          @submit.prevent="sendInput(pane.id)"
+        >
+          <BaseInput
+            :model-value="paneInput[pane.id] ?? ''"
+            :placeholder="t('runs.terminals.inputPlaceholder')"
+            @update:model-value="(v) => setPaneInput(pane.id, v)"
+          />
+          <BaseButton type="submit" size="sm" variant="secondary">{{ t('runs.terminals.send') }}</BaseButton>
+          <BaseButton
+            size="sm"
+            :loading="completeBusy?.(pane.id)"
+            :data-testid="`run-terminal-complete-${pane.id}`"
+            @click="emit('complete', pane.id)"
+          >
+            {{ t('runs.terminals.completeTurn') }}
+          </BaseButton>
+        </form>
       </section>
     </div>
     <form class="steer" @submit.prevent="submit(false)">
@@ -231,6 +276,16 @@ function lineText(line: RunTerminalLine): string {
 }
 .line[data-type='turn-started'] {
   color: var(--text-dim);
+}
+.pane-input {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  align-items: center;
+}
+.pane-input :deep(input) {
+  flex: 1;
 }
 .steer {
   display: flex;

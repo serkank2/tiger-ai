@@ -410,8 +410,274 @@ test('engine: an explicit council roster pins per-provider counts + models and s
   assert.ok(agentEvents.length > 0);
   assert.ok(agentEvents.every((event) => typeof event.agentId === 'string' && event.provider !== undefined));
   assert.ok(agentEvents.some((event) => event.agentId === 'plan-candidate-1'));
-  assert.ok(agentEvents.some((event) => event.agentId === 'builder' && event.model === undefined));
+  // Build turns stream under a per-item agentId (parallel-safe), not the shared 'builder' key.
+  assert.ok(agentEvents.some((event) => event.agentId === 'T1' && event.model === undefined));
   assert.ok(agentEvents.every((event) => event.agent?.type !== 'raw'));
+});
+
+test('engine: staged planning plans in batches until remainingScope is cleared', async () => {
+  let planTurns = 0;
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      const isPlan = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      if (isPlan) {
+        planTurns += 1;
+        // First batch leaves scope behind; the second batch finishes it.
+        const remainingScope = planTurns === 1 ? 'the second half of the goal' : undefined;
+        return {
+          state: 'completed',
+          exitCode: 0,
+          sessionId: 's',
+          resultText: JSON.stringify({
+            status: 'done',
+            summary: `batch ${planTurns}`,
+            tasks: [{ id: `T${planTurns}`, title: `Task ${planTurns}`, description: 'do it fully' }],
+            ...(remainingScope ? { remainingScope } : {}),
+          }),
+          result: null,
+          eventCount: 1,
+          durationMs: 1,
+          command: 'fake',
+        };
+      }
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: 's',
+        resultText: JSON.stringify({ status: 'done', summary: 'built' }),
+        result: { status: 'done', summary: 'built' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'A big two-part goal',
+    config: { reviewPolicy: 'none', verifyPolicy: 'none', planBatchSize: 1 },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+
+  const snapshot = engine.getSnapshot();
+  assert.equal(snapshot?.status, 'completed');
+  // Two plan items (batches) and two build tasks, all done.
+  const kinds = snapshot!.graph.items.map((item) => `${item.kind}:${item.status}`).sort();
+  assert.deepEqual(kinds, ['build:done', 'build:done', 'plan:done', 'plan:done']);
+  assert.equal(planTurns, 2);
+});
+
+test('engine: per-build verification uses the QUICK set; finalize uses the FULL set', async () => {
+  const ran: Array<{ ids: string[]; cwd: string }> = [];
+  const fakeVerification = {
+    run: async (commands: Array<{ id: string }>, opts: { cwd: string }) => {
+      ran.push({ ids: commands.map((c) => c.id), cwd: opts.cwd });
+      return commands.map((command) => ({
+        id: command.id,
+        command: command.id,
+        outcome: 'passed' as const,
+        exitCode: 0,
+        durationMs: 1,
+        outputTail: '',
+        at: new Date().toISOString(),
+      }));
+    },
+  };
+  const engine = new RunEngine({
+    verification: fakeVerification as never,
+    turnRunner: async (opts) => {
+      const isPlan = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: 's',
+        resultText: isPlan
+          ? JSON.stringify({
+              status: 'done',
+              summary: 'one task',
+              tasks: [{ id: 'T1', title: 'X', description: 'do X' }],
+            })
+          : JSON.stringify({ status: 'done', summary: 'built' }),
+        result: isPlan ? null : { status: 'done', summary: 'built' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Goal',
+    config: {
+      reviewPolicy: 'none',
+      verifyPolicy: 'both',
+      quickVerifyCommands: [{ id: 'typecheck', command: 'x', args: [] }],
+      verifyCommands: [
+        { id: 'typecheck', command: 'x', args: [] },
+        { id: 'test', command: 'x', args: [] },
+      ],
+    },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+  assert.equal(engine.getSnapshot()?.status, 'completed');
+
+  // The per-build gate ran ONLY the quick set; finalize ran the full suite.
+  const perBuild = ran.find((entry) => entry.ids.length === 1 && entry.ids[0] === 'typecheck');
+  const final = ran.find((entry) => entry.ids.includes('test'));
+  assert.ok(perBuild, 'per-build quick check ran');
+  assert.ok(final, 'finalize full check ran');
+});
+
+test('engine: review council fuzzy-dedupes findings that describe the same issue', async () => {
+  let lens = 0;
+  const engine = new RunEngine({
+    turnRunner: async (opts) => {
+      const prompt = opts.request.prompt;
+      const isPlanSchema = opts.request.resultSchema === PLAN_RESULT_JSON_SCHEMA;
+      if (prompt.includes('review lens')) {
+        lens += 1;
+        // Two lenses report the SAME defect with reordered wording (exact-string
+        // dedup would keep both; fuzzy token-overlap dedup collapses them).
+        const title = lens === 1 ? 'Null check missing in parseConfig' : 'parseConfig missing a null check';
+        return {
+          state: 'completed',
+          exitCode: 0,
+          sessionId: 's',
+          resultText: JSON.stringify({ status: 'done', summary: `lens ${lens}`, followUpTasks: [{ title }] }),
+          result: null,
+          eventCount: 1,
+          durationMs: 1,
+          command: 'fake',
+        };
+      }
+      return {
+        state: 'completed',
+        exitCode: 0,
+        sessionId: 's',
+        resultText: isPlanSchema
+          ? JSON.stringify({ status: 'done', summary: 'one', tasks: [{ id: 'T1', title: 'X', description: 'do X' }] })
+          : JSON.stringify({ status: 'done', summary: 'built' }),
+        result: isPlanSchema ? null : { status: 'done', summary: 'built' },
+        eventCount: 1,
+        durationMs: 1,
+        command: 'fake',
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Goal',
+    config: {
+      reviewPolicy: 'final',
+      verifyPolicy: 'none',
+      council: { plan: 1, review: 2, providers: ['claude'] },
+    },
+  });
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  engine.start();
+  await done;
+
+  // Both lenses flagged the same defect → exactly ONE fix task, not two.
+  const fixTasks = engine.getSnapshot()!.graph.items.filter((item) => item.fixOf?.startsWith('review'));
+  assert.equal(fixTasks.length, 1);
+});
+
+test('engine: interactive mode drives PTY turns and routes user input/complete by agentId', async () => {
+  // A fake interactive runner whose turns stay live until engine.interactiveComplete()
+  // is called — exactly the user-driven completion the real PTY runner models.
+  const writes: string[] = [];
+  const seen: string[] = [];
+  const engine = new RunEngine({
+    interactiveRunner: (opts) => {
+      let resolveFn!: (r: AgentTurnReport) => void;
+      const promise = new Promise<AgentTurnReport>((resolve) => (resolveFn = resolve));
+      const isPlan = opts.prompt.includes('Decompose the goal');
+      seen.push(/You are "([^"]+)"/.exec(opts.prompt)?.[1] ?? 'unknown');
+      return {
+        promise,
+        write: (data: string) => writes.push(data),
+        complete: () =>
+          resolveFn({
+            state: 'completed',
+            exitCode: 0,
+            resultText: isPlan
+              ? JSON.stringify({ status: 'done', summary: 'p', tasks: [{ id: 'T1', title: 'X', description: 'do X' }] })
+              : JSON.stringify({ status: 'done', summary: 'built interactively' }),
+            result: isPlan ? null : { status: 'done', summary: 'built interactively' },
+            eventCount: 1,
+            durationMs: 1,
+            command: 'fake-interactive',
+          }),
+        abort: () =>
+          resolveFn({ state: 'stopped', exitCode: null, result: null, eventCount: 0, durationMs: 1, command: 'x' }),
+      };
+    },
+  });
+  const workspace = await makeWorkspace();
+  await engine.createRun({
+    workspace,
+    goal: 'Do it live',
+    config: { reviewPolicy: 'none', verifyPolicy: 'none', interactive: true },
+  });
+  assert.equal(engine.getSnapshot()?.interactive, true);
+
+  const done = new Promise<void>((resolve) => {
+    engine.on('engine-event', (payload: { kind: string; state?: { status: string } }) => {
+      if (payload.kind === 'state' && ['completed', 'failed', 'blocked'].includes(payload.state?.status ?? ''))
+        resolve();
+    });
+  });
+  const waitLive = async (agentId: string): Promise<void> => {
+    for (let i = 0; i < 200; i += 1) {
+      if (engine.listInteractiveAgents().includes(agentId)) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(`interactive agent "${agentId}" never went live`);
+  };
+
+  engine.start();
+
+  // The plan turn goes live under agentId 'planner'; user input routes to it,
+  // then the user completes the turn — the engine advances to the build.
+  await waitLive('planner');
+  const routed = engine.interactiveInput('planner', '/compact\r');
+  assert.ok(routed, 'input routed to the live planner turn');
+  assert.equal(engine.interactiveInput('nobody', 'x'), false, 'unknown agent → no-op');
+  engine.interactiveComplete('planner');
+
+  // The build turn goes live under its item id (parallel-safe); complete it too.
+  await waitLive('T1');
+  engine.interactiveComplete('T1');
+
+  await done;
+  assert.equal(engine.getSnapshot()?.status, 'completed');
+  assert.ok(writes.includes('/compact\r'));
+  assert.ok(seen.includes('planner') && seen.includes('T1'));
 });
 
 test('engine: a persistently blocked builder blocks the item and the run — honestly', async () => {

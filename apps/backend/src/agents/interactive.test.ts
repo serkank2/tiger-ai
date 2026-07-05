@@ -1,0 +1,120 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import { promises as fs } from 'node:fs';
+import { runInteractiveTurn, type InteractivePty, type InteractivePtySpawn } from './interactive.js';
+import { defaultTigerConfig } from '../orchestrator/config.js';
+import type { AgentEvent } from './events.js';
+
+const cfg = defaultTigerConfig();
+// ESC built at runtime so this source file stays ASCII-clean (no raw control bytes).
+const ESC = String.fromCharCode(27);
+
+/** A controllable fake PTY: capture writes, push data/exit, observe kill. */
+function fakePty() {
+  let dataCb: ((d: string) => void) | null = null;
+  let exitCb: ((e: { exitCode: number }) => void) | null = null;
+  const writes: string[] = [];
+  let killed = false;
+  const pty: InteractivePty = {
+    write: (data) => writes.push(data),
+    onData: (cb) => {
+      dataCb = cb;
+      return { dispose: () => (dataCb = null) };
+    },
+    onExit: (cb) => {
+      exitCb = cb;
+      return { dispose: () => (exitCb = null) };
+    },
+    kill: () => {
+      killed = true;
+    },
+  };
+  return {
+    pty,
+    writes,
+    emitData: (d: string) => dataCb?.(d),
+    emitExit: (code: number) => exitCb?.({ exitCode: code }),
+    wasKilled: () => killed,
+  };
+}
+
+async function scratch(): Promise<string> {
+  return fs.mkdtemp(path.join(os.tmpdir(), 'kaplan-int-'));
+}
+
+const baseOpts = (dir: string, spawn: InteractivePtySpawn, events: AgentEvent[] = []) => ({
+  provider: 'claude' as const,
+  tool: cfg.cli.claude,
+  prompt: 'Do the task.',
+  allowDangerous: false,
+  cwd: dir,
+  scratchDir: dir,
+  hardTimeoutMs: 10_000,
+  pollMs: 20,
+  seedDelayMs: 10,
+  ptySpawn: spawn,
+  onEvent: (e: AgentEvent) => events.push(e),
+});
+
+test('interactive: seeds the brief, streams output, and completes when the result file appears', async () => {
+  const dir = await scratch();
+  const fake = fakePty();
+  const events: AgentEvent[] = [];
+  const controller = runInteractiveTurn(baseOpts(dir, () => fake.pty, events));
+
+  // The brief is seeded into the PTY (after a short delay), with the result-file contract.
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(fake.writes.length, 1);
+  assert.ok(fake.writes[0]!.includes('Do the task.'));
+  assert.ok(fake.writes[0]!.includes('KAPLAN_RESULT_FILE') || fake.writes[0]!.includes('interactive-result.json'));
+
+  // TUI output (with ANSI colour codes) streams out as plain text.
+  fake.emitData(ESC + '[32mworking done' + ESC + '[0m\r\n');
+  const streamed = events.find((e) => e.type === 'text' && e.text?.includes('working done'));
+  assert.ok(streamed, 'TUI text streamed as an agent event');
+  assert.ok(!streamed?.text?.includes(ESC), 'ANSI stripped from streamed text');
+
+  // The agent writes its structured result → the turn completes on the next poll.
+  await fs.writeFile(path.join(dir, 'interactive-result.json'), '{"status":"done","summary":"finished it"}', 'utf8');
+  const report = await controller.promise;
+  assert.equal(report.state, 'completed');
+  assert.equal(report.result?.summary, 'finished it');
+  assert.ok(fake.wasKilled(), 'PTY torn down on completion');
+});
+
+test('interactive: user keystrokes route into the live PTY', async () => {
+  const dir = await scratch();
+  const fake = fakePty();
+  const controller = runInteractiveTurn(baseOpts(dir, () => fake.pty));
+  await new Promise((r) => setTimeout(r, 50));
+  const before = fake.writes.length;
+  controller.write('/compact\r');
+  assert.equal(fake.writes.at(-1), '/compact\r');
+  assert.ok(fake.writes.length > before);
+  controller.abort('cleanup');
+  await controller.promise;
+});
+
+test('interactive: user "complete" without a result file still resolves as done', async () => {
+  const dir = await scratch();
+  const fake = fakePty();
+  const controller = runInteractiveTurn(baseOpts(dir, () => fake.pty));
+  await new Promise((r) => setTimeout(r, 50));
+  controller.complete();
+  const report = await controller.promise;
+  assert.equal(report.state, 'completed');
+  assert.match(report.result?.summary ?? '', /user/i);
+});
+
+test('interactive: a non-zero PTY exit with no result file fails the turn', async () => {
+  const dir = await scratch();
+  const fake = fakePty();
+  const controller = runInteractiveTurn(baseOpts(dir, () => fake.pty));
+  await new Promise((r) => setTimeout(r, 50));
+  fake.emitExit(1);
+  const report = await controller.promise;
+  assert.equal(report.state, 'failed');
+  assert.match(report.error ?? '', /exited with code 1/);
+});

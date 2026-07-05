@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   getRunChanges: vi.fn(),
   listRuns: vi.fn(),
   getRunById: vi.fn(),
+  interactiveInput: vi.fn(),
+  interactiveComplete: vi.fn(),
 }));
 
 vi.mock('~/composables/useApi', () => ({ useApi: () => api }));
@@ -169,6 +171,16 @@ describe('runs store', () => {
 
     runs.appendEvent(agentEvent(6, 'result'));
     expect(runs.terminals['builder']!.live).toBe(false);
+  });
+
+  it('interactiveInput/interactiveComplete call the API by agentId', async () => {
+    const runs = useRunsStore();
+    api.interactiveInput.mockResolvedValue({ ok: true });
+    api.interactiveComplete.mockResolvedValue({ ok: true });
+    await runs.interactiveInput('T1', '/compact\r');
+    await runs.interactiveComplete('T1');
+    expect(api.interactiveInput).toHaveBeenCalledWith('T1', '/compact\r');
+    expect(api.interactiveComplete).toHaveBeenCalledWith('T1');
   });
 
   it('a settled run.state snapshot marks every terminal idle', () => {

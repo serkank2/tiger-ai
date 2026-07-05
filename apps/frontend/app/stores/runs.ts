@@ -223,6 +223,27 @@ export const useRunsStore = defineStore('runs', () => {
     }
   }
 
+  /** Interactive mode: route a user keystroke into a live agent's PTY. */
+  async function interactiveInput(agentId: string, data: string): Promise<void> {
+    try {
+      await api.interactiveInput(agentId, data);
+    } catch (e) {
+      notify(e);
+    }
+  }
+
+  /** Interactive mode: mark a live agent's turn complete. */
+  async function interactiveComplete(agentId: string): Promise<void> {
+    setBusy(`complete:${agentId}`, true);
+    try {
+      await api.interactiveComplete(agentId);
+    } catch (e) {
+      notify(e);
+    } finally {
+      setBusy(`complete:${agentId}`, false);
+    }
+  }
+
   /** Surface an action failure as a toast (loadError already renders inline). */
   function notify(e: unknown): void {
     try {
@@ -303,5 +324,7 @@ export const useRunsStore = defineStore('runs', () => {
     loadChanges,
     loadHistory,
     openHistoryRun,
+    interactiveInput,
+    interactiveComplete,
   };
 });

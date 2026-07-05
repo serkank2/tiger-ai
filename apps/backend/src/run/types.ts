@@ -70,7 +70,11 @@ export interface RunConfig {
   builder: RunAgentConfig;
   planner?: RunAgentConfig;
   reviewer?: RunAgentConfig;
-  /** >1 requires git worktree isolation; clamped to 1 otherwise. */
+  /**
+   * Build lanes: 1 = sequential in the shared workspace; >1 = each batch item
+   * runs in an isolated git worktree and merges back as a patch (requires a
+   * git repo; degrades to 1 with a note otherwise).
+   */
   maxParallelBuilds: number;
   /** Attempts per item before it is blocked (retries resume the SAME session with the failure evidence). */
   maxAttemptsPerItem: number;
@@ -79,6 +83,13 @@ export interface RunConfig {
   verifyPolicy: VerifyPolicy;
   /** Explicit checks; empty = auto-discover from package.json scripts. */
   verifyCommands: VerificationCommand[];
+  /**
+   * Per-build checks (cheap static gates). Empty = auto-discover the quick set
+   * (typecheck/lint). The FULL set (verifyCommands / full discovery, incl.
+   * tests) runs only at finalize — running the whole suite after every build
+   * dominated wall-clock on large graphs.
+   */
+  quickVerifyCommands: VerificationCommand[];
   /** Cap on engine-generated fix rounds after the final verification (guards loops). */
   maxFixRounds: number;
   /** Honor a role's dangerous permission choice (mirrors v1 honorDangerousPermissions). */
@@ -89,6 +100,33 @@ export interface RunConfig {
   importance: RunImportance;
   /** Ensemble sizes for plan/review phases. */
   council: RunCouncilConfig;
+  /**
+   * Staged planning: the planner is told to plan at most this many tasks per
+   * plan turn and flag `remainingScope`; the engine re-plans when the batch
+   * drains. Keeps mega-goals from exploding into one giant brittle plan.
+   */
+  planBatchSize: number;
+  /** Hard cap on staged plan batches (guards a planner that never finishes). */
+  maxPlanBatches: number;
+  /**
+   * Rotate an agent slot to a FRESH provider session (with a recap brief)
+   * after this many turns — long-lived sessions accumulate stale assumptions.
+   * 0 disables rotation.
+   */
+  sessionRotateTurns: number;
+  /**
+   * Interactive mode: run each agent turn as a REAL interactive CLI in a PTY
+   * the user watches and types into (context managed with `/compact`), instead
+   * of a headless one-shot. Turn completion is user/result-file driven — never
+   * idle-guessed. Default false (headless is the efficient default).
+   */
+  interactive: boolean;
+  /**
+   * Skip the planning phase entirely: no planner turn, no task breakdown — the
+   * goal is seeded as a single build task the builder executes directly (it may
+   * still emit follow-up build tasks). For "just do the work" runs.
+   */
+  skipPlanning: boolean;
 }
 
 export interface RunSteering {
@@ -124,6 +162,10 @@ export interface RunState {
   reviewDone?: boolean;
   /** Engine-generated fix rounds consumed (vs config.maxFixRounds). */
   fixRounds: number;
+  /** Staged planning: what the planner said remains after the current batch. */
+  pendingScope?: string;
+  /** Plan batches consumed (vs config.maxPlanBatches). */
+  planBatches: number;
 }
 
 // --- Event log ---------------------------------------------------------------
@@ -180,6 +222,8 @@ export interface RunSnapshot {
   profile: RunProfile;
   importance: RunImportance;
   council: RunCouncilConfig;
+  /** Interactive-mode flag so the UI shows input controls per agent. */
+  interactive: boolean;
   seq: number;
   usage: RunUsageTotals;
   graph: RunGraph;
@@ -200,6 +244,7 @@ export function toRunSnapshot(state: RunState): RunSnapshot {
     profile: state.config.profile,
     importance: state.config.importance,
     council: state.config.council,
+    interactive: state.config.interactive,
     seq: state.seq,
     usage: state.usage,
     graph: state.graph,

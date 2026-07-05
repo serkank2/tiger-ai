@@ -22,6 +22,12 @@ export interface PlanResult {
   tasks: PlannedTask[];
   /** Existing pending task ids this re-plan cancels (steering may cut scope). */
   cancelTaskIds?: string[];
+  /**
+   * Staged planning: short description of the goal scope NOT covered by this
+   * batch. Non-empty ⇒ the engine schedules another plan turn when the batch
+   * drains, instead of finalizing.
+   */
+  remainingScope?: string;
 }
 
 export const PLAN_RESULT_JSON_SCHEMA = {
@@ -47,6 +53,7 @@ export const PLAN_RESULT_JSON_SCHEMA = {
       },
     },
     cancelTaskIds: { type: 'array', items: { type: 'string' } },
+    remainingScope: { type: 'string' },
   },
 } as const;
 
@@ -81,6 +88,9 @@ export function coercePlanResult(value: unknown): PlanResult | null {
   if (Array.isArray(record.cancelTaskIds)) {
     const cancels = record.cancelTaskIds.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
     if (cancels.length) out.cancelTaskIds = cancels;
+  }
+  if (typeof record.remainingScope === 'string' && record.remainingScope.trim()) {
+    out.remainingScope = record.remainingScope.trim();
   }
   return out;
 }

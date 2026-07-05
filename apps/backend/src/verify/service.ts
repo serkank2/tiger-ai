@@ -150,3 +150,13 @@ export async function discoverVerificationCommands(workspace: string): Promise<V
     return [];
   }
 }
+
+/**
+ * The cheap static subset (typecheck/lint) used as the per-build gate. Tests
+ * and builds stay in the FULL set that runs at finalize — running the whole
+ * suite after every build task dominates wall-clock on large graphs.
+ */
+export async function discoverQuickVerificationCommands(workspace: string): Promise<VerificationCommand[]> {
+  const all = await discoverVerificationCommands(workspace);
+  return all.filter((command) => command.id === 'typecheck' || command.id === 'lint');
+}
