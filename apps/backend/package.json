@@ -6,7 +6,7 @@
   "description": "Kaplan backend — owns pty processes, REST control-plane, and WebSocket data-plane.",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node --watch --import tsx src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/db/migrate.ts up",
